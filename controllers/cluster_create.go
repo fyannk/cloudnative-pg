@@ -177,11 +177,18 @@ func (r *ClusterReconciler) reconcileSuperuserSecret(ctx context.Context, cluste
 			"*",
 			"postgres",
 			postgresPassword)
-		SetClusterOwnerAnnotationsAndLabels(&postgresSecret.ObjectMeta, cluster)
 
-		if err := r.Create(ctx, postgresSecret); err != nil {
-			if !apierrs.IsAlreadyExists(err) {
-				return err
+		var secretsuperuser corev1.Secret
+		if err := r.Get(ctx, client.ObjectKey{Name: postgresSecret.Name, Namespace: postgresSecret.Namespace}, &secretsuperuser); err != nil {
+			if !apierrs.IsNotFound(err) {
+				return fmt.Errorf("while getting super user: %w", err)
+			}
+			SetClusterOwnerAnnotationsAndLabels(&postgresSecret.ObjectMeta, cluster)
+
+			if err := r.Create(ctx, postgresSecret); err != nil {
+				if !apierrs.IsAlreadyExists(err) {
+					return err
+				}
 			}
 		}
 	}
@@ -222,10 +229,17 @@ func (r *ClusterReconciler) reconcileAppUserSecret(ctx context.Context, cluster 
 			cluster.GetApplicationDatabaseOwner(),
 			appPassword)
 
-		SetClusterOwnerAnnotationsAndLabels(&appSecret.ObjectMeta, cluster)
-		if err := r.Create(ctx, appSecret); err != nil {
-			if !apierrs.IsAlreadyExists(err) {
-				return err
+		var secretappuser corev1.Secret
+		if err := r.Get(ctx, client.ObjectKey{Name: appSecret.Name, Namespace: appSecret.Namespace}, &secretappuser); err != nil {
+			if !apierrs.IsNotFound(err) {
+				return fmt.Errorf("while getting app user: %w", err)
+			}
+			SetClusterOwnerAnnotationsAndLabels(&appSecret.ObjectMeta, cluster)
+
+			if err := r.Create(ctx, appSecret); err != nil {
+				if !apierrs.IsAlreadyExists(err) {
+					return err
+				}
 			}
 		}
 	}
@@ -270,39 +284,64 @@ func (r *ClusterReconciler) reconcilePoolerSecrets(ctx context.Context, cluster 
 }
 
 func (r *ClusterReconciler) createPostgresServices(ctx context.Context, cluster *apiv1.Cluster) error {
-	anyService := specs.CreateClusterAnyService(*cluster)
-	SetClusterOwnerAnnotationsAndLabels(&anyService.ObjectMeta, cluster)
 
-	if err := r.Create(ctx, anyService); err != nil {
-		if !apierrs.IsAlreadyExists(err) {
-			return err
+	anyService := specs.CreateClusterAnyService(*cluster)
+	var svcany corev1.Service
+	if err := r.Get(ctx, client.ObjectKey{Name: anyService.Name, Namespace: anyService.Namespace}, &svcany); err != nil {
+		if !apierrs.IsNotFound(err) {
+			return fmt.Errorf("while getting service any: %w", err)
+		}
+		SetClusterOwnerAnnotationsAndLabels(&anyService.ObjectMeta, cluster)
+		r.Recorder.Event(cluster, "Normal", "CreatingService", "Creating Service Any")
+		if err := r.Create(ctx, anyService); err != nil {
+			if !apierrs.IsAlreadyExists(err) {
+				return err
+			}
 		}
 	}
 
 	readService := specs.CreateClusterReadService(*cluster)
-	SetClusterOwnerAnnotationsAndLabels(&readService.ObjectMeta, cluster)
-
-	if err := r.Create(ctx, readService); err != nil {
-		if !apierrs.IsAlreadyExists(err) {
-			return err
+	var svcread corev1.Service
+	if err := r.Get(ctx, client.ObjectKey{Name: readService.Name, Namespace: readService.Namespace}, &svcread); err != nil {
+		if !apierrs.IsNotFound(err) {
+			return fmt.Errorf("while getting service read: %w", err)
+		}
+		SetClusterOwnerAnnotationsAndLabels(&readService.ObjectMeta, cluster)
+		r.Recorder.Event(cluster, "Normal", "CreatingService", "Creating Service Read")
+		if err := r.Create(ctx, readService); err != nil {
+			if !apierrs.IsAlreadyExists(err) {
+				return err
+			}
 		}
 	}
 
 	readOnlyService := specs.CreateClusterReadOnlyService(*cluster)
-	SetClusterOwnerAnnotationsAndLabels(&readOnlyService.ObjectMeta, cluster)
-
-	if err := r.Create(ctx, readOnlyService); err != nil {
-		if !apierrs.IsAlreadyExists(err) {
-			return err
+	var svcro corev1.Service
+	if err := r.Get(ctx, client.ObjectKey{Name: readOnlyService.Name, Namespace: readOnlyService.Namespace}, &svcro); err != nil {
+		if !apierrs.IsNotFound(err) {
+			return fmt.Errorf("while getting service read: %w", err)
+		}
+		SetClusterOwnerAnnotationsAndLabels(&readOnlyService.ObjectMeta, cluster)
+		r.Recorder.Event(cluster, "Normal", "CreatingService", "Creating Service ReadOnly")
+		if err := r.Create(ctx, readOnlyService); err != nil {
+			if !apierrs.IsAlreadyExists(err) {
+				return err
+			}
 		}
 	}
 
 	readWriteService := specs.CreateClusterReadWriteService(*cluster)
-	SetClusterOwnerAnnotationsAndLabels(&readWriteService.ObjectMeta, cluster)
-
-	if err := r.Create(ctx, readWriteService); err != nil {
-		if !apierrs.IsAlreadyExists(err) {
-			return err
+	var svcwrite corev1.Service
+	if err := r.Get(ctx, client.ObjectKey{Name: readWriteService.Name, Namespace: readWriteService.Namespace}, &svcwrite); err != nil {
+		if !apierrs.IsNotFound(err) {
+			return fmt.Errorf("while getting service read: %w", err)
+		}
+		SetClusterOwnerAnnotationsAndLabels(&readWriteService.ObjectMeta, cluster)
+		r.Recorder.Event(cluster, "Normal", "CreatingService", "Creating Service Write")
+		if err := r.Create(ctx, readWriteService); err != nil {
+			if !apierrs.IsAlreadyExists(err) {
+				return err
+			}
 		}
 	}
 
