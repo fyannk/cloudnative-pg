@@ -19,7 +19,6 @@ package v1
 import (
 	"fmt"
 
-	"github.com/cloudnative-pg/cloudnative-pg/internal/configuration"
 	"github.com/cloudnative-pg/machinery/pkg/log"
 	"github.com/cloudnative-pg/machinery/pkg/stringset"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -29,6 +28,8 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
+
+	"github.com/cloudnative-pg/cloudnative-pg/internal/configuration"
 )
 
 var (

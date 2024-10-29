@@ -99,7 +99,9 @@ func isOwnedByClusterOrSatisfiesPredicate(
 
 func hasReloadLabelSet(obj client.Object) bool {
 	_, hasLabel := obj.GetLabels()[utils.WatchedLabelName]
-	if (hasLabel == false) && (configuration.Current.ClusterWideCacheLabel != "") && (configuration.Current.WatchNamespace == "") {
+	if !hasLabel &&
+		configuration.Current.ClusterWideCacheLabel != "" &&
+		configuration.Current.WatchNamespace == "" {
 		_, hasLabell := obj.GetLabels()[configuration.Current.ClusterWideCacheLabel]
 		return hasLabell
 	}
