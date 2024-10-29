@@ -64,6 +64,15 @@ type Data struct {
 	// OperatorNamespace is the namespace where the operator is installed
 	OperatorNamespace string `json:"operatorNamespace" env:"OPERATOR_NAMESPACE"`
 
+	// EnvHttpProxy is the environment variable specifying proxy to use for http traffic
+	EnvHttpProxy string `json:"envHttpProxy" env:"HTTP_PROXY"`
+
+	// EnvHttpsProxy is the environment variable specifying proxy to use for https traffic
+	EnvHttpsProxy string `json:"envHttpsProxy" env:"HTTPS_PROXY"`
+
+	// EnvNoProxy is the environment variable specifying when not to go through proxies
+	EnvNoProxy string `json:"envNoProxy" env:"NO_PROXY"`
+
 	// OperatorPullSecretName is the pull secret used to download the
 	// pull secret name
 	OperatorPullSecretName string `json:"operatorPullSecretName" env:"PULL_SECRET_NAME"`
@@ -80,9 +89,15 @@ type Data struct {
 	// the owning Cluster
 	InheritedAnnotations []string `json:"inheritedAnnotations" env:"INHERITED_ANNOTATIONS"`
 
+	// MandatoryAnnotations is a list of annotations that every resource must have
+	MandatoryAnnotations []string `json:"mandatoryAnnotations" env:"MANDATORY_ANNOTATIONS"`
+
 	// InheritedLabels is a list of labels that every resource could inherit from
 	// the owning Cluster
 	InheritedLabels []string `json:"inheritedLabels" env:"INHERITED_LABELS"`
+
+	// MandatoryLabels is a list of labels that every resource must have
+	MandatoryLabels []string `json:"mandatoryLabels" env:"MANDATORY_LABELS"`
 
 	// MonitoringQueriesConfigmap is the name of the configmap in the operator namespace which contain
 	// the monitoring queries. The queries will be read from the data key: "queries".
@@ -231,4 +246,60 @@ func evaluateGlobPatterns(patterns []string, value string) (result bool) {
 	}
 
 	return
+}
+
+type CustomMandatoryMetadata struct {
+	Name  string
+	Value string
+}
+
+// GetMandatoryAnnotations gets the mandatory annotations
+func (config *Data) GetMandatoryAnnotations() []CustomMandatoryMetadata {
+	custom := []CustomMandatoryMetadata{}
+	for _, configMandatoryAnnotation := range config.MandatoryAnnotations {
+		list := strings.Split(configMandatoryAnnotation, string('='))
+		if len(list) == 2 {
+			custom = append(custom, CustomMandatoryMetadata{Name: list[0], Value: list[1]})
+		}
+	}
+	return custom
+}
+
+// GetMandatoryLabels gets the mandatory labels
+func (config *Data) GetMandatoryLabels() []CustomMandatoryMetadata {
+	custom := []CustomMandatoryMetadata{}
+	for _, configMandatoryLabels := range config.MandatoryLabels {
+		list := strings.Split(configMandatoryLabels, string('='))
+		if len(list) == 2 {
+			custom = append(custom, CustomMandatoryMetadata{Name: list[0], Value: list[1]})
+		}
+	}
+	return custom
+}
+
+// GetEnvProxies to pass proxies defined for operator to pods managed by it, hence becoming proxy aware
+func (config *Data) GetEnvProxies() []CustomMandatoryMetadata {
+
+	envvar := []CustomMandatoryMetadata{}
+
+	if config.EnvHttpProxy != "" {
+		envvar = append(envvar, CustomMandatoryMetadata{
+			Name:  "HTTP_PROXY",
+			Value: config.EnvHttpProxy,
+		})
+	}
+	if config.EnvHttpsProxy != "" {
+		envvar = append(envvar, CustomMandatoryMetadata{
+			Name:  "HTTPS_PROXY",
+			Value: config.EnvHttpProxy,
+		})
+	}
+	if config.EnvNoProxy != "" {
+		envvar = append(envvar, CustomMandatoryMetadata{
+			Name:  "NO_PROXY",
+			Value: config.EnvNoProxy,
+		})
+	}
+	return envvar
+
 }

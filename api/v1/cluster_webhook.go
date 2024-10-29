@@ -168,8 +168,31 @@ func (r *Cluster) setDefaults(preserveUserSettings bool) {
 	if len(r.Spec.Tablespaces) > 0 {
 		r.defaultTablespaces()
 	}
-
+	r.manageMandatoryMetadata(configuration.Current)
 	r.setDefaultPlugins(configuration.Current)
+}
+
+func (r *Cluster) manageMandatoryMetadata(config *configuration.Data) {
+	for _, configMandatoryLabel := range config.GetMandatoryLabels() {
+		_, ok := r.ObjectMeta.Labels[configMandatoryLabel.Name]
+		if !ok {
+			if r.ObjectMeta.Labels == nil {
+				r.ObjectMeta.Labels = make(map[string]string)
+			}
+			r.ObjectMeta.Labels[configMandatoryLabel.Name] = configMandatoryLabel.Value
+		}
+	}
+
+	for _, configMandatoryAnnotation := range config.GetMandatoryAnnotations() {
+		_, ok := r.ObjectMeta.Annotations[configMandatoryAnnotation.Name]
+		if !ok {
+			if r.ObjectMeta.Annotations == nil {
+				r.ObjectMeta.Annotations = make(map[string]string)
+			}
+			r.ObjectMeta.Annotations[configMandatoryAnnotation.Name] = configMandatoryAnnotation.Value
+		}
+	}
+
 }
 
 func (r *Cluster) setDefaultPlugins(config *configuration.Data) {

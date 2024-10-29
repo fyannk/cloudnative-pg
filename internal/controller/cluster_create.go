@@ -788,6 +788,7 @@ func (r *ClusterReconciler) createOrPatchDefaultMetricsConfigmap(ctx context.Con
 				apiv1.DefaultMonitoringKey: sourceConfigmap.Data[apiv1.DefaultMonitoringKey],
 			},
 		}
+		cluster.SetInheritedDataAndOwnership(&newConfigMap.ObjectMeta)
 		utils.SetOperatorVersion(&newConfigMap.ObjectMeta, versions.Version)
 		return r.Create(ctx, &newConfigMap)
 	}

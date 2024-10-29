@@ -17,6 +17,8 @@ limitations under the License.
 package v1
 
 import (
+	"github.com/cloudnative-pg/cloudnative-pg/internal/configuration"
+	"github.com/cloudnative-pg/cloudnative-pg/pkg/utils"
 	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -267,4 +269,10 @@ type PoolerList struct {
 
 func init() {
 	SchemeBuilder.Register(&Pooler{}, &PoolerList{})
+}
+
+// SetInheritedData sets all the needed annotations and labels
+func (pooler *Pooler) SetInheritedData(obj *metav1.ObjectMeta) {
+	utils.InheritAnnotations(obj, pooler.Annotations, nil, configuration.Current)
+	utils.InheritLabels(obj, pooler.Labels, nil, configuration.Current)
 }

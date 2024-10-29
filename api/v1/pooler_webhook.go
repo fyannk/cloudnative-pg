@@ -19,6 +19,7 @@ package v1
 import (
 	"fmt"
 
+	"github.com/cloudnative-pg/cloudnative-pg/internal/configuration"
 	"github.com/cloudnative-pg/machinery/pkg/log"
 	"github.com/cloudnative-pg/machinery/pkg/stringset"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -116,6 +117,8 @@ func (r *Pooler) ValidateUpdate(old runtime.Object) (warns admission.Warnings, e
 	poolerLog.Info("validate update", "name", r.Name, "namespace", r.Namespace)
 
 	oldPooler := old.(*Pooler)
+	// applying defaults before validating updates to set any new default
+	oldPooler.SetDefaults()
 
 	if oldPooler.IsAutomatedIntegration() && !r.IsAutomatedIntegration() {
 		poolerLog.Info("Pooler not automatically configured, manual configuration required",
@@ -189,6 +192,7 @@ func (r *Pooler) validateCluster() field.ErrorList {
 // Validate validates the configuration of a Pooler, returning
 // a list of errors
 func (r *Pooler) Validate() (allErrs field.ErrorList) {
+	r.SetDefaults()
 	allErrs = append(allErrs, r.validatePgBouncer()...)
 	allErrs = append(allErrs, r.validateCluster()...)
 	return allErrs
@@ -207,4 +211,40 @@ func (r *Pooler) validatePgbouncerGenericParameters() field.ErrorList {
 		}
 	}
 	return result
+}
+
+var _ webhook.Defaulter = &Pooler{}
+
+// Default implements webhook.Defaulter so a webhook will be registered for the type
+func (r *Pooler) Default() {
+	poolerLog.Info("default", "name", r.Name, "namespace", r.Namespace)
+
+	r.setDefaults()
+}
+
+// SetDefaults apply the defaults to undefined values in a Pooler
+func (r *Pooler) SetDefaults() {
+	r.setDefaults()
+}
+
+func (r *Pooler) setDefaults() {
+	for _, configMandatoryLabel := range configuration.Current.GetMandatoryLabels() {
+		_, ok := r.ObjectMeta.Labels[configMandatoryLabel.Name]
+		if !ok {
+			if r.ObjectMeta.Labels == nil {
+				r.ObjectMeta.Labels = make(map[string]string)
+			}
+			r.ObjectMeta.Labels[configMandatoryLabel.Name] = configMandatoryLabel.Value
+		}
+	}
+
+	for _, configMandatoryAnnotation := range configuration.Current.GetMandatoryAnnotations() {
+		_, ok := r.ObjectMeta.Annotations[configMandatoryAnnotation.Name]
+		if !ok {
+			if r.ObjectMeta.Annotations == nil {
+				r.ObjectMeta.Annotations = make(map[string]string)
+			}
+			r.ObjectMeta.Annotations[configMandatoryAnnotation.Name] = configMandatoryAnnotation.Value
+		}
+	}
 }
