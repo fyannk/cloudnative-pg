@@ -152,6 +152,9 @@ func CreatePodEnvConfig(cluster apiv1.Cluster, podName string) EnvConfig {
 		EnvFrom: cluster.Spec.EnvFrom,
 	}
 	config.EnvVars = append(config.EnvVars, cluster.Spec.Env...)
+	for _, env := range configuration.Current.GetEnvProxies() {
+		config.EnvVars = append(config.EnvVars, corev1.EnvVar{Name: env.Name, Value: env.Value})
+	}
 
 	hashValue, _ := hash.ComputeHash(config)
 	config.Hash = hashValue

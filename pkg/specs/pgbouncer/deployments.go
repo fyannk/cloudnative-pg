@@ -50,7 +50,7 @@ func Deployment(pooler *apiv1.Pooler, cluster *apiv1.Cluster) (*appsv1.Deploymen
 		return nil, err
 	}
 
-	podTemplate := podspec.NewFrom(pooler.Spec.Template).
+	podTemplateTmp := podspec.NewFrom(pooler.Spec.Template).
 		WithLabel(utils.PgbouncerNameLabel, pooler.Name).
 		WithLabel(utils.ClusterLabelName, cluster.Name).
 		WithLabel(utils.PodRoleLabelName, string(utils.PodRolePooler)).
@@ -117,8 +117,11 @@ func Deployment(pooler *apiv1.Pooler, cluster *apiv1.Cluster) (*appsv1.Deploymen
 					Port: intstr.FromInt32(pgBouncerConfig.PgBouncerPort),
 				},
 			},
-		}, false).
-		Build()
+		}, false)
+	for _, env := range config.Current.GetEnvProxies() {
+		podTemplateTmp = podTemplateTmp.WithContainerEnv(env.Name, corev1.EnvVar{Name: env.Name, Value: env.Value}, true)
+	}
+	podTemplate := podTemplateTmp.Build()
 
 	return &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{

@@ -73,6 +73,7 @@ func (r *PoolerReconciler) updateDeployment(
 	if err != nil {
 		return err
 	}
+	pooler.SetInheritedData(&generatedDeployment.ObjectMeta)
 
 	switch {
 	case resources.Deployment == nil:
@@ -132,6 +133,7 @@ func (r *PoolerReconciler) reconcileService(
 	if err != nil {
 		return err
 	}
+	pooler.SetInheritedData(&expectedService.ObjectMeta)
 	if err := ctrl.SetControllerReference(pooler, expectedService, r.Scheme); err != nil {
 		return err
 	}
@@ -169,6 +171,7 @@ func (r *PoolerReconciler) updateRBAC(
 	contextLog := log.FromContext(ctx)
 
 	role := pgbouncer.Role(pooler)
+	pooler.SetInheritedData(&role.ObjectMeta)
 	if resources.Role == nil {
 		if err := ctrl.SetControllerReference(pooler, role, r.Scheme); err != nil {
 			return err
@@ -189,6 +192,8 @@ func (r *PoolerReconciler) updateRBAC(
 	}
 
 	roleBinding := pgbouncer.RoleBinding(pooler)
+	pooler.SetInheritedData(&roleBinding.ObjectMeta)
+
 	if resources.RoleBinding == nil {
 		if err := ctrl.SetControllerReference(pooler, &roleBinding, r.Scheme); err != nil {
 			return err
@@ -232,6 +237,7 @@ func (r *PoolerReconciler) updateServiceAccount(
 
 	if resources.ServiceAccount == nil {
 		serviceAccount := pgbouncer.ServiceAccount(pooler)
+		pooler.SetInheritedData(&serviceAccount.ObjectMeta)
 		ensureServiceAccountHaveImagePullSecret(resources.ServiceAccount, pullSecretName)
 		contextLog.Info("Creating service account")
 		if err := ctrl.SetControllerReference(pooler, serviceAccount, r.Scheme); err != nil {
@@ -298,7 +304,7 @@ func (r *PoolerReconciler) ensureServiceAccountPullSecret(
 		Data: operatorSecret.Data,
 		Type: operatorSecret.Type,
 	}
-
+	pooler.SetInheritedData(&secret.ObjectMeta)
 	if err := ctrl.SetControllerReference(pooler, secret, r.Scheme); err != nil {
 		return "", err
 	}
