@@ -5,6 +5,7 @@ metadata:
   name: default-monitoring
   labels:
     cnpg.io/reload: ""
+    cnpg.io/reconcile: "true"
 data:
   queries: |
     backends:
