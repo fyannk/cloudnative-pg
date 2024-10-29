@@ -177,7 +177,8 @@ func (config *Data) ReadConfigMap(data map[string]string) {
 	configparser.ReadConfigMap(config, newDefaultConfig(), data, configparser.OsEnvironment{})
 	// Add ClusterWideCacheLabel=ClusterWideCacheValue as mandatory label on all objects
 	if config.WatchNamespace == "" && config.ClusterWideCacheLabel != "" && config.ClusterWideCacheValue != "" {
-		config.MandatoryLabels = append(config.MandatoryLabels, string(config.ClusterWideCacheLabel+"="+config.ClusterWideCacheValue))
+		config.MandatoryLabels = append(config.MandatoryLabels,
+			config.ClusterWideCacheLabel+"="+config.ClusterWideCacheValue)
 		config.InheritedLabels = append(config.InheritedLabels, config.ClusterWideCacheLabel)
 	}
 }
