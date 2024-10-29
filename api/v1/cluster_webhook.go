@@ -192,7 +192,6 @@ func (r *Cluster) manageMandatoryMetadata(config *configuration.Data) {
 			r.ObjectMeta.Annotations[configMandatoryAnnotation.Name] = configMandatoryAnnotation.Value
 		}
 	}
-
 }
 
 func (r *Cluster) setDefaultPlugins(config *configuration.Data) {
