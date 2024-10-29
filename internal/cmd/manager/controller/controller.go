@@ -26,10 +26,11 @@ import (
 	"time"
 
 	"github.com/cloudnative-pg/machinery/pkg/log"
-	corev1 "k8s.io/api/core/v1"
 	apierrs "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
@@ -45,6 +46,10 @@ import (
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/multicache"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/utils"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/versions"
+	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 )
 
 var (
@@ -136,13 +141,65 @@ func RunController(
 		LeaderElectionReleaseOnCancel: true,
 	}
 
+	// Load Configuration a first time to have all parameters merged (from configmap, secret, env, command line, ...)
+	tmpKubeClient, err := client.New(ctrl.GetConfigOrDie(), client.Options{Scheme: scheme})
+	if err != nil {
+		setupLog.Error(err, "unable to create Kubernetes client")
+		return err
+	}
+	err = loadConfiguration(ctx, tmpKubeClient, configMapName, secretName, conf)
+	if err != nil {
+		return err
+	}
+
 	if conf.WatchNamespace != "" {
 		namespaces := conf.WatchedNamespaces()
 		managerOptions.NewCache = multicache.DelegatingMultiNamespacedCacheBuilder(
 			namespaces,
 			conf.OperatorNamespace)
 		setupLog.Info("Listening for changes", "watchNamespaces", namespaces)
+	} else if configuration.Current.ClusterWideCacheLabel != "" && configuration.Current.ClusterWideCacheValue != "" {
+		setupLog.Info("Operator is Cluster Wide with filtered cache", configuration.Current.ClusterWideCacheLabel, configuration.Current.ClusterWideCacheValue)
+		// When listening in cluster-wide, we MUST filter cache for ConfigMaps and Secrets, are those are watched
+		// Otherwire, we'll put in cache ALL ConfigMaps and ALL Secrets of the cluster...
+		// We'll still query all of them though........
+		managerOptions.Cache = cache.Options{
+			ByObject: map[client.Object]cache.ByObject{
+				&corev1.ConfigMap{}: {
+					Label: labels.SelectorFromSet(labels.Set{configuration.Current.ClusterWideCacheLabel: configuration.Current.ClusterWideCacheValue}),
+				},
+				&appsv1.Deployment{}: {
+					Label: labels.SelectorFromSet(labels.Set{configuration.Current.ClusterWideCacheLabel: configuration.Current.ClusterWideCacheValue}),
+				},
+				&batchv1.Job{}: {
+					Label: labels.SelectorFromSet(labels.Set{configuration.Current.ClusterWideCacheLabel: configuration.Current.ClusterWideCacheValue}),
+				},
+				&corev1.PersistentVolumeClaim{}: {
+					Label: labels.SelectorFromSet(labels.Set{configuration.Current.ClusterWideCacheLabel: configuration.Current.ClusterWideCacheValue}),
+				},
+				&corev1.Pod{}: {
+					Label: labels.SelectorFromSet(labels.Set{configuration.Current.ClusterWideCacheLabel: configuration.Current.ClusterWideCacheValue}),
+				},
+				&rbacv1.Role{}: {
+					Label: labels.SelectorFromSet(labels.Set{configuration.Current.ClusterWideCacheLabel: configuration.Current.ClusterWideCacheValue}),
+				},
+				&rbacv1.RoleBinding{}: {
+					Label: labels.SelectorFromSet(labels.Set{configuration.Current.ClusterWideCacheLabel: configuration.Current.ClusterWideCacheValue}),
+				},
+				&corev1.Secret{}: {
+					Label: labels.SelectorFromSet(labels.Set{configuration.Current.ClusterWideCacheLabel: configuration.Current.ClusterWideCacheValue}),
+				},
+				&corev1.Service{}: {
+					Label: labels.SelectorFromSet(labels.Set{configuration.Current.ClusterWideCacheLabel: configuration.Current.ClusterWideCacheValue}),
+				},
+				&corev1.ServiceAccount{}: {
+					Label: labels.SelectorFromSet(labels.Set{configuration.Current.ClusterWideCacheLabel: configuration.Current.ClusterWideCacheValue}),
+				},
+			},
+		}
+		setupLog.Info("Listening for changes on all namespaces")
 	} else {
+		setupLog.Info("Operator is Cluster Wide WITHOUT filtered cache !!!", configuration.Current.ClusterWideCacheLabel, configuration.Current.ClusterWideCacheValue)
 		setupLog.Info("Listening for changes on all namespaces")
 	}
 
@@ -177,12 +234,6 @@ func RunController(
 		setupLog.Error(err, "unable to create Kubernetes client")
 		return err
 	}
-
-	err = loadConfiguration(ctx, kubeClient, configMapName, secretName, conf)
-	if err != nil {
-		return err
-	}
-
 	setupLog.Info("Operator configuration loaded", "configuration", conf)
 
 	discoveryClient, err := utils.GetDiscoveryClient()
