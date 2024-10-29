@@ -64,6 +64,12 @@ type Data struct {
 	// OperatorNamespace is the namespace where the operator is installed
 	OperatorNamespace string `json:"operatorNamespace" env:"OPERATOR_NAMESPACE"`
 
+	// ClusterWideCacheLabel is the label to seek for cache
+	ClusterWideCacheLabel string `json:"clusterWideCacheLabel" env:"CLUSTER_WIDE_CACHE_LABEL"`
+
+	// ClusterWideCacheValue is the value that ClusterWideCacheLabel must equals to in order to have the resource in cache
+	ClusterWideCacheValue string `json:"clusterWideCacheValue" env:"CLUSTER_WIDE_CACHE_VALUE"`
+
 	// EnvHttpProxy is the environment variable specifying proxy to use for http traffic
 	EnvHttpProxy string `json:"envHttpProxy" env:"HTTP_PROXY"`
 
@@ -169,6 +175,11 @@ func NewConfiguration() *Data {
 // ReadConfigMap reads the configuration from the environment and the passed in data map
 func (config *Data) ReadConfigMap(data map[string]string) {
 	configparser.ReadConfigMap(config, newDefaultConfig(), data, configparser.OsEnvironment{})
+	// Add ClusterWideCacheLabel=ClusterWideCacheValue as mandatory label on all objects
+	if config.WatchNamespace == "" && config.ClusterWideCacheLabel != "" && config.ClusterWideCacheValue != "" {
+		config.MandatoryLabels = append(config.MandatoryLabels, string(config.ClusterWideCacheLabel+"="+config.ClusterWideCacheValue))
+		config.InheritedLabels = append(config.InheritedLabels, config.ClusterWideCacheLabel)
+	}
 }
 
 // IsAnnotationInherited checks if an annotation with a certain name should

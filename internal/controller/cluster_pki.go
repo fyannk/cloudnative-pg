@@ -28,7 +28,6 @@ import (
 
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/certs"
-	"github.com/cloudnative-pg/cloudnative-pg/pkg/utils"
 )
 
 // setupPostgresPKI create all the PKI infrastructure that PostgreSQL need to work
@@ -187,7 +186,7 @@ func (r *ClusterReconciler) ensureCASecret(ctx context.Context, cluster *apiv1.C
 	}
 
 	derivedCaSecret := caPair.GenerateCASecret(cluster.Namespace, secretName)
-	utils.SetAsOwnedBy(&derivedCaSecret.ObjectMeta, cluster.ObjectMeta, cluster.TypeMeta)
+	cluster.SetInheritedDataAndOwnership(&derivedCaSecret.ObjectMeta)
 	err = r.Create(ctx, derivedCaSecret)
 
 	return derivedCaSecret, err
@@ -334,7 +333,7 @@ func (r *ClusterReconciler) ensureLeafCertificate(
 			return err
 		}
 
-		utils.SetAsOwnedBy(&serverSecret.ObjectMeta, cluster.ObjectMeta, cluster.TypeMeta)
+		cluster.SetInheritedDataAndOwnership(&serverSecret.ObjectMeta)
 		for k, v := range additionalLabels {
 			if serverSecret.Labels == nil {
 				serverSecret.Labels = make(map[string]string)
