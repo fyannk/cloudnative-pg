@@ -71,10 +71,10 @@ type Data struct {
 	ClusterWideCacheValue string `json:"clusterWideCacheValue" env:"CLUSTER_WIDE_CACHE_VALUE"`
 
 	// EnvHttpProxy is the environment variable specifying proxy to use for http traffic
-	EnvHttpProxy string `json:"envHttpProxy" env:"HTTP_PROXY"`
+	EnvHTTPProxy string `json:"envHttpProxy" env:"HTTP_PROXY"`
 
 	// EnvHttpsProxy is the environment variable specifying proxy to use for https traffic
-	EnvHttpsProxy string `json:"envHttpsProxy" env:"HTTPS_PROXY"`
+	EnvHTTPSProxy string `json:"envHttpsProxy" env:"HTTPS_PROXY"`
 
 	// EnvNoProxy is the environment variable specifying when not to go through proxies
 	EnvNoProxy string `json:"envNoProxy" env:"NO_PROXY"`
@@ -259,6 +259,7 @@ func evaluateGlobPatterns(patterns []string, value string) (result bool) {
 	return
 }
 
+// CustomMandatoryMetadata stores mandatory annotations, labels and proxies
 type CustomMandatoryMetadata struct {
 	Name  string
 	Value string
@@ -290,19 +291,17 @@ func (config *Data) GetMandatoryLabels() []CustomMandatoryMetadata {
 
 // GetEnvProxies to pass proxies defined for operator to pods managed by it, hence becoming proxy aware
 func (config *Data) GetEnvProxies() []CustomMandatoryMetadata {
-
 	envvar := []CustomMandatoryMetadata{}
-
-	if config.EnvHttpProxy != "" {
+	if config.EnvHTTPProxy != "" {
 		envvar = append(envvar, CustomMandatoryMetadata{
 			Name:  "HTTP_PROXY",
-			Value: config.EnvHttpProxy,
+			Value: config.EnvHTTPProxy,
 		})
 	}
-	if config.EnvHttpsProxy != "" {
+	if config.EnvHTTPSProxy != "" {
 		envvar = append(envvar, CustomMandatoryMetadata{
 			Name:  "HTTPS_PROXY",
-			Value: config.EnvHttpProxy,
+			Value: config.EnvHTTPSProxy,
 		})
 	}
 	if config.EnvNoProxy != "" {
@@ -312,5 +311,4 @@ func (config *Data) GetEnvProxies() []CustomMandatoryMetadata {
 		})
 	}
 	return envvar
-
 }

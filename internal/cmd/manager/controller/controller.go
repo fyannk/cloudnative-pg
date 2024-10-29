@@ -152,13 +152,14 @@ func RunController(
 		return err
 	}
 
-	if conf.WatchNamespace != "" {
+	switch {
+	case conf.WatchNamespace != "":
 		namespaces := conf.WatchedNamespaces()
 		managerOptions.NewCache = multicache.DelegatingMultiNamespacedCacheBuilder(
 			namespaces,
 			conf.OperatorNamespace)
 		setupLog.Info("Listening for changes", "watchNamespaces", namespaces)
-	} else if configuration.Current.ClusterWideCacheLabel != "" && configuration.Current.ClusterWideCacheValue != "" {
+	case configuration.Current.ClusterWideCacheLabel != "" && configuration.Current.ClusterWideCacheValue != "":
 		setupLog.Info("Operator is Cluster Wide with filtered cache", configuration.Current.ClusterWideCacheLabel, configuration.Current.ClusterWideCacheValue)
 		// When listening in cluster-wide, we MUST filter cache for ConfigMaps and Secrets, are those are watched
 		// Otherwire, we'll put in cache ALL ConfigMaps and ALL Secrets of the cluster...
@@ -198,7 +199,7 @@ func RunController(
 			},
 		}
 		setupLog.Info("Listening for changes on all namespaces")
-	} else {
+	default:
 		setupLog.Info("Operator is Cluster Wide WITHOUT filtered cache !!!", configuration.Current.ClusterWideCacheLabel, configuration.Current.ClusterWideCacheValue)
 		setupLog.Info("Listening for changes on all namespaces")
 	}
