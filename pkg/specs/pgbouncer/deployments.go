@@ -119,7 +119,7 @@ func Deployment(pooler *apiv1.Pooler, cluster *apiv1.Cluster) (*appsv1.Deploymen
 			},
 		}, false)
 	for _, env := range config.Current.GetEnvProxies() {
-		podTemplateTmp = podTemplateTmp.WithContainerEnv(env.Name, corev1.EnvVar{Name: env.Name, Value: env.Value}, true)
+		podTemplateTmp = podTemplateTmp.WithContainerEnv("pgbouncer", corev1.EnvVar{Name: env.Name, Value: env.Value}, true)
 	}
 	podTemplate := podTemplateTmp.Build()
 
