@@ -22,7 +22,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
-	"github.com/cloudnative-pg/cloudnative-pg/internal/configuration"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/utils"
 )
 
@@ -99,11 +98,5 @@ func isOwnedByClusterOrSatisfiesPredicate(
 
 func hasReloadLabelSet(obj client.Object) bool {
 	_, hasLabel := obj.GetLabels()[utils.WatchedLabelName]
-	if !hasLabel &&
-		configuration.Current.ClusterWideCacheLabel != "" &&
-		configuration.Current.WatchNamespace == "" {
-		_, hasLabell := obj.GetLabels()[configuration.Current.ClusterWideCacheLabel]
-		return hasLabell
-	}
 	return hasLabel
 }

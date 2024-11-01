@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/cloudnative-pg/machinery/pkg/log"
+	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -159,10 +160,9 @@ func RunController(
 			namespaces,
 			conf.OperatorNamespace)
 		setupLog.Info("Listening for changes", "watchNamespaces", namespaces)
-	case configuration.Current.ClusterWideCacheLabel != "" && configuration.Current.ClusterWideCacheValue != "":
-		setupLog.Info("Operator is Cluster Wide with filtered cache",
-			configuration.Current.ClusterWideCacheLabel,
-			configuration.Current.ClusterWideCacheValue)
+	case configuration.Current.ClusterWideCacheFilter:
+		setupLog.Info("Operator is Cluster Wide with filtered cache")
+		cacheLabel := configuration.Current.GetCacheKey()
 		// When listening in cluster-wide, we MUST filter cache for ConfigMaps and Secrets, are those are watched
 		// Otherwire, we'll put in cache ALL ConfigMaps and ALL Secrets of the cluster...
 		// We'll still query all of them though........
@@ -170,61 +170,64 @@ func RunController(
 			ByObject: map[client.Object]cache.ByObject{
 				&corev1.ConfigMap{}: {
 					Label: labels.SelectorFromSet(labels.Set{
-						configuration.Current.ClusterWideCacheLabel: configuration.Current.ClusterWideCacheValue,
+						cacheLabel.Name: cacheLabel.Value,
 					}),
 				},
 				&appsv1.Deployment{}: {
 					Label: labels.SelectorFromSet(labels.Set{
-						configuration.Current.ClusterWideCacheLabel: configuration.Current.ClusterWideCacheValue,
+						cacheLabel.Name: cacheLabel.Value,
 					}),
 				},
 				&batchv1.Job{}: {
 					Label: labels.SelectorFromSet(labels.Set{
-						configuration.Current.ClusterWideCacheLabel: configuration.Current.ClusterWideCacheValue,
+						cacheLabel.Name: cacheLabel.Value,
 					}),
 				},
 				&corev1.PersistentVolumeClaim{}: {
 					Label: labels.SelectorFromSet(labels.Set{
-						configuration.Current.ClusterWideCacheLabel: configuration.Current.ClusterWideCacheValue,
+						cacheLabel.Name: cacheLabel.Value,
 					}),
 				},
 				&corev1.Pod{}: {
 					Label: labels.SelectorFromSet(labels.Set{
-						configuration.Current.ClusterWideCacheLabel: configuration.Current.ClusterWideCacheValue,
+						cacheLabel.Name: cacheLabel.Value,
 					}),
 				},
 				&rbacv1.Role{}: {
 					Label: labels.SelectorFromSet(labels.Set{
-						configuration.Current.ClusterWideCacheLabel: configuration.Current.ClusterWideCacheValue,
+						cacheLabel.Name: cacheLabel.Value,
 					}),
 				},
 				&rbacv1.RoleBinding{}: {
 					Label: labels.SelectorFromSet(labels.Set{
-						configuration.Current.ClusterWideCacheLabel: configuration.Current.ClusterWideCacheValue,
+						cacheLabel.Name: cacheLabel.Value,
 					}),
 				},
 				&corev1.Secret{}: {
 					Label: labels.SelectorFromSet(labels.Set{
-						configuration.Current.ClusterWideCacheLabel: configuration.Current.ClusterWideCacheValue,
+						cacheLabel.Name: cacheLabel.Value,
 					}),
 				},
 				&corev1.Service{}: {
 					Label: labels.SelectorFromSet(labels.Set{
-						configuration.Current.ClusterWideCacheLabel: configuration.Current.ClusterWideCacheValue,
+						cacheLabel.Name: cacheLabel.Value,
 					}),
 				},
 				&corev1.ServiceAccount{}: {
 					Label: labels.SelectorFromSet(labels.Set{
-						configuration.Current.ClusterWideCacheLabel: configuration.Current.ClusterWideCacheValue,
+						cacheLabel.Name: cacheLabel.Value,
+					}),
+				},
+				&monitoringv1.PodMonitor{}: {
+					Label: labels.SelectorFromSet(labels.Set{
+						cacheLabel.Name: cacheLabel.Value,
 					}),
 				},
 			},
 		}
 		setupLog.Info("Listening for changes on all namespaces")
 	default:
-		setupLog.Info("Operator is Cluster Wide WITHOUT filtered cache !!!",
-			configuration.Current.ClusterWideCacheLabel,
-			configuration.Current.ClusterWideCacheValue)
+		setupLog.Info("Operator is Cluster Wide WITHOUT filtered cache !!!")
 		setupLog.Info("Listening for changes on all namespaces")
 	}
 
