@@ -24,7 +24,6 @@ import (
 	"reflect"
 	"time"
 
-	"github.com/cloudnative-pg/cloudnative-pg/internal/configuration"
 	"github.com/cloudnative-pg/machinery/pkg/fileutils"
 	"github.com/cloudnative-pg/machinery/pkg/log"
 	"github.com/robfig/cron"
@@ -35,6 +34,8 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	"github.com/cloudnative-pg/cloudnative-pg/internal/configuration"
 )
 
 var (
