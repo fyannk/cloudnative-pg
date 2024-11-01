@@ -76,6 +76,9 @@ type Data struct {
 	// ClusterWideCacheFilter enables the Cache with a filter key
 	ClusterWideCacheFilter bool `json:"clusterWideCacheFilter" env:"CLUSTER_WIDE_CACHE_FILTER"`
 
+	// DefaultStorageClass can surchage the default storage class defined in the cluster
+	DefaultStorageClass string `json:"defaultStorageClass" env:"DEFAULT_STORAGE_CLASS"`
+
 	// EnvHttpProxy is the environment variable specifying proxy to use for http traffic
 	EnvHTTPProxy string `json:"envHttpProxy" env:"HTTP_PROXY"`
 

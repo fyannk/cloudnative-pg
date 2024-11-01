@@ -23,6 +23,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
+	internalconfig "github.com/cloudnative-pg/cloudnative-pg/internal/configuration"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/resources"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/specs"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/utils"
@@ -63,7 +64,11 @@ func Build(
 	// If the customer specified a storage class, let's use it
 	if configuration.Storage.StorageClass != nil {
 		builder = builder.WithStorageClass(configuration.Storage.StorageClass)
+	} else if internalconfig.Current.DefaultStorageClass != "" {
+		// If the Operator specifies a default storage class, let's use it
+		builder = builder.WithStorageClass(&internalconfig.Current.DefaultStorageClass)
 	}
+	// Else go with the default storage class
 
 	if configuration.Storage.Size != "" {
 		// Insert the storage requirement
