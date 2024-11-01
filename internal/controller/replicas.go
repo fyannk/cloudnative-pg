@@ -28,6 +28,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
+	"github.com/cloudnative-pg/cloudnative-pg/internal/configuration"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/postgres"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/specs"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/utils"
@@ -169,6 +170,9 @@ func (r *ClusterReconciler) reconcileTargetPrimaryForNonReplicaCluster(
 // isNodeUnschedulable checks whether a node is set to unschedulable
 func (r *ClusterReconciler) isNodeUnschedulable(ctx context.Context, nodeName string) (bool, error) {
 	var node corev1.Node
+	if !configuration.Current.APINodeEnabled {
+		return false, nil
+	}
 	err := r.Get(ctx, client.ObjectKey{Name: nodeName}, &node)
 	if err != nil {
 		return false, err

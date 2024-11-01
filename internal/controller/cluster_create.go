@@ -932,18 +932,12 @@ type podMonitorManager interface {
 func createOrPatchPodMonitor(
 	ctx context.Context,
 	cli client.Client,
-	discoveryClient discovery.DiscoveryInterface,
+	_ discovery.DiscoveryInterface,
 	manager podMonitorManager,
 ) error {
 	contextLogger := log.FromContext(ctx)
 
-	// Checking for the PodMonitor Custom Resource Definition in the Kubernetes cluster
-	havePodMonitorCRD, err := utils.PodMonitorExist(discoveryClient)
-	if err != nil {
-		return err
-	}
-
-	if !havePodMonitorCRD {
+	if !configuration.Current.APIPodMonitorEnabled {
 		if manager.IsPodMonitorEnabled() {
 			// If the PodMonitor CRD does not exist, but the cluster has monitoring enabled,
 			// the controller cannot do anything until the CRD is installed

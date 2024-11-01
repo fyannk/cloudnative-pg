@@ -436,6 +436,65 @@ func loadConfiguration(
 		conf.ReadConfigMap(configData)
 	}
 
+	// Overwrite some parameters at runtime
+
+	// Check, if the API Node is enabled, we can list nodes, otherwise we disable the API
+	if configuration.Current.APINodeEnabled {
+		node := &corev1.Node{}
+		var nodeList client.ObjectList
+		nodeSelector := client.MatchingFields{
+			"involvedObject.apiVersion": node.APIVersion,
+			"involvedObject.kind":       node.Kind,
+			"involvedObject.namespace":  configuration.Current.OperatorNamespace,
+		}
+		err := kubeClient.List(ctx, nodeList, nodeSelector)
+		if err != nil {
+			configuration.Current.DisableNodeAPI()
+		}
+	}
+
+	// Check, if the API PodMonitor is enabled, CRD exists, otherwise we disable the API
+	if configuration.Current.APIPodMonitorEnabled {
+		discoveryClient, err := utils.GetDiscoveryClient()
+		if err != nil {
+			return err
+		}
+		ape, err := utils.PodMonitorExist(discoveryClient)
+		if err != nil || !ape {
+			configuration.Current.DisablePodMonitor()
+		}
+	}
+
+	// Check, if the API PodMonitor is enabled, we can list PodMonitors inside Operator own namespace
+	if configuration.Current.APIPodMonitorEnabled {
+		podMonitor := &monitoringv1.PodMonitor{}
+		var podList client.ObjectList
+		podSelector := client.MatchingFields{
+			"involvedObject.apiVersion": podMonitor.APIVersion,
+			"involvedObject.kind":       podMonitor.Kind,
+			"involvedObject.namespace":  configuration.Current.OperatorNamespace,
+		}
+		err := kubeClient.List(ctx, podList, podSelector)
+		if err != nil {
+			configuration.Current.DisablePodMonitor()
+		}
+	}
+
+	// Check if the API ClusterImageCatalog is enabled, we can list ClusterImageCatalog inside Operator own namespace
+	if configuration.Current.APIClusterImageCatalogEnabled {
+		cic := &apiv1.ClusterImageCatalog{}
+		var cicList client.ObjectList
+		cicSelector := client.MatchingFields{
+			"involvedObject.apiVersion": cic.APIVersion,
+			"involvedObject.kind":       cic.Kind,
+			"involvedObject.namespace":  configuration.Current.OperatorNamespace,
+		}
+		err := kubeClient.List(ctx, cicList, cicSelector)
+		if err != nil {
+			configuration.Current.DisableClusterImageCatalog()
+		}
+	}
+
 	return nil
 }
 

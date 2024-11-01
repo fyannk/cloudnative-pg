@@ -1025,7 +1025,7 @@ func (r *ClusterReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manag
 		return err
 	}
 
-	return ctrl.NewControllerManagedBy(mgr).
+	curCtrlMgr := ctrl.NewControllerManagedBy(mgr).
 		For(&apiv1.Cluster{}).
 		Named("cluster").
 		Owns(&corev1.Pod{}).
@@ -1048,21 +1048,25 @@ func (r *ClusterReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manag
 			handler.EnqueueRequestsFromMapFunc(r.mapPoolersToClusters()),
 		).
 		Watches(
-			&corev1.Node{},
-			handler.EnqueueRequestsFromMapFunc(r.mapNodeToClusters()),
-			builder.WithPredicates(nodesPredicate),
-		).
-		Watches(
 			&apiv1.ImageCatalog{},
 			handler.EnqueueRequestsFromMapFunc(r.mapImageCatalogsToClusters()),
 			builder.WithPredicates(predicate.ResourceVersionChangedPredicate{}),
-		).
-		Watches(
+		)
+	if configuration.Current.APINodeEnabled {
+		curCtrlMgr.Watches(
+			&corev1.Node{},
+			handler.EnqueueRequestsFromMapFunc(r.mapNodeToClusters()),
+			builder.WithPredicates(nodesPredicate),
+		)
+	}
+	if configuration.Current.APIClusterImageCatalogEnabled {
+		curCtrlMgr.Watches(
 			&apiv1.ClusterImageCatalog{},
 			handler.EnqueueRequestsFromMapFunc(r.mapClusterImageCatalogsToClusters()),
 			builder.WithPredicates(predicate.ResourceVersionChangedPredicate{}),
-		).
-		Complete(r)
+		)
+	}
+	return curCtrlMgr.Complete(r)
 }
 
 // createFieldIndexes creates the indexes needed by this controller
