@@ -24,6 +24,7 @@ import (
 	"reflect"
 	"time"
 
+	"github.com/cloudnative-pg/cloudnative-pg/internal/configuration"
 	"github.com/cloudnative-pg/machinery/pkg/fileutils"
 	"github.com/cloudnative-pg/machinery/pkg/log"
 	"github.com/robfig/cron"
@@ -272,18 +273,20 @@ func (pki PublicKeyInfrastructure) setupWebhooksCertificate(
 		return nil, err
 	}
 
-	if err := pki.injectPublicKeyIntoMutatingWebhook(
-		ctx,
-		kubeClient,
-		webhookSecret); err != nil {
-		return nil, err
-	}
+	if configuration.Current.WebhookEnabled {
+		if err := pki.injectPublicKeyIntoMutatingWebhook(
+			ctx,
+			kubeClient,
+			webhookSecret); err != nil {
+			return nil, err
+		}
 
-	if err := pki.injectPublicKeyIntoValidatingWebhook(
-		ctx,
-		kubeClient,
-		webhookSecret); err != nil {
-		return nil, err
+		if err := pki.injectPublicKeyIntoValidatingWebhook(
+			ctx,
+			kubeClient,
+			webhookSecret); err != nil {
+			return nil, err
+		}
 	}
 
 	return webhookSecret, nil

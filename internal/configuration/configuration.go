@@ -49,6 +49,18 @@ const (
 
 	// DefaultClusterWideCacheFilter is the default value for ClusterWideCacheFilter to enable or not Filtered Cache
 	DefaultClusterWideCacheFilter = true
+
+	// DefaultWebhookEnabled is enabling by default webhook support
+	DefaultWebhookEnabled = true
+
+	// DefaultAPINodeEnabled is enabling by default v1.Nodes listing / caching
+	DefaultAPINodeEnabled = true
+
+	// DefaultAPIPodMonitorEnabled is enabling by default PodMonitor support
+	DefaultAPIPodMonitorEnabled = true
+
+	// DefaultAPIClusterImageCatalogEnabled is enabling by default ClusterImageCatalog support
+	DefaultAPIClusterImageCatalogEnabled = true
 )
 
 // DefaultPluginSocketDir is the default directory where the plugin sockets are located.
@@ -78,6 +90,20 @@ type Data struct {
 
 	// DefaultStorageClass can surchage the default storage class defined in the cluster
 	DefaultStorageClass string `json:"defaultStorageClass" env:"DEFAULT_STORAGE_CLASS"`
+
+	// WebhookEnabled enables WebHook certificate support (useful for restricted installations)
+	WebhookEnabled bool `json:"webhookEnabled" env:"WEBHOOK_ENABLED"`
+
+	// APINodeEnabled enables v1/Node(Get, List, Watch) (useful for restricted installations, WARNING: it can lead to
+	//	Clusters being stuck in reconciliation)
+	APINodeEnabled bool
+
+	// APIPodMonitorEnabled enables monitoring.coreos.com/v1/PodMonitor (useful for restricted installations)
+	APIPodMonitorEnabled bool
+
+	// APIClusterImageCatalogEnabled enables postgresql.cnpg.io/v1/ClusterImageCatalog
+	//	(useful for restricted installations)
+	APIClusterImageCatalogEnabled bool
 
 	// EnvHttpProxy is the environment variable specifying proxy to use for http traffic
 	EnvHTTPProxy string `json:"envHttpProxy" env:"HTTP_PROXY"`
@@ -163,14 +189,18 @@ var Current = NewConfiguration()
 // newDefaultConfig creates a configuration holding the defaults
 func newDefaultConfig() *Data {
 	return &Data{
-		OperatorPullSecretName: DefaultOperatorPullSecretName,
-		OperatorImageName:      versions.DefaultOperatorImageName,
-		PostgresImageName:      versions.DefaultImageName,
-		PluginSocketDir:        DefaultPluginSocketDir,
-		CreateAnyService:       false,
-		CertificateDuration:    CertificateDuration,
-		ExpiringCheckThreshold: ExpiringCheckThreshold,
-		ClusterWideCacheFilter: DefaultClusterWideCacheFilter,
+		OperatorPullSecretName:        DefaultOperatorPullSecretName,
+		OperatorImageName:             versions.DefaultOperatorImageName,
+		PostgresImageName:             versions.DefaultImageName,
+		PluginSocketDir:               DefaultPluginSocketDir,
+		CreateAnyService:              false,
+		CertificateDuration:           CertificateDuration,
+		ExpiringCheckThreshold:        ExpiringCheckThreshold,
+		ClusterWideCacheFilter:        DefaultClusterWideCacheFilter,
+		WebhookEnabled:                DefaultWebhookEnabled,
+		APINodeEnabled:                DefaultAPINodeEnabled,
+		APIPodMonitorEnabled:          DefaultAPIPodMonitorEnabled,
+		APIClusterImageCatalogEnabled: DefaultAPIClusterImageCatalogEnabled,
 	}
 }
 
@@ -321,4 +351,19 @@ func (config *Data) GetEnvProxies() []CustomMandatoryMetadata {
 // GetCacheKey to get Cache Key
 func (config *Data) GetCacheKey() CustomMandatoryMetadata {
 	return CustomMandatoryMetadata{Name: ClusterWideCacheLabel, Value: ClusterWideCacheValue}
+}
+
+// DisableNodeAPI Disable Node API (no more v1.Nodes watching, be careful with impacts)
+func (config *Data) DisableNodeAPI() {
+	config.APINodeEnabled = false
+}
+
+// DisablePodMonitor Disable PodMonitor API completly
+func (config *Data) DisablePodMonitor() {
+	config.APIPodMonitorEnabled = true
+}
+
+// DisableClusterImageCatalog Disable ClusterImageCatalog API completly (in case we don't have cluster wide access)
+func (config *Data) DisableClusterImageCatalog() {
+	config.APIClusterImageCatalogEnabled = false
 }
