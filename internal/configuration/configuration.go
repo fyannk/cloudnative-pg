@@ -40,6 +40,15 @@ const (
 
 	// ExpiringCheckThreshold is the default threshold to consider a certificate as expiring
 	ExpiringCheckThreshold = 7
+
+	// ClusterWideCacheLabel is the label to seek for cache
+	ClusterWideCacheLabel = "cnpg.io/reconcile"
+
+	// ClusterWideCacheValue is the value that ClusterWideCacheLabel must equals to in order to have the resource in cache
+	ClusterWideCacheValue = "true"
+
+	// DefaultClusterWideCacheFilter is the default value for ClusterWideCacheFilter to enable or not Filtered Cache
+	DefaultClusterWideCacheFilter = true
 )
 
 // DefaultPluginSocketDir is the default directory where the plugin sockets are located.
@@ -64,11 +73,8 @@ type Data struct {
 	// OperatorNamespace is the namespace where the operator is installed
 	OperatorNamespace string `json:"operatorNamespace" env:"OPERATOR_NAMESPACE"`
 
-	// ClusterWideCacheLabel is the label to seek for cache
-	ClusterWideCacheLabel string `json:"clusterWideCacheLabel" env:"CLUSTER_WIDE_CACHE_LABEL"`
-
-	// ClusterWideCacheValue is the value that ClusterWideCacheLabel must equals to in order to have the resource in cache
-	ClusterWideCacheValue string `json:"clusterWideCacheValue" env:"CLUSTER_WIDE_CACHE_VALUE"`
+	// ClusterWideCacheFilter enables the Cache with a filter key
+	ClusterWideCacheFilter bool `json:"clusterWideCacheFilter" env:"CLUSTER_WIDE_CACHE_FILTER"`
 
 	// EnvHttpProxy is the environment variable specifying proxy to use for http traffic
 	EnvHTTPProxy string `json:"envHttpProxy" env:"HTTP_PROXY"`
@@ -161,6 +167,7 @@ func newDefaultConfig() *Data {
 		CreateAnyService:       false,
 		CertificateDuration:    CertificateDuration,
 		ExpiringCheckThreshold: ExpiringCheckThreshold,
+		ClusterWideCacheFilter: DefaultClusterWideCacheFilter,
 	}
 }
 
@@ -175,12 +182,6 @@ func NewConfiguration() *Data {
 // ReadConfigMap reads the configuration from the environment and the passed in data map
 func (config *Data) ReadConfigMap(data map[string]string) {
 	configparser.ReadConfigMap(config, newDefaultConfig(), data, configparser.OsEnvironment{})
-	// Add ClusterWideCacheLabel=ClusterWideCacheValue as mandatory label on all objects
-	if config.WatchNamespace == "" && config.ClusterWideCacheLabel != "" && config.ClusterWideCacheValue != "" {
-		config.MandatoryLabels = append(config.MandatoryLabels,
-			config.ClusterWideCacheLabel+"="+config.ClusterWideCacheValue)
-		config.InheritedLabels = append(config.InheritedLabels, config.ClusterWideCacheLabel)
-	}
 }
 
 // IsAnnotationInherited checks if an annotation with a certain name should
@@ -280,7 +281,7 @@ func (config *Data) GetMandatoryAnnotations() []CustomMandatoryMetadata {
 
 // GetMandatoryLabels gets the mandatory labels
 func (config *Data) GetMandatoryLabels() []CustomMandatoryMetadata {
-	custom := []CustomMandatoryMetadata{}
+	custom := []CustomMandatoryMetadata{config.GetCacheKey()}
 	for _, configMandatoryLabels := range config.MandatoryLabels {
 		list := strings.Split(configMandatoryLabels, string('='))
 		if len(list) == 2 {
@@ -312,4 +313,9 @@ func (config *Data) GetEnvProxies() []CustomMandatoryMetadata {
 		})
 	}
 	return envvar
+}
+
+// GetCacheKey to get Cache Key
+func (config *Data) GetCacheKey() CustomMandatoryMetadata {
+	return CustomMandatoryMetadata{Name: ClusterWideCacheLabel, Value: ClusterWideCacheValue}
 }
