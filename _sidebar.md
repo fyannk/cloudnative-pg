@@ -6,7 +6,8 @@
   * [Helm Chart](helm.md)
 
 * Changes
-  * [Storage Class](sc.md)
-  * [Proxies](px.md)
   * [Filtered Cache](cache.md)
+  * [Monitoring](monitoring.md)
+  * [Proxies](px.md)
   * [Restricted](restricted.md)
+  * [Storage Class](sc.md)
