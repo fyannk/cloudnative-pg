@@ -48,8 +48,11 @@ Selector labels
 {{- define "cloudnative-pg.selectorLabels" -}}
 app.kubernetes.io/name: {{ include "cloudnative-pg.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
+cnpg.io/reconcile: "true"
 {{- end }}
-
+{{- define "cloudnative-pg.operatorSelector" -}}
+app.kubernetes.io/name={{ include "cloudnative-pg.name" . }}
+{{- end -}}
 {{/*
 Create the name of the service account to use
 */}}

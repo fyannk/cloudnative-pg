@@ -18,7 +18,7 @@ name: operator
 description: CloudNativePG Operator Helm Chart
 icon: https://raw.githubusercontent.com/cloudnative-pg/artwork/main/cloudnativepg-logo.svg
 type: application
-version: "0.0.1"
+version: "0.0.0-SNAPSHOT"
 appVersion: "0.0.0-SNAPSHOT"
 kubeVersion: ">=1.21.0-0"
 sources:
