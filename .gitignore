@@ -37,3 +37,7 @@ bundle.Dockerfile
 catalog
 catalog.Dockerfile
 cloudnative-pg-catalog.yaml
+
+# Helm ignores
+charts/crds/templates/crds.yaml
+.cr-release-packages/

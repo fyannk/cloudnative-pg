@@ -14,24 +14,22 @@
 # limitations under the License.
 #
 apiVersion: v2
-name: operator
-description: CloudNativePG Operator Helm Chart
+name: crds
+description: CloudNativePG Operator CRDs Helm Chart
 icon: https://raw.githubusercontent.com/cloudnative-pg/artwork/main/cloudnativepg-logo.svg
 type: application
-version: "0.0.1"
+version: "0.0.0-SNAPSHOT"
 appVersion: "0.0.0-SNAPSHOT"
 kubeVersion: ">=1.21.0-0"
 sources:
   - https://github.com/cloudnative-pg/charts
+  - https://github.com/fyannk/cloudnative-pg/
 keywords:
   - operator
-  - controller
+  - controler
   - postgresql
   - postgres
   - database
+  - crds
 home: https://cloudnative-pg.io
 maintainers: []
-dependencies:
-  - name: crds
-    version: "0.0.0-SNAPSHOT"
-    condition: crds.enabled

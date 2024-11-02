@@ -38,6 +38,7 @@ LDFLAGS= "-X github.com/cloudnative-pg/cloudnative-pg/pkg/versions.buildVersion=
 DIST_PATH := $(shell pwd)/dist
 OPERATOR_MANIFEST_PATH := ${DIST_PATH}/operator-manifest.yaml
 LOCALBIN ?= $(shell pwd)/bin
+HELM_CRDS_PATH := $(shell pwd)/charts/operator/charts/crds/templates/crds.yaml
 
 BUILD_IMAGE ?= true
 POSTGRES_IMAGE_NAME ?= $(shell grep 'DefaultImageName.*=' "pkg/versions/versions.go" | cut -f 2 -d \")
@@ -221,6 +222,9 @@ deploy-locally: kind-cluster ## Build and deploy operator in local cluster
 
 olm-scorecard: operator-sdk ## Run the Scorecard test from operator-sdk
 	$(OPERATOR_SDK) scorecard ${BUNDLE_IMG} --wait-time 60s --verbose
+
+helm-crds: kustomize ## Generate Helm CRDs
+	$(KUSTOMIZE) build config/crd > ${HELM_CRDS_PATH}
 
 ##@ Formatters and Linters
 
