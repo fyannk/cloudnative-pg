@@ -16,6 +16,10 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Get branch names.
+        id: branch-names
+        uses: tj-actions/branch-names@v8
+
       - name: Configure Git
         run: |
           git config user.name "$GITHUB_ACTOR"
@@ -23,6 +27,26 @@ jobs:
 
       - name: Install Helm
         uses: azure/setup-helm@v3
+
+      - name: 'Kustomize'
+        run: make helm-crds
+
+      - name: 'Versions Tag'
+        if: steps.branch-names.outputs.is_tag == 'true'
+        run: |
+          sed -i "s/^appVersion: .*/appVersion: \"${{ steps.branch-names.outputs.tag }}\"/g" charts/operator/charts/crds/Chart.yaml
+          sed -i "s/^appVersion: .*/appVersion: \"${{ steps.branch-names.outputs.tag }}\"/g" charts/operator/Chart.yaml
+          sed -i "s/^    version: \"0.0.0-SNAPSHOT\"/    version: \"${{ steps.branch-names.outputs.tag }}\"/g" charts/operator/Chart.yaml
+
+      - name: 'Versions Branch'
+        if: steps.branch-names.outputs.is_tag == 'false'
+        run: |
+          sed -i "s/^appVersion: .*/appVersion: \"${{ steps.branch-names.outputs.current_branch }}-SNAPSHOT\"/g" charts/operator/charts/crds/Chart.yaml
+          sed -i "s/^appVersion: .*/appVersion: \"${{ steps.branch-names.outputs.current_branch }}-SNAPSHOT\"/g" charts/operator/Chart.yaml
+          sed -i "s/^    version: \"0.0.0-SNAPSHOT\"/    version: \"${{ steps.branch-names.outputs.current_branch }}-SNAPSHOT\"/g" charts/operator/Chart.yaml
+        
+      - name: Helm Sources
+        run: helm repo add cloudnativepg https://fyannk.github.io/cloudnative-pg
 
       - name: Run chart-releaser
         uses: helm/chart-releaser-action@v1.6.0

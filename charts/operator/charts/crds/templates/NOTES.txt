@@ -1,0 +1,1 @@
+CloudNative-PG Custom Resource Definitions installed.

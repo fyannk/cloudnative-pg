@@ -14,16 +14,13 @@
 # limitations under the License.
 #
 apiVersion: v2
-name: cloudnative-pg
+name: operator
 description: CloudNativePG Operator Helm Chart
 icon: https://raw.githubusercontent.com/cloudnative-pg/artwork/main/cloudnativepg-logo.svg
 type: application
-version: "0.22.1"
-# This is the version number of the application being deployed. This version number should be
-# incremented each time you make changes to the application. Versions are not expected to
-# follow Semantic Versioning, they should reflect the version the application is using.
-# It is recommended to use it with quotes.
-appVersion: "1.24.1"
+version: "0.0.1"
+appVersion: "0.0.0-SNAPSHOT"
+kubeVersion: ">=1.21.0-0"
 sources:
   - https://github.com/cloudnative-pg/charts
 keywords:
@@ -33,7 +30,8 @@ keywords:
   - postgres
   - database
 home: https://cloudnative-pg.io
-maintainers:
-  - name: phisco
-    email: p.scorsolini@gmail.com
-dependencies: []
+maintainers: []
+dependencies:
+  - name: crds
+    version: "0.0.0-SNAPSHOT"
+    condition: crds.enabled
