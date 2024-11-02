@@ -20,6 +20,7 @@ package configuration
 
 import (
 	"path"
+	"slices"
 	"strings"
 	"time"
 
@@ -61,6 +62,9 @@ const (
 
 	// DefaultAPIClusterImageCatalogEnabled is enabling by default ClusterImageCatalog support
 	DefaultAPIClusterImageCatalogEnabled = true
+
+	// DefaultOperatorSelector is the default selector to find the operator
+	DefaultOperatorSelector = "app.kubernetes.io/name=cloudnative-pg"
 )
 
 // DefaultPluginSocketDir is the default directory where the plugin sockets are located.
@@ -121,6 +125,9 @@ type Data struct {
 	// OperatorImageName is the name of the image of the operator, that is
 	// used to bootstrap Pods
 	OperatorImageName string `json:"operatorImageName" env:"OPERATOR_IMAGE_NAME"`
+
+	// OperatorSelector is the selector to find the operator
+	OperatorSelector string `json:"operatorSelector" env:"OPERATOR_SELECTOR"`
 
 	// PostgresImageName is the name of the image of PostgreSQL that is
 	// used by default for new clusters
@@ -201,6 +208,7 @@ func newDefaultConfig() *Data {
 		APINodeEnabled:                DefaultAPINodeEnabled,
 		APIPodMonitorEnabled:          DefaultAPIPodMonitorEnabled,
 		APIClusterImageCatalogEnabled: DefaultAPIClusterImageCatalogEnabled,
+		OperatorSelector:              DefaultOperatorSelector,
 	}
 }
 
@@ -215,6 +223,10 @@ func NewConfiguration() *Data {
 // ReadConfigMap reads the configuration from the environment and the passed in data map
 func (config *Data) ReadConfigMap(data map[string]string) {
 	configparser.ReadConfigMap(config, newDefaultConfig(), data, configparser.OsEnvironment{})
+	idx := slices.IndexFunc(config.InheritedLabels, func(c string) bool { return c == "cnpg.io/reconcile" })
+	if idx == -1 {
+		config.InheritedLabels = append(config.InheritedLabels, "cnpg.io/reconcile")
+	}
 }
 
 // IsAnnotationInherited checks if an annotation with a certain name should
@@ -314,13 +326,14 @@ func (config *Data) GetMandatoryAnnotations() []CustomMandatoryMetadata {
 
 // GetMandatoryLabels gets the mandatory labels
 func (config *Data) GetMandatoryLabels() []CustomMandatoryMetadata {
-	custom := []CustomMandatoryMetadata{config.GetCacheKey()}
+	custom := []CustomMandatoryMetadata{}
 	for _, configMandatoryLabels := range config.MandatoryLabels {
 		list := strings.Split(configMandatoryLabels, string('='))
 		if len(list) == 2 {
 			custom = append(custom, CustomMandatoryMetadata{Name: list[0], Value: list[1]})
 		}
 	}
+	custom = append(custom, config.GetCacheKey())
 	return custom
 }
 

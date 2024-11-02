@@ -175,6 +175,7 @@ rules:
   resources:
   - backups
   - clusters
+  - databases
   - poolers
   - scheduledbackups
   verbs:
@@ -214,6 +215,7 @@ rules:
   - postgresql.cnpg.io
   resources:
   - clusters/status
+  - databases/status
   - poolers/status
   verbs:
   - get

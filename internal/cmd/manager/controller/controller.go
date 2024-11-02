@@ -526,7 +526,7 @@ func ensurePKI(
 		OperatorNamespace:                  conf.OperatorNamespace,
 		MutatingWebhookConfigurationName:   MutatingWebhookConfigurationName,
 		ValidatingWebhookConfigurationName: ValidatingWebhookConfigurationName,
-		OperatorDeploymentLabelSelector:    "app.kubernetes.io/name=cloudnative-pg",
+		OperatorDeploymentLabelSelector:    conf.OperatorSelector,
 	}
 	err := pkiConfig.Setup(ctx, kubeClient)
 	if err != nil {
