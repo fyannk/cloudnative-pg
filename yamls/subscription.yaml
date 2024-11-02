@@ -1,0 +1,23 @@
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: cnpg
+spec:
+  channel: stable-v1
+  config:
+    env:
+    - name: CLUSTER_WIDE_CACHE_FILTER
+      value: "false"
+    - name: HTTP_PROXY
+      value: http://172.31.0.1:3129
+    - name: HTTPS_PROXY
+      value: http://172.31.0.1:3129
+    - name: NO_PROXY
+      value: localhost,127.0.0.1,0.0.0.0,10.0.0.0/8,cattle-system.svc,192.168.66.0/24,.svc,.cluster.local,172.0.0.0/8
+    - name: DEFAULT_STORAGE_CLASS
+      value: awesome-storage-class
+  name: cloudnative-pg
+  source: cnpg
+  sourceNamespace: olm
+  installPlanApproval: Automatic
+
