@@ -48,6 +48,12 @@ jobs:
       - name: Helm Sources
         run: helm repo add cloudnativepg https://fyannk.github.io/cloudnative-pg
 
+      - name: Debug
+        run: |
+          cat charts/operator/charts/crds/Chart.yaml
+          cat charts/operator/Chart.yaml
+          helm search repo cloudnativepg
+      
       - name: Run chart-releaser
         uses: helm/chart-releaser-action@v1.6.0
         env:
