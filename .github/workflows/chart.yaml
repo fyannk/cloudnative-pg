@@ -34,16 +34,16 @@ jobs:
       - name: 'Versions Tag'
         if: steps.branch-names.outputs.is_tag == 'true'
         run: |
-          sed -i "s/^appVersion: .*/appVersion: \"${{ steps.branch-names.outputs.tag }}\"/g" charts/operator/charts/crds/Chart.yaml
-          sed -i "s/^appVersion: .*/appVersion: \"${{ steps.branch-names.outputs.tag }}\"/g" charts/operator/Chart.yaml
-          sed -i "s/^    version: \"0.0.0-SNAPSHOT\"/    version: \"${{ steps.branch-names.outputs.tag }}\"/g" charts/operator/Chart.yaml
+          sed -i "s|^appVersion: .*|appVersion: \"${{ steps.branch-names.outputs.tag }}\"|g" charts/operator/charts/crds/Chart.yaml
+          sed -i "s|^appVersion: .*|appVersion: \"${{ steps.branch-names.outputs.tag }}\"|g" charts/operator/Chart.yaml
+          sed -i "s|^    version: \"0.0.0-SNAPSHOT\"|    version: \"${{ steps.branch-names.outputs.tag }}\"|g" charts/operator/Chart.yaml
 
       - name: 'Versions Branch'
         if: steps.branch-names.outputs.is_tag == 'false'
         run: |
-          sed -i "s/^appVersion: .*/appVersion: \"${{ steps.branch-names.outputs.current_branch }}-SNAPSHOT\"/g" charts/operator/charts/crds/Chart.yaml
-          sed -i "s/^appVersion: .*/appVersion: \"${{ steps.branch-names.outputs.current_branch }}-SNAPSHOT\"/g" charts/operator/Chart.yaml
-          sed -i "s/^    version: \"0.0.0-SNAPSHOT\"/    version: \"${{ steps.branch-names.outputs.current_branch }}-SNAPSHOT\"/g" charts/operator/Chart.yaml
+          sed -i "s|^appVersion: .*|appVersion: \"${{ steps.branch-names.outputs.current_branch }}-SNAPSHOT\"|g" charts/operator/charts/crds/Chart.yaml
+          sed -i "s|^appVersion: .*|appVersion: \"${{ steps.branch-names.outputs.current_branch }}-SNAPSHOT\"|g" charts/operator/Chart.yaml
+          sed -i "s|^    version: \"0.0.0-SNAPSHOT\"|    version: \"${{ steps.branch-names.outputs.current_branch }}-SNAPSHOT\"|g" charts/operator/Chart.yaml
         
       - name: Helm Sources
         run: helm repo add cloudnativepg https://fyannk.github.io/cloudnative-pg
