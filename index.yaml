@@ -49,6 +49,32 @@ entries:
   operator:
   - apiVersion: v2
     appVersion: 0.0.0-SNAPSHOT
+    created: "2024-11-02T16:42:53.597062039Z"
+    dependencies:
+    - condition: crds.enabled
+      name: crds
+      repository: ""
+      version: 0.0.0-dev-clusterwide-SNAPSHOT
+    description: CloudNativePG Operator Helm Chart
+    digest: 33fa009460e5f2204c31d6ba57a59d688692f42a3ee10584ce5713d8cce63880
+    home: https://cloudnative-pg.io
+    icon: https://raw.githubusercontent.com/cloudnative-pg/artwork/main/cloudnativepg-logo.svg
+    keywords:
+    - operator
+    - controller
+    - postgresql
+    - postgres
+    - database
+    kubeVersion: '>=1.21.0-0'
+    name: operator
+    sources:
+    - https://github.com/cloudnative-pg/charts
+    type: application
+    urls:
+    - https://github.com/fyannk/cloudnative-pg/releases/download/operator-0.0.0-dev-clusterwide-SNAPSHOT/operator-0.0.0-dev-clusterwide-SNAPSHOT.tgz
+    version: 0.0.0-dev-clusterwide-SNAPSHOT
+  - apiVersion: v2
+    appVersion: 0.0.0-SNAPSHOT
     created: "2024-11-02T14:55:51.285205681+01:00"
     dependencies:
     - condition: crds.enabled
@@ -73,4 +99,4 @@ entries:
     urls:
     - https://github.com/fyannk/cloudnative-pg/releases/download/develop/operator-0.0.0-SNAPSHOT.tgz
     version: 0.0.0-SNAPSHOT
-generated: "2024-11-02T14:55:51.274535077+01:00"
+generated: "2024-11-02T16:42:53.597078791Z"
