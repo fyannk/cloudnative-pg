@@ -31,7 +31,7 @@ Declare OperatorGroup (needs ClusterAdmin access) :
 #### **Shell**
 
 ```bash
-kubectl apply -f yamls/operatorgroupcw.yaml
+kubectl apply -f https://fyannk.github.io/cloudnative-pg/yamls/operatorgroupcw.yaml
 ```
 
 #### **RAW**
@@ -47,7 +47,7 @@ kubectl apply -f yamls/operatorgroupcw.yaml
 #### **Shell**
 
 ```bash
-kubectl apply -f yamls/operatorgroupns.yaml
+kubectl apply -f https://fyannk.github.io/cloudnative-pg/yamls/operatorgroupns.yaml
 ```
 
 #### **RAW**
@@ -76,7 +76,7 @@ kubectl apply -f yamls/operatorgroupns.yaml
 Declare Subscription :
 
 ```bash
-kubectl apply -f yamls/subscription.yaml
+kubectl apply -f https://fyannk.github.io/cloudnative-pg/yamls/subscription.yaml
 ```
 
 #### **RAW**
