@@ -1,34 +1,11 @@
 apiVersion: v1
 entries:
-  cloudnative-pg:
-  - apiVersion: v2
-    appVersion: 1.24.1
-    created: "2024-11-02T08:55:57.102778477Z"
-    description: CloudNativePG Operator Helm Chart
-    digest: cc77d1dd29577d2cc44f78271f002c82a9f330f4908bc602fe3be4c0a745d446
-    home: https://cloudnative-pg.io
-    icon: https://raw.githubusercontent.com/cloudnative-pg/artwork/main/cloudnativepg-logo.svg
-    keywords:
-    - operator
-    - controller
-    - postgresql
-    - postgres
-    - database
-    maintainers:
-    - email: p.scorsolini@gmail.com
-      name: phisco
-    name: cloudnative-pg
-    sources:
-    - https://github.com/cloudnative-pg/charts
-    type: application
-    urls:
-    - https://github.com/fyannk/cloudnative-pg/releases/download/cloudnative-pg-0.22.1/cloudnative-pg-0.22.1.tgz
-    version: 0.22.1
   cluster:
   - apiVersion: v2
-    created: "2024-11-02T08:55:57.226615639Z"
+    appVersion: 0.0.0-SNAPSHOT
+    created: "2024-11-02T14:55:51.276125228+01:00"
     description: Deploys and manages a CloudNativePG cluster and its associated resources.
-    digest: 99a46bc289015e78384d5affe6d437e857835d4874b4adc50efec638e292f568
+    digest: 8d833ff331b082978beea5b6c2cf3e2ab1ca5c162bc8b0782b8866abf11d9ad6
     home: https://cloudnative-pg.io
     icon: https://raw.githubusercontent.com/cloudnative-pg/artwork/main/cloudnativepg-logo.svg
     keywords:
@@ -43,19 +20,43 @@ entries:
     - https://github.com/cloudnative-pg/charts
     type: application
     urls:
-    - https://github.com/fyannk/cloudnative-pg/releases/download/cluster-0.1.0/cluster-0.1.0.tgz
-    version: 0.1.0
+    - https://github.com/fyannk/cloudnative-pg/releases/download/develop/cluster-0.0.0-SNAPSHOT.tgz
+    version: 0.0.0-SNAPSHOT
+  crds:
+  - apiVersion: v2
+    appVersion: 0.0.0-SNAPSHOT
+    created: "2024-11-02T14:55:51.280038592+01:00"
+    description: CloudNativePG Operator CRDs Helm Chart
+    digest: d12a90a424a9a3bf6887deab1fadc76e41388311df90dace19aa9338a73917c6
+    home: https://cloudnative-pg.io
+    icon: https://raw.githubusercontent.com/cloudnative-pg/artwork/main/cloudnativepg-logo.svg
+    keywords:
+    - operator
+    - controler
+    - postgresql
+    - postgres
+    - database
+    - crds
+    kubeVersion: '>=1.21.0-0'
+    name: crds
+    sources:
+    - https://github.com/cloudnative-pg/charts
+    - https://github.com/fyannk/cloudnative-pg/
+    type: application
+    urls:
+    - https://github.com/fyannk/cloudnative-pg/releases/download/develop/crds-0.0.0-SNAPSHOT.tgz
+    version: 0.0.0-SNAPSHOT
   operator:
   - apiVersion: v2
     appVersion: 0.0.0-SNAPSHOT
-    created: "2024-11-02T12:00:29.938538476Z"
+    created: "2024-11-02T14:55:51.285205681+01:00"
     dependencies:
     - condition: crds.enabled
       name: crds
       repository: ""
-      version: 0.0.0-dev-clusterwide-SNAPSHOT
+      version: 0.0.0-SNAPSHOT
     description: CloudNativePG Operator Helm Chart
-    digest: fdcb6f0d2ef38344d109ad47f0b0d0742feeba95c4f28afbee4efd30673d2cff
+    digest: 2f02d369841065ccf83ce41ef8bbe6809e842f01d44c4e99536ce9d72d8de226
     home: https://cloudnative-pg.io
     icon: https://raw.githubusercontent.com/cloudnative-pg/artwork/main/cloudnativepg-logo.svg
     keywords:
@@ -70,6 +71,6 @@ entries:
     - https://github.com/cloudnative-pg/charts
     type: application
     urls:
-    - https://github.com/fyannk/cloudnative-pg/releases/download/operator-0.0.0-dev-clusterwide-SNAPSHOT/operator-0.0.0-dev-clusterwide-SNAPSHOT.tgz
-    version: 0.0.0-dev-clusterwide-SNAPSHOT
-generated: "2024-11-02T12:00:29.938546902Z"
+    - https://github.com/fyannk/cloudnative-pg/releases/download/develop/operator-0.0.0-SNAPSHOT.tgz
+    version: 0.0.0-SNAPSHOT
+generated: "2024-11-02T14:55:51.274535077+01:00"

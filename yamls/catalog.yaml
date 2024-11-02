@@ -1,0 +1,12 @@
+apiVersion: operators.coreos.com/v1alpha1
+kind: CatalogSource
+metadata:
+  name: cnpg
+spec:
+  sourceType: grpc
+  image: ghcr.io/fyannk/cloudnative-pg-testing:catalog-dev-clusterwide
+  displayName: FYannK CNPG Catalog
+  updateStrategy:
+    registryPoll:
+      interval: 10m0s
+  publisher: FYannK
