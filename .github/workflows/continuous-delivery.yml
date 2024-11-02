@@ -10,7 +10,7 @@ on:
       depth:
         description: 'Depth (push, pull_request, main (default), schedule)'
         required: true
-        default: 'main'
+        default: 'dev/clusterwide'
       limit:
         description: 'Limit to the specified engines list (local, eks, aks, gke, openshift)'
         required: false
