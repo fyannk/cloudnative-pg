@@ -14,7 +14,7 @@
 # limitations under the License.
 #
 apiVersion: v2
-name: operator
+name: cloudnative-pg
 description: CloudNativePG Operator Helm Chart
 icon: https://raw.githubusercontent.com/cloudnative-pg/artwork/main/cloudnativepg-logo.svg
 type: application
@@ -34,4 +34,4 @@ maintainers: []
 dependencies:
   - name: crds
     version: "0.0.0-SNAPSHOT"
-    condition: crds.enabled
+    condition: capabilities.crds
