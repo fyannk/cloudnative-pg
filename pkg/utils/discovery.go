@@ -182,6 +182,16 @@ func PodMonitorExist(client discovery.DiscoveryInterface) (bool, error) {
 	return exist, nil
 }
 
+// VolumeSnapshotExist tries to find the VolumeSnapshot resource in the current cluster
+func VolumeSnapshotExist(client discovery.DiscoveryInterface) (bool, error) {
+	exist, err := resourceExist(client, "snapshot.storage.k8s.io/v1", "volumesnapshots")
+	if err != nil {
+		return false, err
+	}
+
+	return exist, nil
+}
+
 // extractK8sMinorVersion extracts and parses the Kubernetes minor version from
 // the version info that's been  detected by discovery client
 func extractK8sMinorVersion(info *version.Info) (int, error) {

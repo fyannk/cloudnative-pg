@@ -60,11 +60,29 @@ const (
 	// DefaultAPIPodMonitorEnabled is enabling by default PodMonitor support
 	DefaultAPIPodMonitorEnabled = true
 
+	// DefaultAPIVolumeSnapshotEnabled is enabling by default VolumeSnapshot support
+	DefaultAPIVolumeSnapshotEnabled = true
+
 	// DefaultAPIClusterImageCatalogEnabled is enabling by default ClusterImageCatalog support
 	DefaultAPIClusterImageCatalogEnabled = true
 
 	// DefaultOperatorSelector is the default selector to find the operator
 	DefaultOperatorSelector = "app.kubernetes.io/name=cloudnative-pg"
+
+	// DefaultWebhookSecretName is the default name of the secret containing the webhook certificates
+	DefaultWebhookSecretName = "cnpg-webhook-cert"
+
+	// DefaultWebhookServiceName is the default name of the service for the webhooks
+	DefaultWebhookServiceName = "cnpg-webhook-service"
+
+	// DefaultMutatingWebhookName is the default name of the mutating webhook
+	DefaultMutatingWebhookName = "cnpg-mutating-webhook-configuration"
+
+	// DefaultValidatingWebhookName is the default name of the validating webhook
+	DefaultValidatingWebhookName = "cnpg-validating-webhook-configuration"
+
+	// DefaultCaSecretName is the default name of the secret containing the WebHook CA
+	DefaultCaSecretName = "cnpg-ca-secret"
 )
 
 // DefaultPluginSocketDir is the default directory where the plugin sockets are located.
@@ -98,16 +116,36 @@ type Data struct {
 	// WebhookEnabled enables WebHook certificate support (useful for restricted installations)
 	WebhookEnabled bool `json:"webhookEnabled" env:"WEBHOOK_ENABLED"`
 
+	// WebhookServiceName is the name of the service for the webhooks
+	WebhookServiceName string `json:"webhookServiceName" env:"WEBHOOK_SERVICE_NAME"`
+
+	// WebhookServiceName is the name of the service for the webhooks
+	WebhookSecretName string `json:"webhookSecretName" env:"WEBHOOK_SECRET_NAME"`
+
+	// MutatingWebhookName is the name of the mutating webhook
+	MutatingWebhookName string `json:"mutatingWebhookName" env:"MUTATING_WEBHOOK_NAME"`
+
+	// ValidatingWebhookName is the name of the validating webhook
+	ValidatingWebhookName string `json:"validatingWebhookName" env:"VALIDATING_WEBHOOK_NAME"`
+
+	// CaSecretName is the name of the secret containing the WebHook CA
+	CaSecretName string `json:"caSecretName" env:"CA_SECRET_NAME"`
+
 	// APINodeEnabled enables v1/Node(Get, List, Watch) (useful for restricted installations, WARNING: it can lead to
 	//	Clusters being stuck in reconciliation)
 	APINodeEnabled bool
 
-	// APIPodMonitorEnabled enables monitoring.coreos.com/v1/PodMonitor (useful for restricted installations)
+	// APIPodMonitorEnabled enables monitoring.coreos.com/v1/PodMonitor
+	//	(useful for restricted installations)
 	APIPodMonitorEnabled bool
 
 	// APIClusterImageCatalogEnabled enables postgresql.cnpg.io/v1/ClusterImageCatalog
 	//	(useful for restricted installations)
 	APIClusterImageCatalogEnabled bool
+
+	// APIVolumeSnapshotEnabled enables snapshot.storage.k8s.io/v1/VolumeSnapshot
+	//	(useful for restricted installations)
+	APIVolumeSnapshotEnabled bool
 
 	// EnvHttpProxy is the environment variable specifying proxy to use for http traffic
 	EnvHTTPProxy string `json:"envHttpProxy" env:"HTTP_PROXY"`
@@ -208,7 +246,12 @@ func newDefaultConfig() *Data {
 		APINodeEnabled:                DefaultAPINodeEnabled,
 		APIPodMonitorEnabled:          DefaultAPIPodMonitorEnabled,
 		APIClusterImageCatalogEnabled: DefaultAPIClusterImageCatalogEnabled,
+		APIVolumeSnapshotEnabled:      DefaultAPIVolumeSnapshotEnabled,
 		OperatorSelector:              DefaultOperatorSelector,
+		WebhookSecretName:             DefaultWebhookSecretName,
+		MutatingWebhookName:           DefaultMutatingWebhookName,
+		ValidatingWebhookName:         DefaultValidatingWebhookName,
+		CaSecretName:                  DefaultCaSecretName,
 	}
 }
 
@@ -373,10 +416,15 @@ func (config *Data) DisableNodeAPI() {
 
 // DisablePodMonitor Disable PodMonitor API completly
 func (config *Data) DisablePodMonitor() {
-	config.APIPodMonitorEnabled = true
+	config.APIPodMonitorEnabled = false
 }
 
 // DisableClusterImageCatalog Disable ClusterImageCatalog API completly (in case we don't have cluster wide access)
 func (config *Data) DisableClusterImageCatalog() {
 	config.APIClusterImageCatalogEnabled = false
+}
+
+// DisableVolumeSnapshot Disable VolumeSnapshot API completly
+func (config *Data) DisableVolumeSnapshot() {
+	config.APIVolumeSnapshotEnabled = false
 }

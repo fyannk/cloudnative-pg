@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/cloudnative-pg/machinery/pkg/log"
+	storagesnapshotv1 "github.com/kubernetes-csi/external-snapshotter/client/v8/apis/volumesnapshot/v1"
 	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
@@ -59,29 +60,11 @@ var (
 )
 
 const (
-	// WebhookSecretName is the name of the secret where the certificates
-	// for the webhook server are stored
-	WebhookSecretName = "cnpg-webhook-cert" // #nosec
-
-	// WebhookServiceName is the name of the service where the webhook server
-	// is reachable
-	WebhookServiceName = "cnpg-webhook-service" // #nosec
-
-	// MutatingWebhookConfigurationName is the name of the mutating webhook configuration
-	MutatingWebhookConfigurationName = "cnpg-mutating-webhook-configuration"
-
-	// ValidatingWebhookConfigurationName is the name of the validating webhook configuration
-	ValidatingWebhookConfigurationName = "cnpg-validating-webhook-configuration"
-
 	// The name of the directory containing the TLS certificates
 	defaultWebhookCertDir = "/run/secrets/cnpg.io/webhook"
 
 	// LeaderElectionID The operator Leader Election ID
 	LeaderElectionID = "db9c8771.cnpg.io"
-
-	// CaSecretName is the name of the secret which is hosting the Operator CA
-	CaSecretName = "cnpg-ca-secret" // #nosec
-
 )
 
 // leaderElectionConfiguration contains the leader parameters that will be passed to controllerruntime.Options.
@@ -166,64 +149,74 @@ func RunController(
 		// When listening in cluster-wide, we MUST filter cache for ConfigMaps and Secrets, are those are watched
 		// Otherwire, we'll put in cache ALL ConfigMaps and ALL Secrets of the cluster...
 		// We'll still query all of them though........
-		managerOptions.Cache = cache.Options{
-			ByObject: map[client.Object]cache.ByObject{
-				&corev1.ConfigMap{}: {
-					Label: labels.SelectorFromSet(labels.Set{
-						cacheLabel.Name: cacheLabel.Value,
-					}),
-				},
-				&appsv1.Deployment{}: {
-					Label: labels.SelectorFromSet(labels.Set{
-						cacheLabel.Name: cacheLabel.Value,
-					}),
-				},
-				&batchv1.Job{}: {
-					Label: labels.SelectorFromSet(labels.Set{
-						cacheLabel.Name: cacheLabel.Value,
-					}),
-				},
-				&corev1.PersistentVolumeClaim{}: {
-					Label: labels.SelectorFromSet(labels.Set{
-						cacheLabel.Name: cacheLabel.Value,
-					}),
-				},
-				&corev1.Pod{}: {
-					Label: labels.SelectorFromSet(labels.Set{
-						cacheLabel.Name: cacheLabel.Value,
-					}),
-				},
-				&rbacv1.Role{}: {
-					Label: labels.SelectorFromSet(labels.Set{
-						cacheLabel.Name: cacheLabel.Value,
-					}),
-				},
-				&rbacv1.RoleBinding{}: {
-					Label: labels.SelectorFromSet(labels.Set{
-						cacheLabel.Name: cacheLabel.Value,
-					}),
-				},
-				&corev1.Secret{}: {
-					Label: labels.SelectorFromSet(labels.Set{
-						cacheLabel.Name: cacheLabel.Value,
-					}),
-				},
-				&corev1.Service{}: {
-					Label: labels.SelectorFromSet(labels.Set{
-						cacheLabel.Name: cacheLabel.Value,
-					}),
-				},
-				&corev1.ServiceAccount{}: {
-					Label: labels.SelectorFromSet(labels.Set{
-						cacheLabel.Name: cacheLabel.Value,
-					}),
-				},
-				&monitoringv1.PodMonitor{}: {
-					Label: labels.SelectorFromSet(labels.Set{
-						cacheLabel.Name: cacheLabel.Value,
-					}),
-				},
+		curCache := map[client.Object]cache.ByObject{
+			&corev1.ConfigMap{}: {
+				Label: labels.SelectorFromSet(labels.Set{
+					cacheLabel.Name: cacheLabel.Value,
+				}),
 			},
+			&appsv1.Deployment{}: {
+				Label: labels.SelectorFromSet(labels.Set{
+					cacheLabel.Name: cacheLabel.Value,
+				}),
+			},
+			&batchv1.Job{}: {
+				Label: labels.SelectorFromSet(labels.Set{
+					cacheLabel.Name: cacheLabel.Value,
+				}),
+			},
+			&corev1.PersistentVolumeClaim{}: {
+				Label: labels.SelectorFromSet(labels.Set{
+					cacheLabel.Name: cacheLabel.Value,
+				}),
+			},
+			&corev1.Pod{}: {
+				Label: labels.SelectorFromSet(labels.Set{
+					cacheLabel.Name: cacheLabel.Value,
+				}),
+			},
+			&rbacv1.Role{}: {
+				Label: labels.SelectorFromSet(labels.Set{
+					cacheLabel.Name: cacheLabel.Value,
+				}),
+			},
+			&rbacv1.RoleBinding{}: {
+				Label: labels.SelectorFromSet(labels.Set{
+					cacheLabel.Name: cacheLabel.Value,
+				}),
+			},
+			&corev1.Secret{}: {
+				Label: labels.SelectorFromSet(labels.Set{
+					cacheLabel.Name: cacheLabel.Value,
+				}),
+			},
+			&corev1.Service{}: {
+				Label: labels.SelectorFromSet(labels.Set{
+					cacheLabel.Name: cacheLabel.Value,
+				}),
+			},
+			&corev1.ServiceAccount{}: {
+				Label: labels.SelectorFromSet(labels.Set{
+					cacheLabel.Name: cacheLabel.Value,
+				}),
+			},
+		}
+		if conf.APIPodMonitorEnabled {
+			curCache[&monitoringv1.PodMonitor{}] = cache.ByObject{
+				Label: labels.SelectorFromSet(labels.Set{
+					cacheLabel.Name: cacheLabel.Value,
+				}),
+			}
+		}
+		if conf.APIVolumeSnapshotEnabled {
+			curCache[&storagesnapshotv1.VolumeSnapshot{}] = cache.ByObject{
+				Label: labels.SelectorFromSet(labels.Set{
+					cacheLabel.Name: cacheLabel.Value,
+				}),
+			}
+		}
+		managerOptions.Cache = cache.Options{
+			ByObject: curCache,
 		}
 		setupLog.Info("Listening for changes on all namespaces")
 	default:
@@ -454,15 +447,19 @@ func loadConfiguration(
 	}
 
 	// Check, if the API PodMonitor is enabled, CRD exists, otherwise we disable the API
-	if configuration.Current.APIPodMonitorEnabled {
-		discoveryClient, err := utils.GetDiscoveryClient()
-		if err != nil {
-			return err
-		}
-		ape, err := utils.PodMonitorExist(discoveryClient)
-		if err != nil || !ape {
-			configuration.Current.DisablePodMonitor()
-		}
+	discoveryClient, err := utils.GetDiscoveryClient()
+	if err != nil {
+		return err
+	}
+
+	ape, err := utils.PodMonitorExist(discoveryClient)
+	if err != nil || !ape {
+		configuration.Current.DisablePodMonitor()
+	}
+
+	vse, err := utils.VolumeSnapshotExist(discoveryClient)
+	if err != nil || !vse {
+		configuration.Current.DisableVolumeSnapshot()
 	}
 
 	// Check, if the API PodMonitor is enabled, we can list PodMonitors inside Operator own namespace
@@ -495,6 +492,21 @@ func loadConfiguration(
 		}
 	}
 
+	// Check if the API VolumeSnapshot is enabled, we can list VolumeSnapshot inside Operator own namespace
+	if configuration.Current.APIVolumeSnapshotEnabled {
+		vs := &storagesnapshotv1.VolumeSnapshot{}
+		var vsList client.ObjectList
+		vsSelector := client.MatchingFields{
+			"involvedObject.apiVersion": vs.APIVersion,
+			"involvedObject.kind":       vs.Kind,
+			"involvedObject.namespace":  configuration.Current.OperatorNamespace,
+		}
+		err := kubeClient.List(ctx, vsList, vsSelector)
+		if err != nil {
+			configuration.Current.DisableVolumeSnapshot()
+		}
+	}
+
 	return nil
 }
 
@@ -519,13 +531,13 @@ func ensurePKI(
 	// We need to self-manage required PKI infrastructure and install the certificates into
 	// the webhooks configuration
 	pkiConfig := certs.PublicKeyInfrastructure{
-		CaSecretName:                       CaSecretName,
+		CaSecretName:                       conf.CaSecretName,
 		CertDir:                            mgrCertDir,
-		SecretName:                         WebhookSecretName,
-		ServiceName:                        WebhookServiceName,
+		SecretName:                         conf.WebhookSecretName,
+		ServiceName:                        conf.WebhookServiceName,
 		OperatorNamespace:                  conf.OperatorNamespace,
-		MutatingWebhookConfigurationName:   MutatingWebhookConfigurationName,
-		ValidatingWebhookConfigurationName: ValidatingWebhookConfigurationName,
+		MutatingWebhookConfigurationName:   conf.MutatingWebhookName,
+		ValidatingWebhookConfigurationName: conf.ValidatingWebhookName,
 		OperatorDeploymentLabelSelector:    conf.OperatorSelector,
 	}
 	err := pkiConfig.Setup(ctx, kubeClient)

@@ -26,7 +26,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
-	"github.com/cloudnative-pg/cloudnative-pg/internal/cmd/manager/controller"
+	"github.com/cloudnative-pg/cloudnative-pg/internal/configuration"
 )
 
 // GetCNPGsMutatingWebhookByName get the MutatingWebhook filtered by the name of one
@@ -69,7 +69,7 @@ func GetCNPGsValidatingWebhookConf(env *TestingEnvironment) (
 ) {
 	ctx := context.Background()
 	validatingWebhookConfig, err := env.Interface.AdmissionregistrationV1().ValidatingWebhookConfigurations().Get(
-		ctx, controller.ValidatingWebhookConfigurationName, metav1.GetOptions{})
+		ctx, configuration.Current.ValidatingWebhookName, metav1.GetOptions{})
 	if err != nil {
 		return nil, err
 	}
@@ -116,7 +116,7 @@ func CheckWebhookReady(env *TestingEnvironment, namespace string) error {
 	secret := &corev1.Secret{}
 	secretNamespacedName := types.NamespacedName{
 		Namespace: namespace,
-		Name:      controller.WebhookSecretName,
+		Name:      configuration.Current.WebhookSecretName,
 	}
 	err := GetObject(env, secretNamespacedName, secret)
 	if err != nil {
@@ -133,7 +133,7 @@ func CheckWebhookReady(env *TestingEnvironment, namespace string) error {
 	for _, webhook := range mutatingWebhookConfig.Webhooks {
 		if !bytes.Equal(webhook.ClientConfig.CABundle, ca) {
 			return fmt.Errorf("secret %+v not match with ca bundle in %v: %v is not equal to %v",
-				controller.MutatingWebhookConfigurationName, secret, string(ca), string(webhook.ClientConfig.CABundle))
+				configuration.Current.MutatingWebhookName, secret, string(ca), string(webhook.ClientConfig.CABundle))
 		}
 	}
 
@@ -145,7 +145,7 @@ func CheckWebhookReady(env *TestingEnvironment, namespace string) error {
 	for _, webhook := range validatingWebhookConfig.Webhooks {
 		if !bytes.Equal(webhook.ClientConfig.CABundle, ca) {
 			return fmt.Errorf("secret not match with ca bundle in %v",
-				controller.ValidatingWebhookConfigurationName)
+				configuration.Current.ValidatingWebhookName)
 		}
 	}
 
@@ -159,5 +159,5 @@ func (env TestingEnvironment) GetCNPGsMutatingWebhookConf() (
 	ctx := context.Background()
 	return env.Interface.AdmissionregistrationV1().
 		MutatingWebhookConfigurations().
-		Get(ctx, controller.MutatingWebhookConfigurationName, metav1.GetOptions{})
+		Get(ctx, configuration.Current.MutatingWebhookName, metav1.GetOptions{})
 }

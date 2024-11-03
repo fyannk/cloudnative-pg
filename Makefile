@@ -15,7 +15,7 @@
 #
 
 # Image URL to use all building/pushing image targets
-IMAGE_NAME ?= ghcr.io/cloudnative-pg/cloudnative-pg-testing
+IMAGE_NAME ?= ghcr.io/fyannk/cloudnative-pg
 
 # Prevent e2e tests to proceed with empty tag which
 # will be considered as "latest".
@@ -38,7 +38,7 @@ LDFLAGS= "-X github.com/cloudnative-pg/cloudnative-pg/pkg/versions.buildVersion=
 DIST_PATH := $(shell pwd)/dist
 OPERATOR_MANIFEST_PATH := ${DIST_PATH}/operator-manifest.yaml
 LOCALBIN ?= $(shell pwd)/bin
-HELM_CRDS_PATH := $(shell pwd)/charts/operator/charts/crds/templates/crds.yaml
+HELM_CRDS_PATH := $(shell pwd)/charts/cloudnative-pg/charts/crds/templates/crds.yaml
 
 BUILD_IMAGE ?= true
 POSTGRES_IMAGE_NAME ?= $(shell grep 'DefaultImageName.*=' "pkg/versions/versions.go" | cut -f 2 -d \")
