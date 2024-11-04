@@ -1,13 +1,7 @@
 {{- /* Main Chart Validation */ -}}
-{{- if eq .Values.installMode "clusterwide" -}}
+{{- if eq .Values.installMode "ClusterWide" -}}
   {{- if gt (len .Values.managedNamespaces) 0 -}}
-  {{- fail "Managed namespaces must be empty when installMode is set to clusterwide" -}}
-  {{- end -}}
-{{- end -}}
-
-{{- if ne .Values.installMode "clusterwide" -}}
-  {{- if empty .Values.managedNamespaces -}}
-  {{- fail "Managed namespaces must be defined when installMode is not clusterwide" -}}
+  {{- fail "Managed namespaces must be empty when installMode is set to ClusterWide" -}}
   {{- end -}}
 {{- end -}}
 

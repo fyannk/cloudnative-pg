@@ -44,7 +44,7 @@ webhooks:
       namespace: {{ .Release.Namespace }}
       path: /validate-postgresql-cnpg-io-v1-backup
       port: {{ .Values.operator.service.port }}
-  failurePolicy: {{ .Values.cluster.webhooks.validating.failurePolicy }}
+  failurePolicy: {{ .Values.cluster.webhooks.validatingFailurePolicy }}
   name: vbackup.cnpg.io
   rules:
   - apiGroups:
@@ -73,7 +73,7 @@ webhooks:
       namespace: {{ .Release.Namespace }}
       path: /validate-postgresql-cnpg-io-v1-cluster
       port: {{ .Values.operator.service.port }}
-  failurePolicy: {{ .Values.cluster.webhooks.validating.failurePolicy }}
+  failurePolicy: {{ .Values.cluster.webhooks.validatingFailurePolicy }}
   name: vcluster.cnpg.io
   rules:
   - apiGroups:
@@ -102,7 +102,7 @@ webhooks:
       namespace: {{ .Release.Namespace }}
       path: /validate-postgresql-cnpg-io-v1-scheduledbackup
       port: {{ .Values.operator.service.port }}
-  failurePolicy: {{ .Values.cluster.webhooks.validating.failurePolicy }}
+  failurePolicy: {{ .Values.cluster.webhooks.validatingFailurePolicy }}
   name: vscheduledbackup.cnpg.io
   rules:
   - apiGroups:
@@ -131,7 +131,7 @@ webhooks:
       namespace: {{ .Release.Namespace }}
       path: /validate-postgresql-cnpg-io-v1-pooler
       port: {{ .Values.operator.service.port }}
-  failurePolicy: {{ .Values.cluster.webhooks.validating.failurePolicy }}
+  failurePolicy: {{ .Values.cluster.webhooks.validatingFailurePolicy }}
   name: vpooler.cnpg.io
   rules:
     - apiGroups:

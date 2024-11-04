@@ -87,7 +87,7 @@ features:
     monitoring: true
     # -- Enable NetworkPolicy creation.
     # @section -- Features
-    networkpolicy: true
+    networkpolicy: false
     # -- Enable PodMonitor creation.
     # @section -- Features
     podmonitor: true
@@ -405,10 +405,10 @@ cluster:
     manageCerts: true
     # -- MutatingWebHook failure policy
     # @section -- Cluster
-    mutatingfailurePolicy: Fail
+    mutatingFailurePolicy: Fail
     # -- ValidatingWebHook failure policy
     # @section -- Cluster
-    validatingfailurePolicy: Fail
+    validatingFailurePolicy: Fail
   user:
     # -- Aggregate ClusterRoles to Kubernetes default user-facing roles.
     # Ref: https://kubernetes.io/docs/reference/access-authn-authz/rbac/#user-facing-roles
