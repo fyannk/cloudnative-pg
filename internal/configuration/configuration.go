@@ -49,7 +49,7 @@ const (
 	ClusterWideCacheValue = "true"
 
 	// DefaultClusterWideCacheFilter is the default value for ClusterWideCacheFilter to enable or not Filtered Cache
-	DefaultClusterWideCacheFilter = true
+	DefaultClusterWideCacheFilter = false
 
 	// DefaultWebhookEnabled is enabling by default webhook support
 	DefaultWebhookEnabled = true
