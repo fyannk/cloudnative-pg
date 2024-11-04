@@ -1,18 +1,80 @@
+{{- $shouldClusterWebHook := include "cloudnative-pg.cluster.shouldWebhooks" . }}
+{{- $shouldClusterRole := include "cloudnative-pg.cluster.shouldRole" . }}
+{{- $shouldClusterRoleBinding := include "cloudnative-pg.cluster.shouldRoleBinding" . }}
 
-CloudNativePG operator should be installed in namespace "{{ .Release.Namespace }}".
-You can now create a PostgreSQL cluster with 3 nodes in the current namespace as follows:
+{{- $shouldOperatorConfig := include "cloudnative-pg.operator.shouldConfiguration" . }}
+{{- $shouldOperatorDeploy := include "cloudnative-pg.operator.shouldDeployment" . }}
+{{- $shouldOperatorMonito := include "cloudnative-pg.operator.shouldMonitoring" . }}
+{{- $shouldOperatorNetPol := include "cloudnative-pg.operator.shouldNetworkPolicy" . }}
+{{- $shouldOperatorPodMon := include "cloudnative-pg.operator.shouldPodMonitor" . }}
+{{- $shouldOperatorRole   := include "cloudnative-pg.operator.shouldRole" . }}
+{{- $shouldOperatorRoleBi := include "cloudnative-pg.operator.shouldRoleBinding" . }}
+{{- $shouldOperatorSvc    := include "cloudnative-pg.operator.shouldService" . }}
+{{- $shouldOperatorSvcAcc := include "cloudnative-pg.operator.shouldServiceAccount" . }}
 
-cat <<EOF | kubectl apply -f -
-# Example of PostgreSQL cluster
-apiVersion: postgresql.cnpg.io/v1
-kind: Cluster
-metadata:
-  name: cluster-example
-spec:
-  instances: 3
-  storage:
-    size: 1Gi
-EOF
+CloudNative-PG operator is deployed in namespace "{{ .Release.Namespace }}".
 
-kubectl get cluster
+Recap:
 
+Installation Mode: {{ .Values.installMode }}
+
+Resources:
+  CustomResourceDefinitions: {{ .Values.installCRDs }}
+  {{- if .Values.features.cluster.enabled }}
+  Clustered:
+    {{- if eq $shouldClusterRole "true" }}
+    Role: {{ include "cloudnative-pg.namespacedName" . }}
+    {{- end }}
+    {{- if eq $shouldClusterRoleBinding "true" }}
+    RoleBinding: {{ include "cloudnative-pg.namespacedName" . }}
+    {{- end }}
+    {{- if eq $shouldClusterWebHook "true" }}
+    WebHooks:
+      - Mutating: {{ include "cloudnative-pg.mutatingWebhookName" . }}
+      - Validating: {{ include "cloudnative-pg.validationWebhookName" . }}
+    {{- end }}
+  {{- end }}
+  {{- if .Values.features.operator.enabled }}
+  Namespace {{ .Release.Namespace }}:
+    {{- if eq $shouldOperatorConfig "true" }}
+    Configuration: {{ include "cloudnative-pg.configurationName" . }}
+    {{- end }}
+    {{- if eq $shouldOperatorDeploy "true" }}
+    Deployment: {{ include "cloudnative-pg.fullname" . }}
+    {{- end }}
+    {{- if eq $shouldOperatorMonito "true" }}
+    Monitoring ConfigMap: {{ include "cloudnative-pg.monitoringName" . }}
+    {{- end }}
+    {{- if eq $shouldOperatorNetPol "true" }}
+    NetworkPolicy: {{ include "cloudnative-pg.fullname" . }}
+    {{- end }}
+    {{- if eq $shouldOperatorPodMon "true" }}
+    PodMonitor: {{ include "cloudnative-pg.fullname" . }}
+    {{- end }}
+    {{- if eq $shouldOperatorRole "true" }}
+    Role: {{ include "cloudnative-pg.fullname" . }}
+    {{- end }}
+    {{- if eq $shouldOperatorRoleBi "true" }}
+    RoleBinding: {{ include "cloudnative-pg.fullname" . }}
+    {{- end }}
+    {{- if eq $shouldOperatorSvc "true" }}
+    Service: {{ include "cloudnative-pg.serviceAccountName" . }}
+    {{- end }}
+    {{- if eq $shouldOperatorSvcAcc "true" }}
+    ServiceAccount: {{ include "cloudnative-pg.serviceAccountName" . }}
+    {{- end }}
+  {{- end }}
+  {{- if gt (len .Values.managedNamespaces) 0 }}
+  {{- range .Values.managedNamespaces }}
+  {{- $namespace := . }}
+  {{- if ne $namespace $.Release.Namespace }}
+  Namespace {{ $namespace }}:
+    {{- if eq $shouldOperatorRole "true" }}
+    Role: {{ include "cloudnative-pg.namespacedName" $ }}
+    {{- end }}
+    {{- if eq $shouldOperatorRoleBi "true" }}
+    RoleBinding: {{ include "cloudnative-pg.namespacedName" $ }}
+    {{- end }}
+  {{- end }}
+  {{- end }}
+  {{- end }}

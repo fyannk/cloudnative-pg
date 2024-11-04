@@ -16,34 +16,28 @@ limitations under the License.
 
 */ -}}
 
-{{- if .Values.config.create }}
+{{- /* Create Service for the Operator's WebHooks */ -}}
+
+{{- $should := include "cloudnative-pg.operator.shouldService" . }}
+
+{{- if eq $should "true" }}
 ---
-{{- if not .Values.config.secret }}
 apiVersion: v1
-kind: ConfigMap
+kind: Service
 metadata:
-  name: {{ .Values.config.name }}
+  name: {{ include "cloudnative-pg.serviceName" . }}
   labels:
     {{- include "cloudnative-pg.labels" . | nindent 4 }}
   {{- with .Values.commonAnnotations }}
   annotations:
     {{- toYaml . | nindent 4 }}
   {{- end }}
-data:
-  {{- toYaml .Values.config.data | nindent 2 }}
-{{- else }}
-apiVersion: v1
-kind: Secret
-type: Opaque
-metadata:
-  name: {{ .Values.config.name }}
-  labels:
-    {{- include "cloudnative-pg.labels" . | nindent 4 }}
-  {{- with .Values.commonAnnotations }}
-  annotations:
-    {{- toYaml . | nindent 4 }}
-  {{- end }}
-stringData:
-  {{- toYaml .Values.config.data | nindent 2 }}
-{{- end }}
-{{- end }}
+spec:
+  type: {{ .Values.operator.service.type }}
+  ports:
+  - port: {{ .Values.operator.service.port }}
+    targetPort: webhook-server
+    name: webhook-server
+  selector:
+    {{- include "cloudnative-pg.selectorLabels" . | nindent 4 }}
+{{- end  }}

@@ -16,6 +16,12 @@ limitations under the License.
 
 */ -}}
 
+{{- /* Create Operator's Deployment */ -}}
+
+{{- $should := include "cloudnative-pg.operator.shouldDeployment" . }}
+{{- $shouldConfig := include "cloudnative-pg.operator.shouldConfiguration" . }}
+
+{{- if eq $should "true" }}
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -28,14 +34,14 @@ metadata:
     {{- toYaml . | nindent 4 }}
   {{- end }}
 spec:
-  replicas: {{ .Values.replicaCount }}
+  replicas: {{ .Values.operator.deployment.replicaCount }}
   selector:
     matchLabels:
       {{- include "cloudnative-pg.selectorLabels" . | nindent 6 }}
   template:
     metadata:
       annotations:
-        checksum/config: {{ include (print $.Template.BasePath "/config.yaml") . | sha256sum }}
+        checksum/config: {{ include (print $.Template.BasePath "/operator/config.yaml") . | sha256sum }}
       {{- with .Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
       {{- end }}
@@ -45,36 +51,36 @@ spec:
         {{- toYaml . | nindent 8 }}
         {{- end }}
     spec:
-      {{- with .Values.imagePullSecrets }}
+      {{- with .Values.operator.deployment.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- if .Values.hostNetwork }}
-      hostNetwork: {{ .Values.hostNetwork }}
+      {{- if .Values.operator.deployment.hostNetwork }}
+      hostNetwork: {{ .Values.operator.deployment.hostNetwork }}
       {{- end }}
-      {{- if .Values.dnsPolicy }}
-      dnsPolicy: {{ .Values.dnsPolicy }}
+      {{- if .Values.operator.deployment.dnsPolicy }}
+      dnsPolicy: {{ .Values.operator.deployment.dnsPolicy }}
       {{- end }}
       containers:
       - args:
         - controller
         - --leader-elect
-        {{- if .Values.config.name }}
-        {{- if not .Values.config.secret }}
-        - --config-map-name={{ .Values.config.name }}
+        {{- if eq $shouldConfig "true" }}
+        {{- if not .Values.operator.configuration.secret }}
+        - --config-map-name={{ include "cloudnative-pg.configurationName" . }}
         {{- else }}
-        - --secret-name={{ .Values.config.name }}
+        - --secret-name={{ include "cloudnative-pg.configurationName" . }}
         {{- end }}
         {{- end }}
-        - --webhook-port={{ .Values.webhook.port }}
-        {{- range .Values.additionalArgs }}
+        - --webhook-port={{ .Values.cluster.webhooks.port }}
+        {{- range .Values.operator.deployment.additionalArgs }}
         - {{ . }}
         {{- end }}
         command:
         - /manager
         env:
         - name: OPERATOR_IMAGE_NAME
-          value: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          value: "{{ .Values.operator.deployment.image.repository }}:{{ .Values.operator.deployment.image.tag | default .Chart.AppVersion }}"
         - name: OPERATOR_NAMESPACE
           valueFrom:
             fieldRef:
@@ -82,75 +88,69 @@ spec:
         - name: OPERATOR_SELECTOR
           value: {{ include "cloudnative-pg.operatorSelector" . | quote }}
         - name: MONITORING_QUERIES_CONFIGMAP
-          value: "{{ .Values.monitoringQueriesConfigMap.name }}"
+          value: "{{ include "cloudnative-pg.monitoringName" . }}"
         - name: WEBHOOK_SERVICE_NAME
-          value: "{{ .Values.service.name }}"
+          value: "{{ include "cloudnative-pg.serviceName" . }}"
         - name: MUTATING_WEBHOOK_NAME
           value: "{{ include "cloudnative-pg.mutatingWebhookName" . }}"
         - name: VALIDATING_WEBHOOK_NAME
           value: "{{ include "cloudnative-pg.validationWebhookName" . }}"
         - name: WATCH_NAMESPACE
           value: "{{ .Values.managedNamespaces | join "," }}"
-        - name: CLUSTER_WIDE_CACHE_FILTER
-          value: "true"
-        - name: INHERITED_ANNOTATIONS
-          value: "prometheus.io/scrape, prometheus.io/path, prometheus.io/port"
-        - name: MANDATORY_ANNOTATIONS
-          value: "prometheus.io/scrape=true, prometheus.io/path=/metrics, prometheus.io/port=9187"
-        {{- if .Values.additionalEnv }}
-        {{- tpl (.Values.additionalEnv | toYaml) . | nindent 8 }}
+        {{- if .Values.operator.deployment.additionalEnv }}
+        {{- tpl (.Values.operator.deployment.additionalEnv | toYaml) . | nindent 8 }}
         {{- end }}
-        image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
-        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        image: "{{ .Values.operator.deployment.image.repository }}:{{ .Values.operator.deployment.image.tag | default .Chart.AppVersion }}"
+        imagePullPolicy: {{ .Values.operator.deployment.image.pullPolicy }}
         livenessProbe:
           httpGet:
             path: /readyz
-            port: {{ .Values.webhook.port }}
+            port: {{ .Values.operator.deployment.port }}
             scheme: HTTPS
-          {{- if .Values.webhook.livenessProbe.initialDelaySeconds }}
-          initialDelaySeconds: {{ .Values.webhook.livenessProbe.initialDelaySeconds }}
+          {{- if .Values.operator.deployment.livenessProbe.initialDelaySeconds }}
+          initialDelaySeconds: {{ .Values.operator.deployment.livenessProbe.initialDelaySeconds }}
           {{- end }}
         name: manager
         ports:
         - containerPort: 8080
           name: metrics
           protocol: TCP
-        - containerPort: {{ .Values.webhook.port }}
+        - containerPort: {{ .Values.operator.deployment.port }}
           name: webhook-server
           protocol: TCP
         readinessProbe:
           httpGet:
             path: /readyz
-            port: {{ .Values.webhook.port }}
+            port: {{ .Values.operator.deployment.port }}
             scheme: HTTPS
-          {{- if .Values.webhook.readinessProbe.initialDelaySeconds }}
-          initialDelaySeconds: {{ .Values.webhook.readinessProbe.initialDelaySeconds }}
+          {{- if .Values.operator.deployment.readinessProbe.initialDelaySeconds }}
+          initialDelaySeconds: {{ .Values.operator.deployment.readinessProbe.initialDelaySeconds }}
           {{- end }}
         resources:
-          {{- toYaml .Values.resources | nindent 10 }}
+          {{- toYaml .Values.operator.deployment.resources | nindent 10 }}
         securityContext:
-          {{- toYaml .Values.containerSecurityContext | nindent 10 }}
+          {{- toYaml .Values.operator.deployment.containerSecurityContext | nindent 10 }}
         volumeMounts:
         - mountPath: /controller
           name: scratch-data
         - mountPath: /run/secrets/cnpg.io/webhook
           name: webhook-certificates
-      {{- if .Values.priorityClassName }}
-      priorityClassName: {{ .Values.priorityClassName }}
+      {{- if .Values.operator.deployment.priorityClassName }}
+      priorityClassName: {{ .Values.operator.deployment.priorityClassName }}
       {{- end }}
       securityContext:
-        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+        {{- toYaml .Values.operator.deployment.podSecurityContext | nindent 8 }}
       serviceAccountName: {{ include "cloudnative-pg.serviceAccountName" . }}
       terminationGracePeriodSeconds: 10
-      {{- with .Values.nodeSelector }}
+      {{- with .Values.operator.deployment.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- with .Values.affinity }}
+      {{- with .Values.operator.deployment.affinity }}
       affinity:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- with .Values.tolerations }}
+      {{- with .Values.operator.deployment.tolerations }}
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
@@ -162,5 +162,4 @@ spec:
           defaultMode: 420
           optional: true
           secretName: cnpg-webhook-cert
-
-
+{{- end }}

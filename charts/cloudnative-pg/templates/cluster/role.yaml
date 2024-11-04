@@ -1,0 +1,66 @@
+{{- /*
+
+Copyright The CloudNativePG Contributors
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+*/ -}}
+
+{{- /*
+  Create ClusterRole for the Operator
+
+  In ClusterWide, full rights are needed to manage all resources
+  In Secure Namespaced with ManagingCerts, give rights for WebHooks
+
+ */ -}}
+
+{{- $fullName := include "cloudnative-pg.fullname" . -}}
+{{- $svcAccount := include "cloudnative-pg.serviceAccountName" . }}
+{{- $should := include "cloudnative-pg.cluster.shouldRole" . }}
+{{- $shouldManageWebHook := include "cloudnative-pg.cluster.shouldManageWebhooks" . }}
+
+{{- if eq $should "true" }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: "{{ include "cloudnative-pg.namespacedName" . }}"
+  labels:
+    {{- include "cloudnative-pg.labels" $ | nindent 4 }}
+  {{- with $.Values.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+rules:
+  {{- if eq (len .Values.managedNamespaces) 0 }} {{- /* ClusterWide Installation */ -}}
+  {{- $.Files.Get "includes/operator/basic.yaml" | nindent 2 }}
+  {{- if $.Values.capabilities.nodeList }}
+  {{- $.Files.Get "includes/operator/node.yaml" | nindent 2 }}
+  {{- end }}
+  {{- if $.Values.capabilities.podMonitor }}
+  {{- $.Files.Get "includes/operator/podmonitor.yaml" | nindent 2 }}
+  {{- end }}
+  {{- if $.Values.capabilities.volumeSnapshot }}
+  {{- $.Files.Get "includes/operator/volumesnapshot.yaml" | nindent 2 }}
+  {{- end }}
+  {{- range $path, $_ :=  .Files.Glob  "includes/users/**.yaml" }}
+    {{- $.Files.Get $path | nindent 2 }}
+  {{- end }}
+  {{- range $path, $_ :=  .Files.Glob  "includes/mix/**.yaml" }}
+    {{- $.Files.Get $path | nindent 2 }}
+  {{- end }}
+  {{- end }} {{- /* End of ClusterWide Installation */}}
+  {{- if eq $shouldManageWebHook "true" }}
+  {{- $.Files.Get "includes/operator/webhook.yaml" | nindent 2 }}
+  {{- end }}
+{{- end }}

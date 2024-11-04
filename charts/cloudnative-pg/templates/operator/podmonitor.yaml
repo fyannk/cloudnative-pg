@@ -16,22 +16,36 @@ limitations under the License.
 
 */ -}}
 
----
-apiVersion: v1
-kind: Service
+{{- /* Create PodMonitor for the Operator */ -}}
+
+{{- $should := include "cloudnative-pg.operator.shouldPodMonitor" . }}
+
+{{- if eq $should "true" }}
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
 metadata:
-  name: {{ .Values.service.name }}
+  name: {{ include "cloudnative-pg.fullname" . }}
   labels:
     {{- include "cloudnative-pg.labels" . | nindent 4 }}
+    {{- with .Values.operator.podmonitor.additionalLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end}}
   {{- with .Values.commonAnnotations }}
   annotations:
     {{- toYaml . | nindent 4 }}
   {{- end }}
 spec:
-  type: {{ .Values.service.type }}
-  ports:
-  - port: {{ .Values.service.port }}
-    targetPort: webhook-server
-    name: webhook-server
   selector:
-    {{- include "cloudnative-pg.selectorLabels" . | nindent 4 }}
+    matchLabels:
+      {{- include "cloudnative-pg.selectorLabels" . | nindent 6 }}
+  podMetricsEndpoints:
+    - port: metrics
+      {{- with .Values.operator.podmonitor.metricRelabelings }}
+      metricRelabelings:
+      {{- toYaml . | nindent 6 }}
+      {{- end }}
+      {{- with .Values.operator.podmonitor.relabelings }}
+      relabelings:
+      {{- toYaml . | nindent 6 }}
+      {{- end }}
+{{- end }}

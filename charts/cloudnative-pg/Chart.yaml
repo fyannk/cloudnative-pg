@@ -23,6 +23,7 @@ appVersion: "0.0.0-SNAPSHOT"
 kubeVersion: ">=1.21.0-0"
 sources:
   - https://github.com/cloudnative-pg/charts
+  - https://github.com/fyannk/cloudnative-pg
 keywords:
   - operator
   - controller
@@ -34,4 +35,5 @@ maintainers: []
 dependencies:
   - name: crds
     version: "0.0.0-SNAPSHOT"
-    condition: capabilities.crds
+    condition: installCRDs
+    repository: https://fyannk.github.io/cloudnative-pg

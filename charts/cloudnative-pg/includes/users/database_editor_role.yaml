@@ -1,0 +1,9 @@
+- apiGroups:
+  - postgresql.cnpg.io
+  resources:
+  - databases
+  verbs:
+  - create
+  - delete
+  - patch
+  - update

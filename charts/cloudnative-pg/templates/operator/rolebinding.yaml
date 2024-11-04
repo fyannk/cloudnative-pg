@@ -16,17 +16,30 @@ limitations under the License.
 
 */ -}}
 
+{{- /* Create RoleBinding for the Operator */ -}}
+
+{{- $fullName := include "cloudnative-pg.fullname" . -}}
+{{- $svcAccount := include "cloudnative-pg.serviceAccountName" . }}
+{{- $should := include "cloudnative-pg.operator.shouldRoleBinding" . }}
+
+{{- if eq $should "true" }}
 ---
-apiVersion: v1
-kind: ConfigMap
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
 metadata:
-  name: {{ .Values.monitoringQueriesConfigMap.name }}
+  name: "{{ $fullName }}"
+  namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "cloudnative-pg.labels" . | nindent 4 }}
-    cnpg.io/reload: ""
-  {{- with .Values.commonAnnotations }}
+    {{- include "cloudnative-pg.labels" $ | nindent 4 }}
+  {{- with $.Values.commonAnnotations }}
   annotations:
     {{- toYaml . | nindent 4 }}
   {{- end }}
-data:
-  queries: {{- toYaml .Values.monitoringQueriesConfigMap.queries | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: "{{ $fullName }}"
+subjects:
+- kind: ServiceAccount
+  name: "{{ $svcAccount }}"
+{{- end }}
