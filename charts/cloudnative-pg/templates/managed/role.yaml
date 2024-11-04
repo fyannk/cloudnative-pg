@@ -1,0 +1,59 @@
+{{- /*
+
+Copyright The CloudNativePG Contributors
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+*/ -}}
+
+{{- /* Create Role on Managed namespaces, except Operator's Namespace, only for non-ClusterWide installations */ -}}
+
+{{- $fullName := include "cloudnative-pg.namespacedName" . -}}
+{{- $svcAccount := include "cloudnative-pg.serviceAccountName" . }}
+{{- $should := include "cloudnative-pg.managed.shouldRole" . }}
+
+{{- if eq $should "true" }}
+{{- range .Values.managedNamespaces }}
+{{- $namespace := . }}
+{{- if ne $namespace $.Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: "{{ $fullName }}"
+  namespace: {{ $namespace }}
+  labels:
+    {{- include "cloudnative-pg.labels" $ | nindent 4 }}
+  {{- with $.Values.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+rules:
+{{/* template "cloudnative-pg.rbac." $ | toYaml | indent 2 */}}
+{{ $.Files.Get "includes/operator/basic.yaml" }}
+{{- if $.Values.capabilities.nodeList }}
+{{- $.Files.Get "includes/operator/node.yaml" | nindent 2 }}
+{{- end }}
+{{- if $.Values.capabilities.podMonitor }}
+{{- $.Files.Get "includes/operator/podmonitor.yaml" | nindent 2 }}
+{{- end }}
+{{- if $.Values.capabilities.volumeSnapshot }}
+{{- $.Files.Get "includes/operator/volumesnapshot.yaml" | nindent 2 }}
+{{- end }}
+{{- range $path, $_ := $.Files.Glob "includes/users/**.yaml" }}
+  {{- $.Files.Get $path | nindent 2 }}
+{{- end }}
+{{- $.Files.Get "includes/mix/namespaced.yaml" | nindent 2 }}
+{{- end }} {{- /* end of if ne $namespace $.Release.Namespace */}}
+{{- end }} {{- /* end of range .Values.managedNamespaces */}}
+{{- end }} {{- /* end of if eq $should "true" */}}

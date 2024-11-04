@@ -16,17 +16,38 @@ limitations under the License.
 
 */ -}}
 
-{{- if .Values.serviceAccount.create }}
+{{- /* Create Operator's configuration, either ConfigMap or Secret format */ -}}
+
+{{- $should := include "cloudnative-pg.operator.shouldConfiguration" . }}
+
+{{- if eq $should "true" }}
 ---
+{{- if not .Values.operator.configuration.secret }}
 apiVersion: v1
-kind: ServiceAccount
+kind: ConfigMap
 metadata:
-  name: {{ include "cloudnative-pg.serviceAccountName" . }}
-  namespace: {{ .Release.Namespace }}
+  name: {{ include "cloudnative-pg.configurationName" . }}
   labels:
     {{- include "cloudnative-pg.labels" . | nindent 4 }}
   {{- with .Values.commonAnnotations }}
   annotations:
     {{- toYaml . | nindent 4 }}
   {{- end }}
+data:
+  {{- toYaml .Values.operator.configuration.data | nindent 2 }}
+{{- else }}
+apiVersion: v1
+kind: Secret
+type: Opaque
+metadata:
+  name: {{ include "cloudnative-pg.configurationName" . }}
+  labels:
+    {{- include "cloudnative-pg.labels" . | nindent 4 }}
+  {{- with .Values.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+stringData:
+  {{- toYaml .Values.operator.configuration.data | nindent 2 }}
+{{- end }}
 {{- end }}

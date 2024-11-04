@@ -16,16 +16,23 @@ limitations under the License.
 
 */ -}}
 
-{{- if .Values.webhook.mutating.create }}
+{{- /* Create Mutating Webhook */ -}}
+
+{{- $should := include "cloudnative-pg.cluster.shouldWebhooks" . }}
+
+{{- if eq $should "true" }}
 ---
 apiVersion: admissionregistration.k8s.io/v1
 kind: MutatingWebhookConfiguration
 metadata:
   name: {{ include "cloudnative-pg.mutatingWebhookName" . }}
-  {{- with .Values.commonAnnotations }}
   annotations:
+    {{- with .Values.commonAnnotations }}
     {{- toYaml . | nindent 4 }}
-  {{- end }}
+    {{- end }}
+    {{- with .Values.cluster.webhooks.certManagerCert }}
+    cert-manager.io/inject-ca-from: "{{ $.Release.Namespace }}/{{ . }}"
+    {{- end }}
   labels:
     {{- include "cloudnative-pg.labels" . | nindent 4 }}
 webhooks:
@@ -33,11 +40,11 @@ webhooks:
   - v1
   clientConfig:
     service:
-      name: {{ .Values.service.name }}
+      name: {{ include "cloudnative-pg.serviceName" . }}
       namespace: {{ .Release.Namespace }}
       path: /mutate-postgresql-cnpg-io-v1-backup
-      port: {{ .Values.service.port }}
-  failurePolicy: {{ .Values.webhook.mutating.failurePolicy }}
+      port: {{ .Values.operator.service.port }}
+  failurePolicy: {{ .Values.cluster.webhooks.mutating.failurePolicy }}
   name: mbackup.cnpg.io
   rules:
   - apiGroups:
@@ -62,11 +69,11 @@ webhooks:
   - v1
   clientConfig:
     service:
-      name: {{ .Values.service.name }}
+      name: {{ include "cloudnative-pg.serviceName" . }}
       namespace: {{ .Release.Namespace }}
       path: /mutate-postgresql-cnpg-io-v1-cluster
-      port: {{ .Values.service.port }}
-  failurePolicy: {{ .Values.webhook.mutating.failurePolicy }}
+      port: {{ .Values.operator.service.port }}
+  failurePolicy: {{ .Values.cluster.webhooks.mutating.failurePolicy }}
   name: mcluster.cnpg.io
   rules:
   - apiGroups:
@@ -91,11 +98,11 @@ webhooks:
   - v1
   clientConfig:
     service:
-      name: {{ .Values.service.name }}
+      name: {{ include "cloudnative-pg.serviceName" . }}
       namespace: {{ .Release.Namespace }}
       path: /mutate-postgresql-cnpg-io-v1-scheduledbackup
-      port: {{ .Values.service.port }}
-  failurePolicy: {{ .Values.webhook.mutating.failurePolicy }}
+      port: {{ .Values.operator.service.port }}
+  failurePolicy: {{ .Values.cluster.webhooks.mutating.failurePolicy }}
   name: mscheduledbackup.cnpg.io
   rules:
   - apiGroups:

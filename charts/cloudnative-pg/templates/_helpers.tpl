@@ -58,11 +58,28 @@ app.kubernetes.io/name={{ include "cloudnative-pg.name" . }}
 Create the name of the service account to use
 */}}
 {{- define "cloudnative-pg.serviceAccountName" -}}
-{{- if .Values.serviceAccount.create }}
-{{- default (include "cloudnative-pg.fullname" .) .Values.serviceAccount.name }}
-{{- else }}
-{{- default "default" .Values.serviceAccount.name }}
+{{- default (include "cloudnative-pg.fullname" .) .Values.operator.serviceAccount.name }}
 {{- end }}
+
+{{/*
+Create the name of the service to use
+*/}}
+{{- define "cloudnative-pg.serviceName" -}}
+{{- default (include "cloudnative-pg.fullname" .) .Values.operator.service.name }}
+{{- end }}
+
+{{/*
+Create the name of the monitoring configmap to use
+*/}}
+{{- define "cloudnative-pg.monitoringName" -}}
+{{- default (include "cloudnative-pg.fullname" .) .Values.operator.monitoring.name }}
+{{- end }}
+
+{{/*
+Create the name of the configuration to use
+*/}}
+{{- define "cloudnative-pg.configurationName" -}}
+{{- default (include "cloudnative-pg.fullname" .) .Values.operator.configuration.name }}
 {{- end }}
 
 {{/*
@@ -123,127 +140,6 @@ RBAC permissions on optional VolumeSnapshot
   - get
   - list
   - patch
-  - watch
-{{- end -}}
-
-{{/*
-RBAC permissions on Generic K8S objects
-*/}}
-{{- define "cloudnative-pg.genericRbacRules" -}}
-- apiGroups:
-  - ""
-  resources:
-  - configmaps
-  - secrets
-  - services
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - ""
-  resources:
-  - configmaps/status
-  - secrets/status
-  verbs:
-  - get
-  - patch
-  - update
-- apiGroups:
-  - ""
-  resources:
-  - events
-  verbs:
-  - create
-  - patch
-- apiGroups:
-  - ""
-  resources:
-  - persistentvolumeclaims
-  - pods
-  - pods/exec
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - watch
-- apiGroups:
-  - ""
-  resources:
-  - pods/status
-  verbs:
-  - get
-- apiGroups:
-  - ""
-  resources:
-  - serviceaccounts
-  verbs:
-  - create
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - apps
-  resources:
-  - deployments
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - batch
-  resources:
-  - jobs
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - watch
-- apiGroups:
-  - coordination.k8s.io
-  resources:
-  - leases
-  verbs:
-  - create
-  - get
-  - update
-- apiGroups:
-  - policy
-  resources:
-  - poddisruptionbudgets
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - rbac.authorization.k8s.io
-  resources:
-  - rolebindings
-  - roles
-  verbs:
-  - create
-  - get
-  - list
-  - patch
-  - update
   - watch
 {{- end -}}
 
@@ -323,25 +219,50 @@ RBAC Admin permissions on CNPG objects
 {{- end -}}
 
 {{/*
+  Follow RFC 1035 and 1123
+*/}}
+
+{{/*
+Determine the name for all external resources 
+*/}}
+{{- define "cloudnative-pg.namespacedName" -}}
+{{- $name := include "cloudnative-pg.name" . -}}
+{{ printf "%s-%s-postgresql-cnpg-io" .Release.Name .Release.Namespace | trunc 63 | trimSuffix "-" }}
+{{- end -}}
+
+{{/*
 Determine the name for the mutating webhook 
 */}}
 {{- define "cloudnative-pg.mutatingWebhookName" -}}
-{{- $name := include "cloudnative-pg.name" . -}}
-{{ printf "mutating.%s.%s.postgresql.cnpg.io" $name .Release.Namespace | trunc 63 | trimSuffix "-" }}
+{{- $name := include "cloudnative-pg.namespacedName" . -}}
+{{ printf "mutating-%s" $name | trunc 63 | trimSuffix "-" }}
 {{- end -}}
 
 {{/*
 Determine the name for the validation webhook 
 */}}
 {{- define "cloudnative-pg.validationWebhookName" -}}
-{{- $name := include "cloudnative-pg.name" . -}}
-{{ printf "validating.%s.%s.postgresql.cnpg.io" $name .Release.Namespace | trunc 63 | trimSuffix "-" }}
+{{- $name := include "cloudnative-pg.namespacedName" . -}}
+{{ printf "validating-%s" $name | trunc 63 | trimSuffix "-" }}
 {{- end -}}
 
 {{/*
-Determine the name for the webhook CR/CRB 
+Determine the name for global user rbac viewer 
 */}}
-{{- define "cloudnative-pg.webhookCluster" -}}
-{{- $name := include "cloudnative-pg.name" . -}}
-{{ printf "%s.%s.postgresql.cnpg.io" $name .Release.Namespace | trunc 63 | trimSuffix "-" }}
+{{- define "cloudnative-pg.globalRbacViewer" -}}
+{{- "viewer-postgresql-cnpg-io" }}
+{{- end -}}
+
+{{/*
+Determine the name for global user rbac editor 
+*/}}
+{{- define "cloudnative-pg.globalRbacEditor" -}}
+{{- "editor-postgresql-cnpg-io" }}
+{{- end -}}
+
+{{/*
+Determine the name for global user rbac admin 
+*/}}
+{{- define "cloudnative-pg.globalRbacAdmin" -}}
+{{- "admin-postgresql-cnpg-io" }}
 {{- end -}}

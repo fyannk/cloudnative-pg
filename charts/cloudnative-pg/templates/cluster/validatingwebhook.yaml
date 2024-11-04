@@ -16,7 +16,11 @@ limitations under the License.
 
 */ -}}
 
-{{- if .Values.webhook.validating.create }}
+{{- /* Create ValidatingWebHook */ -}}
+
+{{- $should := include "cloudnative-pg.cluster.shouldWebhooks" . }}
+
+{{- if eq $should "true" }}
 ---
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingWebhookConfiguration
@@ -24,20 +28,23 @@ metadata:
   name: {{ include "cloudnative-pg.validationWebhookName" . }}
   labels:
     {{- include "cloudnative-pg.labels" . | nindent 4 }}
-  {{- with .Values.commonAnnotations }}
   annotations:
+    {{- with .Values.commonAnnotations }}
     {{- toYaml . | nindent 4 }}
-  {{- end }}
+    {{- end }}
+    {{- with .Values.cluster.webhooks.certManagerCert }}
+    cert-manager.io/inject-ca-from: "{{ $.Release.Namespace }}/{{ . }}"
+    {{- end }}
 webhooks:
 - admissionReviewVersions:
   - v1
   clientConfig:
     service:
-      name: {{ .Values.service.name }}
+      name: {{ include "cloudnative-pg.serviceName" . }}
       namespace: {{ .Release.Namespace }}
       path: /validate-postgresql-cnpg-io-v1-backup
-      port: {{ .Values.service.port }}
-  failurePolicy: {{ .Values.webhook.validating.failurePolicy }}
+      port: {{ .Values.operator.service.port }}
+  failurePolicy: {{ .Values.cluster.webhooks.validating.failurePolicy }}
   name: vbackup.cnpg.io
   rules:
   - apiGroups:
@@ -62,11 +69,11 @@ webhooks:
   - v1
   clientConfig:
     service:
-      name: {{ .Values.service.name }}
+      name: {{ include "cloudnative-pg.serviceName" . }}
       namespace: {{ .Release.Namespace }}
       path: /validate-postgresql-cnpg-io-v1-cluster
-      port: {{ .Values.service.port }}
-  failurePolicy: {{ .Values.webhook.validating.failurePolicy }}
+      port: {{ .Values.operator.service.port }}
+  failurePolicy: {{ .Values.cluster.webhooks.validating.failurePolicy }}
   name: vcluster.cnpg.io
   rules:
   - apiGroups:
@@ -91,11 +98,11 @@ webhooks:
   - v1
   clientConfig:
     service:
-      name: {{ .Values.service.name }}
+      name: {{ include "cloudnative-pg.serviceName" . }}
       namespace: {{ .Release.Namespace }}
       path: /validate-postgresql-cnpg-io-v1-scheduledbackup
-      port: {{ .Values.service.port }}
-  failurePolicy: {{ .Values.webhook.validating.failurePolicy }}
+      port: {{ .Values.operator.service.port }}
+  failurePolicy: {{ .Values.cluster.webhooks.validating.failurePolicy }}
   name: vscheduledbackup.cnpg.io
   rules:
   - apiGroups:
@@ -120,11 +127,11 @@ webhooks:
     - v1
   clientConfig:
     service:
-      name: {{ .Values.service.name }}
+      name: {{ include "cloudnative-pg.serviceName" . }}
       namespace: {{ .Release.Namespace }}
       path: /validate-postgresql-cnpg-io-v1-pooler
-      port: {{ .Values.service.port }}
-  failurePolicy: {{ .Values.webhook.validating.failurePolicy }}
+      port: {{ .Values.operator.service.port }}
+  failurePolicy: {{ .Values.cluster.webhooks.validating.failurePolicy }}
   name: vpooler.cnpg.io
   rules:
     - apiGroups:

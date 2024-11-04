@@ -1,77 +1,929 @@
 # cloudnative-pg
 
-![Version: 0.22.1](https://img.shields.io/badge/Version-0.22.1-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: 1.24.1](https://img.shields.io/badge/AppVersion-1.24.1-informational?style=flat-square)
-
 CloudNativePG Operator Helm Chart
 
-**Homepage:** <https://cloudnative-pg.io>
+![Version: 0.0.0-SNAPSHOT](https://img.shields.io/badge/Version-0.0.0--SNAPSHOT-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: 0.0.0-SNAPSHOT](https://img.shields.io/badge/AppVersion-0.0.0--SNAPSHOT-informational?style=flat-square)
 
-## Maintainers
+## Installing the Chart
 
-| Name | Email | Url |
-| ---- | ------ | --- |
-| phisco | <p.scorsolini@gmail.com> |  |
+To install the chart with the release name `my-release`:
 
-## Source Code
-
-* <https://github.com/cloudnative-pg/charts>
+```console
+$ helm repo add fyannk-cnpg https://fyannk.github.io/cloudnative-pg
+$ helm install my-release fyannk-cnpg/cloudnative-pg
+```
 
 ## Requirements
 
+Kubernetes: `>=1.21.0-0`
+
 | Repository | Name | Version |
 |------------|------|---------|
-| https://cloudnative-pg.github.io/grafana-dashboards | monitoring(cluster) | 0.0 |
+| https://fyannk.github.io/cloudnative-pg | crds | 0.0.0-SNAPSHOT |
 
 ## Values
 
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| additionalArgs | list | `[]` | Additinal arguments to be added to the operator's args list. |
-| additionalEnv | list | `[]` | Array containing extra environment variables which can be templated. For example:  - name: RELEASE_NAME    value: "{{ .Release.Name }}"  - name: MY_VAR    value: "mySpecialKey" |
-| affinity | object | `{}` | Affinity for the operator to be installed. |
-| commonAnnotations | object | `{}` | Annotations to be added to all other resources. |
-| config | object | `{"create":true,"data":{},"name":"cnpg-controller-manager-config","secret":false}` | Operator configuration. |
-| config.create | bool | `true` | Specifies whether the secret should be created. |
-| config.data | object | `{}` | The content of the configmap/secret, see https://cloudnative-pg.io/documentation/current/operator_conf/#available-options for all the available options. |
-| config.name | string | `"cnpg-controller-manager-config"` | The name of the configmap/secret to use. |
-| config.secret | bool | `false` | Specifies whether it should be stored in a secret, instead of a configmap. |
-| containerSecurityContext | object | `{"allowPrivilegeEscalation":false,"capabilities":{"drop":["ALL"]},"readOnlyRootFilesystem":true,"runAsGroup":10001,"runAsUser":10001,"seccompProfile":{"type":"RuntimeDefault"}}` | Container Security Context. |
-| crds.create | bool | `true` | Specifies whether the CRDs should be created when installing the chart. |
-| dnsPolicy | string | `""` |  |
-| fullnameOverride | string | `""` |  |
-| hostNetwork | bool | `false` |  |
-| image.pullPolicy | string | `"IfNotPresent"` |  |
-| image.repository | string | `"ghcr.io/cloudnative-pg/cloudnative-pg"` |  |
-| image.tag | string | `""` | Overrides the image tag whose default is the chart appVersion. |
-| imagePullSecrets | list | `[]` |  |
-| monitoring.grafanaDashboard.annotations | object | `{}` | Annotations that ConfigMaps can have to get configured in Grafana. |
-| monitoring.grafanaDashboard.configMapName | string | `"cnpg-grafana-dashboard"` | The name of the ConfigMap containing the dashboard. |
-| monitoring.grafanaDashboard.create | bool | `false` |  |
-| monitoring.grafanaDashboard.labels | object | `{}` | Labels that ConfigMaps should have to get configured in Grafana. |
-| monitoring.grafanaDashboard.namespace | string | `""` | Allows overriding the namespace where the ConfigMap will be created, defaulting to the same one as the Release. |
-| monitoring.grafanaDashboard.sidecarLabel | string | `"grafana_dashboard"` | Label that ConfigMaps should have to be loaded as dashboards.  DEPRECATED: Use labels instead. |
-| monitoring.grafanaDashboard.sidecarLabelValue | string | `"1"` | Label value that ConfigMaps should have to be loaded as dashboards.  DEPRECATED: Use labels instead. |
-| monitoring.podMonitorAdditionalLabels | object | `{}` | Additional labels for the podMonitor |
-| monitoring.podMonitorEnabled | bool | `false` | Specifies whether the monitoring should be enabled. Requires Prometheus Operator CRDs. |
-| monitoring.podMonitorMetricRelabelings | list | `[]` | Metrics relabel configurations to apply to samples before ingestion. |
-| monitoring.podMonitorRelabelings | list | `[]` | Relabel configurations to apply to samples before scraping. |
-| monitoringQueriesConfigMap.name | string | `"cnpg-default-monitoring"` | The name of the default monitoring configmap. |
-| monitoringQueriesConfigMap.queries | string | `"backends:\n  query: |\n   SELECT sa.datname\n       , sa.usename\n       , sa.application_name\n       , states.state\n       , COALESCE(sa.count, 0) AS total\n       , COALESCE(sa.max_tx_secs, 0) AS max_tx_duration_seconds\n       FROM ( VALUES ('active')\n           , ('idle')\n           , ('idle in transaction')\n           , ('idle in transaction (aborted)')\n           , ('fastpath function call')\n           , ('disabled')\n           ) AS states(state)\n       LEFT JOIN (\n           SELECT datname\n               , state\n               , usename\n               , COALESCE(application_name, '') AS application_name\n               , COUNT(*)\n               , COALESCE(EXTRACT (EPOCH FROM (max(now() - xact_start))), 0) AS max_tx_secs\n           FROM pg_catalog.pg_stat_activity\n           GROUP BY datname, state, usename, application_name\n       ) sa ON states.state = sa.state\n       WHERE sa.usename IS NOT NULL\n  metrics:\n    - datname:\n        usage: \"LABEL\"\n        description: \"Name of the database\"\n    - usename:\n        usage: \"LABEL\"\n        description: \"Name of the user\"\n    - application_name:\n        usage: \"LABEL\"\n        description: \"Name of the application\"\n    - state:\n        usage: \"LABEL\"\n        description: \"State of the backend\"\n    - total:\n        usage: \"GAUGE\"\n        description: \"Number of backends\"\n    - max_tx_duration_seconds:\n        usage: \"GAUGE\"\n        description: \"Maximum duration of a transaction in seconds\"\n\nbackends_waiting:\n  query: |\n   SELECT count(*) AS total\n   FROM pg_catalog.pg_locks blocked_locks\n   JOIN pg_catalog.pg_locks blocking_locks\n     ON blocking_locks.locktype = blocked_locks.locktype\n     AND blocking_locks.database IS NOT DISTINCT FROM blocked_locks.database\n     AND blocking_locks.relation IS NOT DISTINCT FROM blocked_locks.relation\n     AND blocking_locks.page IS NOT DISTINCT FROM blocked_locks.page\n     AND blocking_locks.tuple IS NOT DISTINCT FROM blocked_locks.tuple\n     AND blocking_locks.virtualxid IS NOT DISTINCT FROM blocked_locks.virtualxid\n     AND blocking_locks.transactionid IS NOT DISTINCT FROM blocked_locks.transactionid\n     AND blocking_locks.classid IS NOT DISTINCT FROM blocked_locks.classid\n     AND blocking_locks.objid IS NOT DISTINCT FROM blocked_locks.objid\n     AND blocking_locks.objsubid IS NOT DISTINCT FROM blocked_locks.objsubid\n     AND blocking_locks.pid != blocked_locks.pid\n   JOIN pg_catalog.pg_stat_activity blocking_activity ON blocking_activity.pid = blocking_locks.pid\n   WHERE NOT blocked_locks.granted\n  metrics:\n    - total:\n        usage: \"GAUGE\"\n        description: \"Total number of backends that are currently waiting on other queries\"\n\npg_database:\n  query: |\n    SELECT datname\n      , pg_catalog.pg_database_size(datname) AS size_bytes\n      , pg_catalog.age(datfrozenxid) AS xid_age\n      , pg_catalog.mxid_age(datminmxid) AS mxid_age\n    FROM pg_catalog.pg_database\n    WHERE datallowconn\n  metrics:\n    - datname:\n        usage: \"LABEL\"\n        description: \"Name of the database\"\n    - size_bytes:\n        usage: \"GAUGE\"\n        description: \"Disk space used by the database\"\n    - xid_age:\n        usage: \"GAUGE\"\n        description: \"Number of transactions from the frozen XID to the current one\"\n    - mxid_age:\n        usage: \"GAUGE\"\n        description: \"Number of multiple transactions (Multixact) from the frozen XID to the current one\"\n\npg_postmaster:\n  query: |\n    SELECT EXTRACT(EPOCH FROM pg_postmaster_start_time) AS start_time\n    FROM pg_catalog.pg_postmaster_start_time()\n  metrics:\n    - start_time:\n        usage: \"GAUGE\"\n        description: \"Time at which postgres started (based on epoch)\"\n\npg_replication:\n  query: \"SELECT CASE WHEN (\n            NOT pg_catalog.pg_is_in_recovery()\n            OR pg_catalog.pg_last_wal_receive_lsn() = pg_catalog.pg_last_wal_replay_lsn())\n          THEN 0\n          ELSE GREATEST (0,\n            EXTRACT(EPOCH FROM (now() - pg_catalog.pg_last_xact_replay_timestamp())))\n          END AS lag,\n          pg_catalog.pg_is_in_recovery() AS in_recovery,\n          EXISTS (TABLE pg_stat_wal_receiver) AS is_wal_receiver_up,\n          (SELECT count(*) FROM pg_catalog.pg_stat_replication) AS streaming_replicas\"\n  metrics:\n    - lag:\n        usage: \"GAUGE\"\n        description: \"Replication lag behind primary in seconds\"\n    - in_recovery:\n        usage: \"GAUGE\"\n        description: \"Whether the instance is in recovery\"\n    - is_wal_receiver_up:\n        usage: \"GAUGE\"\n        description: \"Whether the instance wal_receiver is up\"\n    - streaming_replicas:\n        usage: \"GAUGE\"\n        description: \"Number of streaming replicas connected to the instance\"\n\npg_replication_slots:\n  query: |\n    SELECT slot_name,\n      slot_type,\n      database,\n      active,\n      (CASE pg_catalog.pg_is_in_recovery()\n        WHEN TRUE THEN pg_catalog.pg_wal_lsn_diff(pg_catalog.pg_last_wal_receive_lsn(), restart_lsn)\n        ELSE pg_catalog.pg_wal_lsn_diff(pg_catalog.pg_current_wal_lsn(), restart_lsn)\n      END) as pg_wal_lsn_diff\n    FROM pg_catalog.pg_replication_slots\n    WHERE NOT temporary\n  metrics:\n    - slot_name:\n        usage: \"LABEL\"\n        description: \"Name of the replication slot\"\n    - slot_type:\n        usage: \"LABEL\"\n        description: \"Type of the replication slot\"\n    - database:\n        usage: \"LABEL\"\n        description: \"Name of the database\"\n    - active:\n        usage: \"GAUGE\"\n        description: \"Flag indicating whether the slot is active\"\n    - pg_wal_lsn_diff:\n        usage: \"GAUGE\"\n        description: \"Replication lag in bytes\"\n\npg_stat_archiver:\n  query: |\n    SELECT archived_count\n      , failed_count\n      , COALESCE(EXTRACT(EPOCH FROM (now() - last_archived_time)), -1) AS seconds_since_last_archival\n      , COALESCE(EXTRACT(EPOCH FROM (now() - last_failed_time)), -1) AS seconds_since_last_failure\n      , COALESCE(EXTRACT(EPOCH FROM last_archived_time), -1) AS last_archived_time\n      , COALESCE(EXTRACT(EPOCH FROM last_failed_time), -1) AS last_failed_time\n      , COALESCE(CAST(CAST('x'||pg_catalog.right(pg_catalog.split_part(last_archived_wal, '.', 1), 16) AS pg_catalog.bit(64)) AS pg_catalog.int8), -1) AS last_archived_wal_start_lsn\n      , COALESCE(CAST(CAST('x'||pg_catalog.right(pg_catalog.split_part(last_failed_wal, '.', 1), 16) AS pg_catalog.bit(64)) AS pg_catalog.int8), -1) AS last_failed_wal_start_lsn\n      , EXTRACT(EPOCH FROM stats_reset) AS stats_reset_time\n    FROM pg_catalog.pg_stat_archiver\n  metrics:\n    - archived_count:\n        usage: \"COUNTER\"\n        description: \"Number of WAL files that have been successfully archived\"\n    - failed_count:\n        usage: \"COUNTER\"\n        description: \"Number of failed attempts for archiving WAL files\"\n    - seconds_since_last_archival:\n        usage: \"GAUGE\"\n        description: \"Seconds since the last successful archival operation\"\n    - seconds_since_last_failure:\n        usage: \"GAUGE\"\n        description: \"Seconds since the last failed archival operation\"\n    - last_archived_time:\n        usage: \"GAUGE\"\n        description: \"Epoch of the last time WAL archiving succeeded\"\n    - last_failed_time:\n        usage: \"GAUGE\"\n        description: \"Epoch of the last time WAL archiving failed\"\n    - last_archived_wal_start_lsn:\n        usage: \"GAUGE\"\n        description: \"Archived WAL start LSN\"\n    - last_failed_wal_start_lsn:\n        usage: \"GAUGE\"\n        description: \"Last failed WAL LSN\"\n    - stats_reset_time:\n        usage: \"GAUGE\"\n        description: \"Time at which these statistics were last reset\"\n\npg_stat_bgwriter:\n  runonserver: \"<17.0.0\"\n  query: |\n    SELECT checkpoints_timed\n      , checkpoints_req\n      , checkpoint_write_time\n      , checkpoint_sync_time\n      , buffers_checkpoint\n      , buffers_clean\n      , maxwritten_clean\n      , buffers_backend\n      , buffers_backend_fsync\n      , buffers_alloc\n    FROM pg_catalog.pg_stat_bgwriter\n  metrics:\n    - checkpoints_timed:\n        usage: \"COUNTER\"\n        description: \"Number of scheduled checkpoints that have been performed\"\n    - checkpoints_req:\n        usage: \"COUNTER\"\n        description: \"Number of requested checkpoints that have been performed\"\n    - checkpoint_write_time:\n        usage: \"COUNTER\"\n        description: \"Total amount of time that has been spent in the portion of checkpoint processing where files are written to disk, in milliseconds\"\n    - checkpoint_sync_time:\n        usage: \"COUNTER\"\n        description: \"Total amount of time that has been spent in the portion of checkpoint processing where files are synchronized to disk, in milliseconds\"\n    - buffers_checkpoint:\n        usage: \"COUNTER\"\n        description: \"Number of buffers written during checkpoints\"\n    - buffers_clean:\n        usage: \"COUNTER\"\n        description: \"Number of buffers written by the background writer\"\n    - maxwritten_clean:\n        usage: \"COUNTER\"\n        description: \"Number of times the background writer stopped a cleaning scan because it had written too many buffers\"\n    - buffers_backend:\n        usage: \"COUNTER\"\n        description: \"Number of buffers written directly by a backend\"\n    - buffers_backend_fsync:\n        usage: \"COUNTER\"\n        description: \"Number of times a backend had to execute its own fsync call (normally the background writer handles those even when the backend does its own write)\"\n    - buffers_alloc:\n        usage: \"COUNTER\"\n        description: \"Number of buffers allocated\"\n\npg_stat_bgwriter_17:\n  runonserver: \">=17.0.0\"\n  name: pg_stat_bgwriter\n  query: |\n    SELECT buffers_clean\n      , maxwritten_clean\n      , buffers_alloc\n      , EXTRACT(EPOCH FROM stats_reset) AS stats_reset_time\n    FROM pg_catalog.pg_stat_bgwriter\n  metrics:\n    - buffers_clean:\n        usage: \"COUNTER\"\n        description: \"Number of buffers written by the background writer\"\n    - maxwritten_clean:\n        usage: \"COUNTER\"\n        description: \"Number of times the background writer stopped a cleaning scan because it had written too many buffers\"\n    - buffers_alloc:\n        usage: \"COUNTER\"\n        description: \"Number of buffers allocated\"\n    - stats_reset_time:\n        usage: \"GAUGE\"\n        description: \"Time at which these statistics were last reset\"\n\npg_stat_checkpointer:\n  runonserver: \">=17.0.0\"\n  query: |\n    SELECT num_timed AS checkpoints_timed\n      , num_requested AS checkpoints_req\n      , restartpoints_timed\n      , restartpoints_req\n      , restartpoints_done\n      , write_time\n      , sync_time\n      , buffers_written\n      , EXTRACT(EPOCH FROM stats_reset) AS stats_reset_time\n    FROM pg_catalog.pg_stat_checkpointer\n  metrics:\n    - checkpoints_timed:\n        usage: \"COUNTER\"\n        description: \"Number of scheduled checkpoints that have been performed\"\n    - checkpoints_req:\n        usage: \"COUNTER\"\n        description: \"Number of requested checkpoints that have been performed\"\n    - restartpoints_timed:\n        usage: \"COUNTER\"\n        description: \"Number of scheduled restartpoints due to timeout or after a failed attempt to perform it\"\n    - restartpoints_req:\n        usage: \"COUNTER\"\n        description: \"Number of requested restartpoints that have been performed\"\n    - restartpoints_done:\n        usage: \"COUNTER\"\n        description: \"Number of restartpoints that have been performed\"\n    - write_time:\n        usage: \"COUNTER\"\n        description: \"Total amount of time that has been spent in the portion of processing checkpoints and restartpoints where files are written to disk, in milliseconds\"\n    - sync_time:\n        usage: \"COUNTER\"\n        description: \"Total amount of time that has been spent in the portion of processing checkpoints and restartpoints where files are synchronized to disk, in milliseconds\"\n    - buffers_written:\n        usage: \"COUNTER\"\n        description: \"Number of buffers written during checkpoints and restartpoints\"\n    - stats_reset_time:\n        usage: \"GAUGE\"\n        description: \"Time at which these statistics were last reset\"\n\npg_stat_database:\n  query: |\n    SELECT datname\n      , xact_commit\n      , xact_rollback\n      , blks_read\n      , blks_hit\n      , tup_returned\n      , tup_fetched\n      , tup_inserted\n      , tup_updated\n      , tup_deleted\n      , conflicts\n      , temp_files\n      , temp_bytes\n      , deadlocks\n      , blk_read_time\n      , blk_write_time\n    FROM pg_catalog.pg_stat_database\n  metrics:\n    - datname:\n        usage: \"LABEL\"\n        description: \"Name of this database\"\n    - xact_commit:\n        usage: \"COUNTER\"\n        description: \"Number of transactions in this database that have been committed\"\n    - xact_rollback:\n        usage: \"COUNTER\"\n        description: \"Number of transactions in this database that have been rolled back\"\n    - blks_read:\n        usage: \"COUNTER\"\n        description: \"Number of disk blocks read in this database\"\n    - blks_hit:\n        usage: \"COUNTER\"\n        description: \"Number of times disk blocks were found already in the buffer cache, so that a read was not necessary (this only includes hits in the PostgreSQL buffer cache, not the operating system's file system cache)\"\n    - tup_returned:\n        usage: \"COUNTER\"\n        description: \"Number of rows returned by queries in this database\"\n    - tup_fetched:\n        usage: \"COUNTER\"\n        description: \"Number of rows fetched by queries in this database\"\n    - tup_inserted:\n        usage: \"COUNTER\"\n        description: \"Number of rows inserted by queries in this database\"\n    - tup_updated:\n        usage: \"COUNTER\"\n        description: \"Number of rows updated by queries in this database\"\n    - tup_deleted:\n        usage: \"COUNTER\"\n        description: \"Number of rows deleted by queries in this database\"\n    - conflicts:\n        usage: \"COUNTER\"\n        description: \"Number of queries canceled due to conflicts with recovery in this database\"\n    - temp_files:\n        usage: \"COUNTER\"\n        description: \"Number of temporary files created by queries in this database\"\n    - temp_bytes:\n        usage: \"COUNTER\"\n        description: \"Total amount of data written to temporary files by queries in this database\"\n    - deadlocks:\n        usage: \"COUNTER\"\n        description: \"Number of deadlocks detected in this database\"\n    - blk_read_time:\n        usage: \"COUNTER\"\n        description: \"Time spent reading data file blocks by backends in this database, in milliseconds\"\n    - blk_write_time:\n        usage: \"COUNTER\"\n        description: \"Time spent writing data file blocks by backends in this database, in milliseconds\"\n\npg_stat_replication:\n  primary: true\n  query: |\n   SELECT usename\n     , COALESCE(application_name, '') AS application_name\n     , COALESCE(client_addr::text, '') AS client_addr\n     , COALESCE(client_port::text, '') AS client_port\n     , EXTRACT(EPOCH FROM backend_start) AS backend_start\n     , COALESCE(pg_catalog.age(backend_xmin), 0) AS backend_xmin_age\n     , pg_catalog.pg_wal_lsn_diff(pg_catalog.pg_current_wal_lsn(), sent_lsn) AS sent_diff_bytes\n     , pg_catalog.pg_wal_lsn_diff(pg_catalog.pg_current_wal_lsn(), write_lsn) AS write_diff_bytes\n     , pg_catalog.pg_wal_lsn_diff(pg_catalog.pg_current_wal_lsn(), flush_lsn) AS flush_diff_bytes\n     , COALESCE(pg_catalog.pg_wal_lsn_diff(pg_catalog.pg_current_wal_lsn(), replay_lsn),0) AS replay_diff_bytes\n     , COALESCE((EXTRACT(EPOCH FROM write_lag)),0)::float AS write_lag_seconds\n     , COALESCE((EXTRACT(EPOCH FROM flush_lag)),0)::float AS flush_lag_seconds\n     , COALESCE((EXTRACT(EPOCH FROM replay_lag)),0)::float AS replay_lag_seconds\n   FROM pg_catalog.pg_stat_replication\n  metrics:\n    - usename:\n        usage: \"LABEL\"\n        description: \"Name of the replication user\"\n    - application_name:\n        usage: \"LABEL\"\n        description: \"Name of the application\"\n    - client_addr:\n        usage: \"LABEL\"\n        description: \"Client IP address\"\n    - client_port:\n        usage: \"LABEL\"\n        description: \"Client TCP port\"\n    - backend_start:\n        usage: \"COUNTER\"\n        description: \"Time when this process was started\"\n    - backend_xmin_age:\n        usage: \"COUNTER\"\n        description: \"The age of this standby's xmin horizon\"\n    - sent_diff_bytes:\n        usage: \"GAUGE\"\n        description: \"Difference in bytes from the last write-ahead log location sent on this connection\"\n    - write_diff_bytes:\n        usage: \"GAUGE\"\n        description: \"Difference in bytes from the last write-ahead log location written to disk by this standby server\"\n    - flush_diff_bytes:\n        usage: \"GAUGE\"\n        description: \"Difference in bytes from the last write-ahead log location flushed to disk by this standby server\"\n    - replay_diff_bytes:\n        usage: \"GAUGE\"\n        description: \"Difference in bytes from the last write-ahead log location replayed into the database on this standby server\"\n    - write_lag_seconds:\n        usage: \"GAUGE\"\n        description: \"Time elapsed between flushing recent WAL locally and receiving notification that this standby server has written it\"\n    - flush_lag_seconds:\n        usage: \"GAUGE\"\n        description: \"Time elapsed between flushing recent WAL locally and receiving notification that this standby server has written and flushed it\"\n    - replay_lag_seconds:\n        usage: \"GAUGE\"\n        description: \"Time elapsed between flushing recent WAL locally and receiving notification that this standby server has written, flushed and applied it\"\n\npg_settings:\n  query: |\n    SELECT name,\n    CASE setting WHEN 'on' THEN '1' WHEN 'off' THEN '0' ELSE setting END AS setting\n    FROM pg_catalog.pg_settings\n    WHERE vartype IN ('integer', 'real', 'bool')\n    ORDER BY 1\n  metrics:\n    - name:\n        usage: \"LABEL\"\n        description: \"Name of the setting\"\n    - setting:\n        usage: \"GAUGE\"\n        description: \"Setting value\"\n"` | A string representation of a YAML defining monitoring queries. |
-| nameOverride | string | `""` |  |
-| nodeSelector | object | `{}` | Nodeselector for the operator to be installed. |
-| podAnnotations | object | `{}` | Annotations to be added to the pod. |
-| podLabels | object | `{}` | Labels to be added to the pod. |
-| podSecurityContext | object | `{"runAsNonRoot":true,"seccompProfile":{"type":"RuntimeDefault"}}` | Security Context for the whole pod. |
-| priorityClassName | string | `""` | Priority indicates the importance of a Pod relative to other Pods. |
-| rbac.aggregateClusterRoles | bool | `false` | Aggregate ClusterRoles to Kubernetes default user-facing roles. Ref: https://kubernetes.io/docs/reference/access-authn-authz/rbac/#user-facing-roles |
-| rbac.create | bool | `true` | Specifies whether ClusterRole and ClusterRoleBinding should be created. |
-| replicaCount | int | `1` |  |
-| resources | object | `{}` |  |
-| service.name | string | `"cnpg-webhook-service"` | DO NOT CHANGE THE SERVICE NAME as it is currently used to generate the certificate and can not be configured |
-| service.port | int | `443` |  |
-| service.type | string | `"ClusterIP"` |  |
-| serviceAccount.create | bool | `true` | Specifies whether the service account should be created. |
-| serviceAccount.name | string | `""` | The name of the service account to use. If not set and create is true, a name is generated using the fullname template. |
-| tolerations | list | `[]` | Tolerations for the operator to be installed. |
-| webhook | object | `{"livenessProbe":{"initialDelaySeconds":3},"mutating":{"create":true,"failurePolicy":"Fail"},"port":9443,"readinessProbe":{"initialDelaySeconds":3},"validating":{"create":true,"failurePolicy":"Fail"}}` | The webhook configuration. |
+<h3>Capabilities</h3>
+<table>
+	<thead>
+		<th>Key</th>
+		<th>Type</th>
+		<th>Default</th>
+		<th>Description</th>
+	</thead>
+	<tbody>
+		<tr>
+			<td>capabilities.clusterImageCatalog</td>
+			<td>bool</td>
+			<td><pre lang="json">
+true
+</pre>
+</td>
+			<td>Specifies whether the operator can have ClusterImageCatalog(Get,List,Watch) privileges at Cluster Level.</td>
+		</tr>
+		<tr>
+			<td>capabilities.nodeList</td>
+			<td>bool</td>
+			<td><pre lang="json">
+true
+</pre>
+</td>
+			<td>Specifies whether the operator can have Node(Get,List,Watch) privileges at Cluster Level.</td>
+		</tr>
+		<tr>
+			<td>capabilities.podMonitor</td>
+			<td>bool</td>
+			<td><pre lang="json">
+true
+</pre>
+</td>
+			<td>Specifies whether the operator can manage PodMonitor.</td>
+		</tr>
+		<tr>
+			<td>capabilities.secureNamespace</td>
+			<td>bool</td>
+			<td><pre lang="json">
+false
+</pre>
+</td>
+			<td>Specifies whether the operator is installed in a secure namespace.</td>
+		</tr>
+		<tr>
+			<td>capabilities.volumeSnapshot</td>
+			<td>bool</td>
+			<td><pre lang="json">
+true
+</pre>
+</td>
+			<td>Specifies whether VolumeSnapshot is available.</td>
+		</tr>
+	</tbody>
+</table>
+<h3>Cluster</h3>
+<table>
+	<thead>
+		<th>Key</th>
+		<th>Type</th>
+		<th>Default</th>
+		<th>Description</th>
+	</thead>
+	<tbody>
+		<tr>
+			<td>cluster.user.aggregateClusterRoles</td>
+			<td>bool</td>
+			<td><pre lang="json">
+false
+</pre>
+</td>
+			<td>Aggregate ClusterRoles to Kubernetes default user-facing roles. Ref: https://kubernetes.io/docs/reference/access-authn-authz/rbac/#user-facing-roles</td>
+		</tr>
+		<tr>
+			<td>cluster.webhooks.certManagerCert</td>
+			<td>string</td>
+			<td><pre lang="json">
+null
+</pre>
+</td>
+			<td>name of the cert-manager certificate to use with the webhook.</td>
+		</tr>
+		<tr>
+			<td>cluster.webhooks.manageCerts</td>
+			<td>bool</td>
+			<td><pre lang="json">
+true
+</pre>
+</td>
+			<td>whether the operator manages the webhook certificates automatically.</td>
+		</tr>
+		<tr>
+			<td>cluster.webhooks.mutatingfailurePolicy</td>
+			<td>string</td>
+			<td><pre lang="json">
+"Fail"
+</pre>
+</td>
+			<td>MutatingWebHook failure policy</td>
+		</tr>
+		<tr>
+			<td>cluster.webhooks.port</td>
+			<td>int</td>
+			<td><pre lang="json">
+9443
+</pre>
+</td>
+			<td>Listening port of the webhook.</td>
+		</tr>
+		<tr>
+			<td>cluster.webhooks.validatingfailurePolicy</td>
+			<td>string</td>
+			<td><pre lang="json">
+"Fail"
+</pre>
+</td>
+			<td>ValidatingWebHook failure policy</td>
+		</tr>
+	</tbody>
+</table>
+<h3>Common Parameters</h3>
+<table>
+	<thead>
+		<th>Key</th>
+		<th>Type</th>
+		<th>Default</th>
+		<th>Description</th>
+	</thead>
+	<tbody>
+		<tr>
+			<td>commonAnnotations</td>
+			<td>object</td>
+			<td><pre lang="json">
+{}
+</pre>
+</td>
+			<td>Add annotations to all resources.</td>
+		</tr>
+		<tr>
+			<td>fullnameOverride</td>
+			<td>string</td>
+			<td><pre lang="json">
+""
+</pre>
+</td>
+			<td>Generic FullnameOverride</td>
+		</tr>
+		<tr>
+			<td>installCRDs</td>
+			<td>bool</td>
+			<td><pre lang="json">
+true
+</pre>
+</td>
+			<td>installCRDs determines whether Custom Resource Definitions (CRD) are installed by the chart.</td>
+		</tr>
+		<tr>
+			<td>installMode</td>
+			<td>string</td>
+			<td><pre lang="json">
+"ClusterWide"
+</pre>
+</td>
+			<td>Helm install Mode : ClusterWide, Namespaced, AdminForNamespaced, NamespacedWithWebhooks, Free</td>
+		</tr>
+		<tr>
+			<td>kubeAPIServerIP</td>
+			<td>string</td>
+			<td><pre lang="json">
+null
+</pre>
+</td>
+			<td>kubeAPIServerIP is the IP address of the Kubernetes API server from inside cluster.</td>
+		</tr>
+		<tr>
+			<td>managedNamespaces</td>
+			<td>list</td>
+			<td><pre lang="json">
+[]
+</pre>
+</td>
+			<td>Namespaces where the operator should manage its CRDs.</td>
+		</tr>
+		<tr>
+			<td>nameOverride</td>
+			<td>string</td>
+			<td><pre lang="json">
+""
+</pre>
+</td>
+			<td>Generic NameOverride</td>
+		</tr>
+		<tr>
+			<td>podAnnotations</td>
+			<td>object</td>
+			<td><pre lang="json">
+{}
+</pre>
+</td>
+			<td>add annotations to pods</td>
+		</tr>
+		<tr>
+			<td>podLabels</td>
+			<td>object</td>
+			<td><pre lang="json">
+{}
+</pre>
+</td>
+			<td>add labels to pods</td>
+		</tr>
+	</tbody>
+</table>
+<h3>Features</h3>
+<table>
+	<thead>
+		<th>Key</th>
+		<th>Type</th>
+		<th>Default</th>
+		<th>Description</th>
+	</thead>
+	<tbody>
+		<tr>
+			<td>features.cluster.enabled</td>
+			<td>bool</td>
+			<td><pre lang="json">
+true
+</pre>
+</td>
+			<td>Global flag to enable/disable everything at cluster level.</td>
+		</tr>
+		<tr>
+			<td>features.cluster.role</td>
+			<td>bool</td>
+			<td><pre lang="json">
+true
+</pre>
+</td>
+			<td>Enable ClusterRole for Operator.</td>
+		</tr>
+		<tr>
+			<td>features.cluster.rolebinding</td>
+			<td>bool</td>
+			<td><pre lang="json">
+true
+</pre>
+</td>
+			<td>Enable ClusterRoleBinding for Operator.</td>
+		</tr>
+		<tr>
+			<td>features.cluster.user</td>
+			<td>bool</td>
+			<td><pre lang="json">
+true
+</pre>
+</td>
+			<td>Enable ClusterRole / ClusterRoleBinding for User RBAC</td>
+		</tr>
+		<tr>
+			<td>features.cluster.webhooks</td>
+			<td>bool</td>
+			<td><pre lang="json">
+true
+</pre>
+</td>
+			<td>Enable Mutating / Validating WebHooks.</td>
+		</tr>
+		<tr>
+			<td>features.operator.configuration</td>
+			<td>bool</td>
+			<td><pre lang="json">
+true
+</pre>
+</td>
+			<td>Enable Operator ConfigMap or Secret creation.</td>
+		</tr>
+		<tr>
+			<td>features.operator.deployment</td>
+			<td>bool</td>
+			<td><pre lang="json">
+true
+</pre>
+</td>
+			<td>Enable Operator Deployment creation.</td>
+		</tr>
+		<tr>
+			<td>features.operator.enabled</td>
+			<td>bool</td>
+			<td><pre lang="json">
+true
+</pre>
+</td>
+			<td>Global flag to enable/disable everything inside Operator's Namespace.</td>
+		</tr>
+		<tr>
+			<td>features.operator.monitoring</td>
+			<td>bool</td>
+			<td><pre lang="json">
+true
+</pre>
+</td>
+			<td>Enable Monitoring ConfigMap creation.</td>
+		</tr>
+		<tr>
+			<td>features.operator.networkpolicy</td>
+			<td>bool</td>
+			<td><pre lang="json">
+true
+</pre>
+</td>
+			<td>Enable NetworkPolicy creation.</td>
+		</tr>
+		<tr>
+			<td>features.operator.podmonitor</td>
+			<td>bool</td>
+			<td><pre lang="json">
+true
+</pre>
+</td>
+			<td>Enable PodMonitor creation.</td>
+		</tr>
+		<tr>
+			<td>features.operator.role</td>
+			<td>bool</td>
+			<td><pre lang="json">
+true
+</pre>
+</td>
+			<td>Enable Role creation. </td>
+		</tr>
+		<tr>
+			<td>features.operator.rolebinding</td>
+			<td>bool</td>
+			<td><pre lang="json">
+true
+</pre>
+</td>
+			<td>Enable RoleBinding creation.</td>
+		</tr>
+		<tr>
+			<td>features.operator.service</td>
+			<td>bool</td>
+			<td><pre lang="json">
+true
+</pre>
+</td>
+			<td>Enable Service creation for WebHooks.</td>
+		</tr>
+		<tr>
+			<td>features.operator.serviceaccount</td>
+			<td>bool</td>
+			<td><pre lang="json">
+true
+</pre>
+</td>
+			<td>Enable ServiceAccount for Operator.</td>
+		</tr>
+	</tbody>
+</table>
+<h3>Operator Configuration</h3>
+<table>
+	<thead>
+		<th>Key</th>
+		<th>Type</th>
+		<th>Default</th>
+		<th>Description</th>
+	</thead>
+	<tbody>
+		<tr>
+			<td>operator.configuration.data.CA_SECRET_NAME</td>
+			<td>string</td>
+			<td><pre lang="json">
+"cnpg-ca-secret"
+</pre>
+</td>
+			<td>The name of the secret containing the CA certificate.</td>
+		</tr>
+		<tr>
+			<td>operator.configuration.data.CERTIFICATE_DURATION</td>
+			<td>string</td>
+			<td><pre lang="json">
+"365"
+</pre>
+</td>
+			<td>Determines the lifetime of the generated certificates in days. Default is 90.</td>
+		</tr>
+		<tr>
+			<td>operator.configuration.data.CLUSTERS_ROLLOUT_DELAY</td>
+			<td>int</td>
+			<td><pre lang="json">
+0
+</pre>
+</td>
+			<td>delay in seconds between the rollout of two clusters. Default is 0    The duration (in seconds) to wait between the roll-outs of different    clusters during an operator upgrade. This setting controls the    timing of upgrades across clusters, spreading them out to reduce    system impact. The default value is 0, which means no delay between    PostgreSQL cluster upgrades.</td>
+		</tr>
+		<tr>
+			<td>operator.configuration.data.CLUSTER_WIDE_CACHE_FILTER</td>
+			<td>string</td>
+			<td><pre lang="json">
+"true"
+</pre>
+</td>
+			<td>If set to true, the operator will use filter "cnpg.io/reconcile=true" for objects in cache.</td>
+		</tr>
+		<tr>
+			<td>operator.configuration.data.CREATE_ANY_SERVICE</td>
+			<td>string</td>
+			<td><pre lang="json">
+"false"
+</pre>
+</td>
+			<td>when set to true, will create -any service for the cluster. Default is false</td>
+		</tr>
+		<tr>
+			<td>operator.configuration.data.DEFAULT_STORAGE_CLASS</td>
+			<td>string</td>
+			<td><pre lang="json">
+""
+</pre>
+</td>
+			<td>The default storage class to use for new clusters, default is Kubernetes' default.</td>
+		</tr>
+		<tr>
+			<td>operator.configuration.data.ENABLE_AZURE_PVC_UPDATES</td>
+			<td>string</td>
+			<td><pre lang="json">
+"false"
+</pre>
+</td>
+			<td>Enables to delete Postgres pod if its PVC is stuck in Resizing condition.    This feature is mainly for the Azure environment (default false)</td>
+		</tr>
+		<tr>
+			<td>operator.configuration.data.ENABLE_INSTANCE_MANAGER_INPLACE_UPDATES</td>
+			<td>string</td>
+			<td><pre lang="json">
+"false"
+</pre>
+</td>
+			<td>when set to true, enables in-place updates of the instance manager after an update    of the operator, avoiding rolling updates of the cluster (default false)</td>
+		</tr>
+		<tr>
+			<td>operator.configuration.data.EXPIRING_CHECK_THRESHOLD</td>
+			<td>string</td>
+			<td><pre lang="json">
+"30"
+</pre>
+</td>
+			<td>Determines the threshold, in days, for identifying a certificate as expiring. Default is 7.</td>
+		</tr>
+		<tr>
+			<td>operator.configuration.data.INCLUDE_PLUGINS</td>
+			<td>string</td>
+			<td><pre lang="json">
+""
+</pre>
+</td>
+			<td>comma-separated list of plugins to always be included in the Cluster reconciliation</td>
+		</tr>
+		<tr>
+			<td>operator.configuration.data.INHERITED_ANNOTATIONS</td>
+			<td>string</td>
+			<td><pre lang="json">
+"prometheus.io/scrape, prometheus.io/path, prometheus.io/port"
+</pre>
+</td>
+			<td>List of annotations that should be inherited from the parent object to the child object (not only cluster).</td>
+		</tr>
+		<tr>
+			<td>operator.configuration.data.INHERITED_LABELS</td>
+			<td>string</td>
+			<td><pre lang="json">
+""
+</pre>
+</td>
+			<td>List of labels that should be inherited from the parent object to the child object (not only cluster).</td>
+		</tr>
+		<tr>
+			<td>operator.configuration.data.INSTANCES_ROLLOUT_DELAY</td>
+			<td>int</td>
+			<td><pre lang="json">
+0
+</pre>
+</td>
+			<td>delay in seconds between the rollout of two instances. Default is 0    The duration (in seconds) to wait between roll-outs of individual    PostgreSQL instances within the same cluster during an operator    upgrade. The default value is 0, meaning no delay between upgrades    of instances in the same PostgreSQL cluster.</td>
+		</tr>
+		<tr>
+			<td>operator.configuration.data.MANDATORY_ANNOTATIONS</td>
+			<td>string</td>
+			<td><pre lang="json">
+"prometheus.io/port=9187, prometheus.io/scrape=true, prometheus.io/path=/metrics"
+</pre>
+</td>
+			<td>List of annotations that MUST be present on every resource managed by the operator.</td>
+		</tr>
+		<tr>
+			<td>operator.configuration.data.MANDATORY_LABELS</td>
+			<td>string</td>
+			<td><pre lang="json">
+""
+</pre>
+</td>
+			<td>List of labels that MUST be present on every resource managed by the operator.</td>
+		</tr>
+		<tr>
+			<td>operator.configuration.data.PULL_SECRET_NAME</td>
+			<td>string</td>
+			<td><pre lang="json">
+""
+</pre>
+</td>
+			<td>name of an additional pull secret to be defined in the operator's namespace and to be used to download images</td>
+		</tr>
+		<tr>
+			<td>operator.configuration.data.WEBHOOK_ENABLED</td>
+			<td>string</td>
+			<td><pre lang="json">
+"true"
+</pre>
+</td>
+			<td>If set to true, the operator will manage Webhooks certificates. (default true)</td>
+		</tr>
+		<tr>
+			<td>operator.configuration.data.WEBHOOK_SECRET_NAME</td>
+			<td>string</td>
+			<td><pre lang="json">
+"cnpg-webhook-cert"
+</pre>
+</td>
+			<td>The name of the secret to use for the Webhook.</td>
+		</tr>
+		<tr>
+			<td>operator.configuration.name</td>
+			<td>string</td>
+			<td><pre lang="json">
+""
+</pre>
+</td>
+			<td>The name of the configmap/secret to use.</td>
+		</tr>
+		<tr>
+			<td>operator.configuration.secret</td>
+			<td>bool</td>
+			<td><pre lang="json">
+false
+</pre>
+</td>
+			<td>Specifies whether it should be stored in a secret, instead of a configmap.</td>
+		</tr>
+		<tr>
+			<td>operator.deployment.additionalArgs</td>
+			<td>list</td>
+			<td><pre lang="json">
+[]
+</pre>
+</td>
+			<td>Additinal arguments to be added to the operator's args list.</td>
+		</tr>
+		<tr>
+			<td>operator.deployment.additionalEnv</td>
+			<td>list</td>
+			<td><pre lang="json">
+[]
+</pre>
+</td>
+			<td>Array containing extra environment variables which can be templated. For example:  - name: RELEASE_NAME    value: "{{ .Release.Name }}"  - name: MY_VAR    value: "mySpecialKey"</td>
+		</tr>
+		<tr>
+			<td>operator.deployment.affinity</td>
+			<td>object</td>
+			<td><pre lang="json">
+{}
+</pre>
+</td>
+			<td>Affinity for the operator to be installed.</td>
+		</tr>
+		<tr>
+			<td>operator.deployment.containerSecurityContext</td>
+			<td>object</td>
+			<td><pre lang="json">
+{
+  "allowPrivilegeEscalation": false,
+  "capabilities": {
+    "drop": [
+      "ALL"
+    ]
+  },
+  "readOnlyRootFilesystem": true,
+  "runAsGroup": 10001,
+  "runAsUser": 10001,
+  "seccompProfile": {
+    "type": "RuntimeDefault"
+  }
+}
+</pre>
+</td>
+			<td>Container Security Context.</td>
+		</tr>
+		<tr>
+			<td>operator.deployment.image.pullPolicy</td>
+			<td>string</td>
+			<td><pre lang="json">
+"IfNotPresent"
+</pre>
+</td>
+			<td>Options: Always, Never, IfNotPresent</td>
+		</tr>
+		<tr>
+			<td>operator.deployment.image.repository</td>
+			<td>string</td>
+			<td><pre lang="json">
+"ghcr.io/fyannk/cloudnative-pg-testing"
+</pre>
+</td>
+			<td>The image repository to pull from.</td>
+		</tr>
+		<tr>
+			<td>operator.deployment.image.tag</td>
+			<td>string</td>
+			<td><pre lang="json">
+""
+</pre>
+</td>
+			<td>Overrides the image tag whose default is the chart appVersion.</td>
+		</tr>
+		<tr>
+			<td>operator.deployment.imagePullSecrets</td>
+			<td>list</td>
+			<td><pre lang="json">
+[
+  {
+    "name": "cnpg-pull-secret"
+  }
+]
+</pre>
+</td>
+			<td>This secret should exist, but MUST HAVE label cnpg.io/reconcile=true</td>
+		</tr>
+		<tr>
+			<td>operator.deployment.livenessProbe</td>
+			<td>object</td>
+			<td><pre lang="json">
+{
+  "initialDelaySeconds": 3
+}
+</pre>
+</td>
+			<td>Operator's probes configuration.</td>
+		</tr>
+		<tr>
+			<td>operator.deployment.nodeSelector</td>
+			<td>object</td>
+			<td><pre lang="json">
+{}
+</pre>
+</td>
+			<td>Nodeselector for the operator to be installed.</td>
+		</tr>
+		<tr>
+			<td>operator.deployment.podSecurityContext</td>
+			<td>object</td>
+			<td><pre lang="json">
+{
+  "runAsNonRoot": true,
+  "seccompProfile": {
+    "type": "RuntimeDefault"
+  }
+}
+</pre>
+</td>
+			<td>Security Context for the whole pod.</td>
+		</tr>
+		<tr>
+			<td>operator.deployment.port</td>
+			<td>int</td>
+			<td><pre lang="json">
+9443
+</pre>
+</td>
+			<td>Listening port for the webhooks.</td>
+		</tr>
+		<tr>
+			<td>operator.deployment.priorityClassName</td>
+			<td>string</td>
+			<td><pre lang="json">
+""
+</pre>
+</td>
+			<td>Priority indicates the importance of a Pod relative to other Pods.</td>
+		</tr>
+		<tr>
+			<td>operator.deployment.readinessProbe</td>
+			<td>object</td>
+			<td><pre lang="json">
+{
+  "initialDelaySeconds": 3
+}
+</pre>
+</td>
+			<td>Operator's readiness probe configuration.</td>
+		</tr>
+		<tr>
+			<td>operator.deployment.replicaCount</td>
+			<td>int</td>
+			<td><pre lang="json">
+1
+</pre>
+</td>
+			<td>Number of replicas.</td>
+		</tr>
+		<tr>
+			<td>operator.deployment.resources</td>
+			<td>object</td>
+			<td><pre lang="json">
+{
+  "limits": {
+    "cpu": "100m",
+    "memory": "200Mi"
+  },
+  "requests": {
+    "cpu": "100m",
+    "memory": "100Mi"
+  }
+}
+</pre>
+</td>
+			<td>Resources to allocate for the operator.</td>
+		</tr>
+		<tr>
+			<td>operator.deployment.tolerations</td>
+			<td>list</td>
+			<td><pre lang="json">
+[]
+</pre>
+</td>
+			<td>Tolerations for the operator to be installed.</td>
+		</tr>
+		<tr>
+			<td>operator.monitoring.name</td>
+			<td>string</td>
+			<td><pre lang="json">
+""
+</pre>
+</td>
+			<td>The name of the default monitoring configmap.</td>
+		</tr>
+		<tr>
+			<td>operator.monitoring.queries</td>
+			<td>string</td>
+			<td><pre lang="json">
+null
+</pre>
+</td>
+			<td>A string representation of a YAML defining monitoring queries.</td>
+		</tr>
+		<tr>
+			<td>operator.podmonitor.additionalLabels</td>
+			<td>object</td>
+			<td><pre lang="json">
+{}
+</pre>
+</td>
+			<td>Additional labels for the podMonitor</td>
+		</tr>
+		<tr>
+			<td>operator.podmonitor.grafanaDashboard.annotations</td>
+			<td>object</td>
+			<td><pre lang="json">
+{}
+</pre>
+</td>
+			<td>Annotations that ConfigMaps can have to get configured in Grafana.</td>
+		</tr>
+		<tr>
+			<td>operator.podmonitor.grafanaDashboard.configMapName</td>
+			<td>string</td>
+			<td><pre lang="json">
+"cnpg-grafana-dashboard"
+</pre>
+</td>
+			<td>The name of the ConfigMap containing the dashboard.</td>
+		</tr>
+		<tr>
+			<td>operator.podmonitor.grafanaDashboard.labels</td>
+			<td>object</td>
+			<td><pre lang="json">
+{}
+</pre>
+</td>
+			<td>Labels that ConfigMaps should have to get configured in Grafana.</td>
+		</tr>
+		<tr>
+			<td>operator.podmonitor.grafanaDashboard.namespace</td>
+			<td>string</td>
+			<td><pre lang="json">
+""
+</pre>
+</td>
+			<td>Allows overriding the namespace where the ConfigMap will be created, defaulting to the same one as the Release.</td>
+		</tr>
+		<tr>
+			<td>operator.podmonitor.grafanaDashboard.sidecarLabel</td>
+			<td>string</td>
+			<td><pre lang="json">
+"grafana_dashboard"
+</pre>
+</td>
+			<td>Label that ConfigMaps should have to be loaded as dashboards.  DEPRECATED: Use labels instead.</td>
+		</tr>
+		<tr>
+			<td>operator.podmonitor.grafanaDashboard.sidecarLabelValue</td>
+			<td>string</td>
+			<td><pre lang="json">
+"1"
+</pre>
+</td>
+			<td>Label value that ConfigMaps should have to be loaded as dashboards.  DEPRECATED: Use labels instead.</td>
+		</tr>
+		<tr>
+			<td>operator.podmonitor.metricRelabelings</td>
+			<td>list</td>
+			<td><pre lang="json">
+[]
+</pre>
+</td>
+			<td>Metrics relabel configurations to apply to samples before ingestion.</td>
+		</tr>
+		<tr>
+			<td>operator.podmonitor.relabelings</td>
+			<td>list</td>
+			<td><pre lang="json">
+[]
+</pre>
+</td>
+			<td>Relabel configurations to apply to samples before scraping.</td>
+		</tr>
+		<tr>
+			<td>operator.service.name</td>
+			<td>string</td>
+			<td><pre lang="json">
+""
+</pre>
+</td>
+			<td>The name of the service to use.</td>
+		</tr>
+		<tr>
+			<td>operator.service.port</td>
+			<td>int</td>
+			<td><pre lang="json">
+443
+</pre>
+</td>
+			<td>The port to use.</td>
+		</tr>
+		<tr>
+			<td>operator.service.type</td>
+			<td>string</td>
+			<td><pre lang="json">
+"ClusterIP"
+</pre>
+</td>
+			<td>The type of service to use.</td>
+		</tr>
+		<tr>
+			<td>operator.serviceAccount.name</td>
+			<td>string</td>
+			<td><pre lang="json">
+""
+</pre>
+</td>
+			<td>The name of the service account to use. If not set and create is true, a name is generated using the fullname template.</td>
+		</tr>
+	</tbody>
+</table>
+
+<h3>Other Values</h3>
+<table>
+	<thead>
+		<th>Key</th>
+		<th>Type</th>
+		<th>Default</th>
+		<th>Description</th>
+	</thead>
+	<tbody>
+	<tr>
+		<td>operator.deployment.dnsPolicy</td>
+		<td>string</td>
+		<td><pre lang="json">
+""
+</pre>
+</td>
+		<td></td>
+	</tr>
+	<tr>
+		<td>operator.deployment.hostNetwork</td>
+		<td>bool</td>
+		<td><pre lang="json">
+false
+</pre>
+</td>
+		<td></td>
+	</tr>
+	</tbody>
+</table>
 

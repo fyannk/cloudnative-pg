@@ -1,0 +1,27 @@
+{{- /* Main Chart Validation */ -}}
+{{- if eq .Values.installMode "clusterwide" -}}
+  {{- if gt (len .Values.managedNamespaces) 0 -}}
+  {{- fail "Managed namespaces must be empty when installMode is set to clusterwide" -}}
+  {{- end -}}
+{{- end -}}
+
+{{- if ne .Values.installMode "clusterwide" -}}
+  {{- if empty .Values.managedNamespaces -}}
+  {{- fail "Managed namespaces must be defined when installMode is not clusterwide" -}}
+  {{- end -}}
+{{- end -}}
+
+{{- if .Values.features.cluster.webhooks -}}
+  {{- if and (not .Values.cluster.webhooks.manageCerts) (not .Values.cluster.webhooks.certManagerCert) -}}
+  {{- fail "Webhook certificates aren't managed by anyone..." -}}
+  {{- end -}}
+  {{- if and (not .Values.capabilities.secureNamespace) (.Values.cluster.webhooks.manageCerts) -}}
+  {{- fail "Operator-managed certificates for webhook in an unsecure Namespace not supported" -}}
+  {{- end -}}
+{{- end -}}
+
+{{- if .Values.features.operator.networkpolicy -}}
+  {{- if not .Values.kubeAPIServerIP -}}
+  {{- fail "kubeAPIServerIP is required for network policy" -}}
+  {{- end -}}
+{{- end -}}
