@@ -21,9 +21,11 @@ package controller
 
 import (
 	"context"
+	"errors"
 
 	volumesnapshotv1 "github.com/kubernetes-csi/external-snapshotter/client/v8/apis/volumesnapshot/v1"
 	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
+	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
@@ -38,6 +40,7 @@ import (
 	"k8s.io/utils/ptr"
 	k8client "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
@@ -1579,5 +1582,99 @@ var _ = Describe("generateNodeSerial", func() {
 			"unrelated-pod",
 		))
 		Expect(serial).To(Equal(1))
+	})
+})
+
+var _ = Describe("createPostgresClusterObjects", func() {
+	const (
+		operatorNamespace = "operator-namespace"
+		clusterNamespace  = "cluster-namespace"
+		sourceConfigMap   = "source-default-monitoring"
+	)
+
+	var (
+		originalConfiguration configuration.Data
+		cluster               *apiv1.Cluster
+		recorder              *record.FakeRecorder
+		r                     *ClusterReconciler
+	)
+
+	BeforeEach(func() {
+		originalConfiguration = *configuration.Current
+		configuration.Current.OperatorNamespace = operatorNamespace
+		configuration.Current.MonitoringQueriesConfigmap = sourceConfigMap
+		configuration.Current.MonitoringQueriesSecret = ""
+
+		cluster = &apiv1.Cluster{
+			TypeMeta: metav1.TypeMeta{
+				APIVersion: apiv1.SchemeGroupVersion.String(),
+				Kind:       apiv1.ClusterKind,
+			},
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "cluster-example",
+				Namespace: clusterNamespace,
+				UID:       "cluster-uid",
+			},
+			Spec: apiv1.ClusterSpec{
+				Instances: 1,
+			},
+		}
+
+		source := &corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      sourceConfigMap,
+				Namespace: operatorNamespace,
+			},
+			Data: map[string]string{
+				apiv1.DefaultMonitoringKey: "queries",
+			},
+		}
+
+		// Simulate a namespace whose ConfigMap quota is exhausted
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(schemeBuilder.BuildWithAllKnownScheme()).
+			WithObjects(cluster, source).
+			WithIndex(&apiv1.DatabaseRole{}, databaseRoleClusterKey, func(rawObj k8client.Object) []string {
+				return []string{rawObj.(*apiv1.DatabaseRole).Spec.ClusterRef.Name}
+			}).
+			WithInterceptorFuncs(interceptor.Funcs{
+				Create: func(ctx context.Context, cl k8client.WithWatch, obj k8client.Object,
+					opts ...k8client.CreateOption,
+				) error {
+					if _, ok := obj.(*corev1.ConfigMap); ok && obj.GetName() == apiv1.DefaultMonitoringConfigMapName {
+						return apierrs.NewForbidden(corev1.Resource("configmaps"), obj.GetName(),
+							errors.New("exceeded quota"))
+					}
+					return cl.Create(ctx, obj, opts...)
+				},
+			}).
+			Build()
+
+		recorder = record.NewFakeRecorder(120)
+		r = &ClusterReconciler{
+			Client:          fakeClient,
+			DiscoveryClient: &fakediscovery.FakeDiscovery{Fake: &testing.Fake{}},
+			Scheme:          schemeBuilder.BuildWithAllKnownScheme(),
+			Recorder:        recorder,
+		}
+	})
+
+	AfterEach(func() {
+		*configuration.Current = originalConfiguration
+	})
+
+	It("still creates the primary Lease when the default monitoring queries fail", func(ctx SpecContext) {
+		Expect(r.createPostgresClusterObjects(ctx, cluster)).To(Succeed())
+
+		expectResourceDoesntExist(r.Client, apiv1.DefaultMonitoringConfigMapName, clusterNamespace,
+			&corev1.ConfigMap{})
+		expectResourceExists(r.Client, cluster.Name, clusterNamespace, &coordinationv1.Lease{})
+
+		close(recorder.Events)
+		var events []string
+		for event := range recorder.Events {
+			events = append(events, event)
+		}
+		Expect(events).To(ContainElement(HavePrefix("Warning DefaultMonitoringQueriesError")))
 	})
 })
