@@ -90,9 +90,13 @@ func (r *ClusterReconciler) createPostgresClusterObjects(ctx context.Context, cl
 	}
 
 	if !cluster.Spec.Monitoring.AreDefaultQueriesDisabled() {
+		// The default monitoring queries are optional: a failure here must not
+		// prevent the remaining objects, such as the primary Lease, from being reconciled
 		err = r.createOrPatchDefaultMetrics(ctx, cluster)
 		if err != nil {
-			return nil
+			log.FromContext(ctx).Error(err, "while creating or patching the default monitoring queries")
+			r.Recorder.Eventf(cluster, "Warning", "DefaultMonitoringQueriesError",
+				"Unable to create or patch the default monitoring queries: %v", err)
 		}
 	}
 
