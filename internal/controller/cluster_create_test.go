@@ -22,6 +22,7 @@ package controller
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	volumesnapshotv1 "github.com/kubernetes-csi/external-snapshotter/client/v8/apis/volumesnapshot/v1"
 	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
@@ -1582,6 +1583,125 @@ var _ = Describe("generateNodeSerial", func() {
 			"unrelated-pod",
 		))
 		Expect(serial).To(Equal(1))
+	})
+})
+
+// Under a ResourceQuota, the API server checks the quota before checking
+// whether the object exists: creating an object that already exists consumes
+// quota until the next recount, and is rejected as "exceeded quota" when the
+// quota is full. Once the objects of a Cluster exist, a reconciliation must
+// therefore not send any CREATE.
+var _ = Describe("createPostgresClusterObjects under a full ResourceQuota", func() {
+	const (
+		operatorNamespace = "operator-namespace"
+		clusterNamespace  = "cluster-namespace"
+		pullSecretName    = "operator-pull-secret"
+	)
+
+	var (
+		originalConfiguration configuration.Data
+		cluster               *apiv1.Cluster
+		rejectCreates         bool
+		rejectedCreates       []string
+		r                     *ClusterReconciler
+	)
+
+	BeforeEach(func() {
+		originalConfiguration = *configuration.Current
+		configuration.Current.OperatorNamespace = operatorNamespace
+		configuration.Current.OperatorPullSecretName = pullSecretName
+
+		// The failover quorum is enabled, so that the FailoverQuorum object
+		// is reconciled too
+		cluster = &apiv1.Cluster{
+			TypeMeta: metav1.TypeMeta{
+				APIVersion: apiv1.SchemeGroupVersion.String(),
+				Kind:       apiv1.ClusterKind,
+			},
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "cluster-example",
+				Namespace: clusterNamespace,
+				UID:       "cluster-uid",
+			},
+			Spec: apiv1.ClusterSpec{
+				Instances: 3,
+				PostgresConfiguration: apiv1.PostgresConfiguration{
+					Synchronous: &apiv1.SynchronousReplicaConfiguration{
+						Method:         apiv1.SynchronousReplicaConfigurationMethodAny,
+						Number:         1,
+						FailoverQuorum: true,
+					},
+				},
+			},
+		}
+
+		// The operator pull secret, so that it is copied into the cluster
+		// namespace
+		pullSecret := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      pullSecretName,
+				Namespace: operatorNamespace,
+			},
+			Type: corev1.SecretTypeDockerConfigJson,
+			Data: map[string][]byte{corev1.DockerConfigJsonKey: []byte("{}")},
+		}
+
+		// Once rejectCreates is set, every CREATE is recorded and rejected as
+		// "exceeded quota", like the API server does under a full quota, even
+		// for an object that already exists
+		rejectCreates = false
+		rejectedCreates = nil
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(schemeBuilder.BuildWithAllKnownScheme()).
+			WithObjects(cluster, pullSecret).
+			WithIndex(&apiv1.DatabaseRole{}, databaseRoleClusterKey, func(rawObj k8client.Object) []string {
+				return []string{rawObj.(*apiv1.DatabaseRole).Spec.ClusterRef.Name}
+			}).
+			WithInterceptorFuncs(interceptor.Funcs{
+				Create: func(ctx context.Context, cl k8client.WithWatch, obj k8client.Object,
+					opts ...k8client.CreateOption,
+				) error {
+					if rejectCreates {
+						rejectedCreates = append(rejectedCreates, fmt.Sprintf("%T %s", obj, obj.GetName()))
+						return apierrs.NewForbidden(corev1.Resource("objects"), obj.GetName(),
+							errors.New("exceeded quota"))
+					}
+					return cl.Create(ctx, obj, opts...)
+				},
+			}).
+			Build()
+
+		r = &ClusterReconciler{
+			Client:          fakeClient,
+			DiscoveryClient: &fakediscovery.FakeDiscovery{Fake: &testing.Fake{}},
+			Scheme:          schemeBuilder.BuildWithAllKnownScheme(),
+			Recorder:        record.NewFakeRecorder(120),
+		}
+	})
+
+	AfterEach(func() {
+		*configuration.Current = originalConfiguration
+	})
+
+	It("does not create again the objects that already exist", func(ctx SpecContext) {
+		// First reconciliation: all the objects of the Cluster are created,
+		// including the ones that used to be created on every reconciliation
+		Expect(r.createPostgresClusterObjects(ctx, cluster)).To(Succeed())
+
+		key := types.NamespacedName{Namespace: clusterNamespace, Name: cluster.Name}
+		Expect(r.Get(ctx, key, &rbacv1.RoleBinding{})).To(Succeed())
+		Expect(r.Get(ctx, key, &coordinationv1.Lease{})).To(Succeed())
+		Expect(r.Get(ctx, key, &apiv1.FailoverQuorum{})).To(Succeed())
+		Expect(r.Get(ctx, types.NamespacedName{
+			Namespace: clusterNamespace,
+			Name:      cluster.Name + "-pull",
+		}, &corev1.Secret{})).To(Succeed())
+
+		// Second reconciliation, with the quota full: since every object
+		// exists, it succeeds without sending any CREATE
+		rejectCreates = true
+		Expect(r.createPostgresClusterObjects(ctx, cluster)).To(Succeed())
+		Expect(rejectedCreates).To(BeEmpty())
 	})
 })
 
