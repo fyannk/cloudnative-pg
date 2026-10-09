@@ -728,6 +728,18 @@ func (r *ClusterReconciler) copyPullSecretFromOperator(ctx context.Context, clus
 
 	clusterSecretName := fmt.Sprintf("%s-pull", cluster.Name)
 
+	// Only create the secret when missing: under a ResourceQuota, creating an
+	// object that already exists consumes quota, or is rejected when the quota
+	// is full
+	var existing corev1.Secret
+	err := r.Get(ctx, client.ObjectKey{Namespace: cluster.Namespace, Name: clusterSecretName}, &existing)
+	if err == nil {
+		return clusterSecretName, nil
+	}
+	if !apierrs.IsNotFound(err) {
+		return "", err
+	}
+
 	// Let's create the secret with the required info
 	secret := corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
@@ -1111,9 +1123,20 @@ func (r *ClusterReconciler) createRoleBinding(ctx context.Context, cluster *apiv
 	roleBinding := specs.CreateRoleBinding(cluster.ObjectMeta, cluster.GetServiceAccountName())
 	cluster.SetInheritedDataAndOwnership(&roleBinding.ObjectMeta)
 
-	err := r.Create(ctx, &roleBinding)
+	// Under a ResourceQuota, creating an object that already exists consumes
+	// quota, or is rejected when the quota is full: only create it when missing
+	var existing rbacv1.RoleBinding
+	err := r.Get(ctx, client.ObjectKeyFromObject(&roleBinding), &existing)
+	if err == nil {
+		return nil
+	}
+	if !apierrs.IsNotFound(err) {
+		return fmt.Errorf("while getting role binding: %w", err)
+	}
+
+	err = r.Create(ctx, &roleBinding)
 	if err != nil && !apierrs.IsAlreadyExists(err) {
-		log.FromContext(ctx).Error(err, "Unable to create the ServiceAccount", "object", roleBinding)
+		log.FromContext(ctx).Error(err, "Unable to create the RoleBinding", "object", roleBinding)
 		return err
 	}
 
