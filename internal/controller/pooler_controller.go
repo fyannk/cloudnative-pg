@@ -174,7 +174,12 @@ func (r *PoolerReconciler) reconcile(ctx context.Context, pooler *apiv1.Pooler) 
 	// is a no-op, but service accounts, RBAC, services and PodMonitor are still
 	// reconciled, so drift in those resources is corrected even when the catalog
 	// reference is misconfigured.
-	return ctrl.Result{}, r.updateOwnedObjects(ctx, pooler, resources)
+	if err := r.updateOwnedObjects(ctx, pooler, resources); err != nil {
+		return ctrl.Result{}, err
+	}
+
+	// What the Deployment reports about its Pods, now that it is up to date
+	return ctrl.Result{}, r.updatePoolerPhaseFromDeployment(ctx, pooler, resources)
 }
 
 // SetupWithManager setup this controller inside the controller manager

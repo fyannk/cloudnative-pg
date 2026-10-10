@@ -199,3 +199,57 @@ var _ = Describe("Pod conditions test suite", func() {
 		Entry("deletion deadline in the future", &metav1.Time{Time: time.Now().Add(time.Hour)}, false),
 	)
 })
+
+// The reason of an inactive Pod comes from the Pod itself, so that the owner
+// of a Cluster sees it on the Cluster instead of having to describe the Pod
+var _ = DescribeTable("PodInactiveReason",
+	func(pod corev1.Pod, expected string) {
+		Expect(PodInactiveReason(pod)).To(Equal(expected))
+	},
+	Entry("a running Pod has no reason", corev1.Pod{Status: corev1.PodStatus{Phase: corev1.PodRunning}}, ""),
+	Entry("a Pod being deleted", corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{DeletionTimestamp: &metav1.Time{Time: time.Now()}},
+		Status:     corev1.PodStatus{Phase: corev1.PodRunning},
+	}, "being deleted"),
+	Entry("a failed Pod, with the kubelet's reason", corev1.Pod{
+		Status: corev1.PodStatus{
+			Phase: corev1.PodFailed, Reason: "Evicted", Message: "The node was low on resource: ephemeral-storage.",
+		},
+	}, "Failed (Evicted: The node was low on resource: ephemeral-storage.)"),
+	Entry("a Pod the scheduler cannot place", corev1.Pod{
+		Status: corev1.PodStatus{
+			Phase: corev1.PodPending,
+			Conditions: []corev1.PodCondition{{
+				Type: corev1.PodScheduled, Status: corev1.ConditionFalse, Reason: corev1.PodReasonUnschedulable,
+				Message: "0/1 nodes are available: pod has unbound immediate PersistentVolumeClaims.",
+			}},
+		},
+	}, "not scheduled (Unschedulable: 0/1 nodes are available: pod has unbound immediate PersistentVolumeClaims.)"),
+	Entry("a Pod whose init container cannot start, before the app containers", corev1.Pod{
+		Status: corev1.PodStatus{
+			Phase:      corev1.PodPending,
+			Conditions: []corev1.PodCondition{{Type: corev1.PodScheduled, Status: corev1.ConditionTrue}},
+			InitContainerStatuses: []corev1.ContainerStatus{{
+				Name: "bootstrap-controller",
+				State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{
+					Reason: "ImagePullBackOff", Message: "Back-off pulling image \"ghcr.io/x/y:z\"",
+				}},
+			}},
+			ContainerStatuses: []corev1.ContainerStatus{{
+				Name:  "postgres",
+				State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "PodInitializing"}},
+			}},
+		},
+	}, "container bootstrap-controller waiting (ImagePullBackOff: Back-off pulling image \"ghcr.io/x/y:z\")"),
+	Entry("a Pod whose app container waits for a volume", corev1.Pod{
+		Status: corev1.PodStatus{
+			Phase:      corev1.PodPending,
+			Conditions: []corev1.PodCondition{{Type: corev1.PodScheduled, Status: corev1.ConditionTrue}},
+			ContainerStatuses: []corev1.ContainerStatus{{
+				Name:  "postgres",
+				State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "ContainerCreating"}},
+			}},
+		},
+	}, "container postgres waiting (ContainerCreating)"),
+	Entry("a Pending Pod reporting nothing yet", corev1.Pod{Status: corev1.PodStatus{Phase: corev1.PodPending}}, ""),
+)

@@ -20,6 +20,7 @@ SPDX-License-Identifier: Apache-2.0
 package utils
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/cloudnative-pg/machinery/pkg/log"
@@ -76,6 +77,57 @@ func IsPodActive(p corev1.Pod) bool {
 		corev1.PodPending != p.Status.Phase &&
 		corev1.PodFailed != p.Status.Phase &&
 		p.DeletionTimestamp == nil
+}
+
+// PodInactiveReason says why a Pod is not active, from what the Pod itself
+// reports, in the order Kubernetes resolves it: deletion, a terminal phase,
+// scheduling, then the first container (init first) waiting on something.
+// It returns an empty string for an active Pod or a Pending Pod reporting
+// nothing yet.
+func PodInactiveReason(pod corev1.Pod) string {
+	if pod.DeletionTimestamp != nil {
+		return "being deleted"
+	}
+
+	switch pod.Status.Phase {
+	case corev1.PodFailed, corev1.PodSucceeded:
+		return joinReasonAndMessage(string(pod.Status.Phase), pod.Status.Reason, pod.Status.Message)
+	case corev1.PodPending:
+	default:
+		return ""
+	}
+
+	for _, condition := range pod.Status.Conditions {
+		if condition.Type == corev1.PodScheduled && condition.Status == corev1.ConditionFalse {
+			return joinReasonAndMessage("not scheduled", condition.Reason, condition.Message)
+		}
+	}
+
+	for _, container := range append(pod.Status.InitContainerStatuses, pod.Status.ContainerStatuses...) {
+		if container.State.Waiting != nil {
+			return joinReasonAndMessage(
+				fmt.Sprintf("container %s waiting", container.Name),
+				container.State.Waiting.Reason,
+				container.State.Waiting.Message)
+		}
+	}
+
+	return ""
+}
+
+// joinReasonAndMessage formats "<what> (<reason>: <message>)", leaving out
+// the parts that are empty
+func joinReasonAndMessage(what, reason, message string) string {
+	switch {
+	case reason != "" && message != "":
+		return fmt.Sprintf("%s (%s: %s)", what, reason, message)
+	case reason != "":
+		return fmt.Sprintf("%s (%s)", what, reason)
+	case message != "":
+		return fmt.Sprintf("%s (%s)", what, message)
+	default:
+		return what
+	}
 }
 
 // IsPodUnschedulable check if a Pod is unschedulable

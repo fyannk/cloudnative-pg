@@ -73,6 +73,10 @@ func Reconcile(
 			return result, err
 		}
 
+		if result, err := handleFailedJob(ctx, c, cluster, majorUpgradeJob); result != nil || err != nil {
+			return result, err
+		}
+
 		contextLogger.Info("Major upgrade job not completed.")
 		return &ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	}
@@ -438,6 +442,31 @@ func handleRollbackIfNeeded(
 		"Cleaned up failed upgrade job, rolling back to major version %d", requestedMajor)
 
 	return &ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+}
+
+// handleFailedJob registers the Unrecoverable phase when the major upgrade
+// Job has failed. The Job has no retry (BackoffLimit 0): one failure is
+// final, and the instance Pods were deleted before it ran, so waiting for a
+// completion would leave the cluster down with "Upgrading" as its only
+// signal. The cause is in the Job logs.
+func handleFailedJob(
+	ctx context.Context,
+	c client.Client,
+	cluster *apiv1.Cluster,
+	job *batchv1.Job,
+) (*ctrl.Result, error) {
+	if !utils.JobHasFailed(*job) {
+		return nil, nil
+	}
+
+	log.FromContext(ctx).Warning("Major upgrade job failed", "jobName", job.Name)
+	if err := registerPhase(ctx, c, cluster, apiv1.PhaseUnrecoverable,
+		fmt.Sprintf("Major upgrade failed for job %s. "+
+			"Check the job logs to investigate the cause of the failure.", job.Name),
+	); err != nil {
+		return nil, err
+	}
+	return &ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 }
 
 // registerPhase sets a phase into the cluster
