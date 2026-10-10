@@ -43,7 +43,7 @@ import (
 	. "github.com/onsi/gomega"
 )
 
-func newScheduledBackupTestClient() client.Client {
+func newScheduledBackupTestClient() client.WithWatch {
 	scheme := schemeBuilder.BuildWithAllKnownScheme()
 	return fake.NewClientBuilder().
 		WithScheme(scheme).
