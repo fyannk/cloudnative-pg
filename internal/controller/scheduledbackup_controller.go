@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/cloudnative-pg/machinery/pkg/log"
@@ -148,6 +149,19 @@ func (r *ScheduledBackupReconciler) reconcileScheduledBackup(
 		contextLogger.Info("Detected an invalid cron schedule",
 			"schedule", scheduledBackup.GetSchedule())
 		return ctrl.Result{}, err
+	}
+
+	// The parser reads the seconds field first and makes the day of the week
+	// optional: a five-field schedule, the standard cron format, is accepted
+	// but shifted by one field. The webhook only warns, which GitOps tools
+	// never show: say it on the object too. Descriptors such as "@daily" or
+	// "@every 1h" have their own syntax and are left alone.
+	spec := scheduledBackup.GetSchedule()
+	if fields := len(strings.Fields(spec)); !strings.HasPrefix(spec, "@") && fields != 6 {
+		r.Recorder.Eventf(scheduledBackup, "Warning", "ScheduleFieldCount",
+			"schedule %q has %d fields instead of 6: it is read with the seconds field first "+
+				"(see the next run time in the BackupSchedule events)",
+			scheduledBackup.GetSchedule(), fields)
 	}
 
 	// Immediate volume snapshot backups can be scheduled only when the cluster

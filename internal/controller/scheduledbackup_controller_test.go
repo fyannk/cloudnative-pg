@@ -467,6 +467,51 @@ var _ = Describe("scheduledbackup advanceScheduledBackupStatus", func() {
 	})
 })
 
+var _ = Describe("scheduledbackup with a five-field schedule", func() {
+	It("records a Warning event with the field count", func(ctx context.Context) {
+		cli := newScheduledBackupTestClient()
+		ns := newFakeNamespace(cli)
+		sb := &apiv1.ScheduledBackup{
+			ObjectMeta: metav1.ObjectMeta{Name: "sb-five", Namespace: ns},
+			Spec: apiv1.ScheduledBackupSpec{
+				Schedule: "0 2 * * *",
+				Cluster:  apiv1.LocalObjectReference{Name: "cluster-x"},
+			},
+		}
+		Expect(cli.Create(ctx, sb)).To(Succeed())
+
+		recorder := record.NewFakeRecorder(10)
+		r := &ScheduledBackupReconciler{Client: cli, Recorder: recorder}
+		_, err := r.reconcileScheduledBackup(ctx, sb)
+		Expect(err).ToNot(HaveOccurred())
+
+		Expect(recorder.Events).To(Receive(And(
+			ContainSubstring("Warning ScheduleFieldCount"),
+			ContainSubstring(`"0 2 * * *" has 5 fields instead of 6`),
+		)))
+	})
+
+	It("leaves a descriptor alone", func(ctx context.Context) {
+		cli := newScheduledBackupTestClient()
+		ns := newFakeNamespace(cli)
+		sb := &apiv1.ScheduledBackup{
+			ObjectMeta: metav1.ObjectMeta{Name: "sb-every", Namespace: ns},
+			Spec: apiv1.ScheduledBackupSpec{
+				Schedule: "@every 1h",
+				Cluster:  apiv1.LocalObjectReference{Name: "cluster-x"},
+			},
+		}
+		Expect(cli.Create(ctx, sb)).To(Succeed())
+
+		recorder := record.NewFakeRecorder(10)
+		r := &ScheduledBackupReconciler{Client: cli, Recorder: recorder}
+		_, err := r.reconcileScheduledBackup(ctx, sb)
+		Expect(err).ToNot(HaveOccurred())
+
+		Expect(recorder.Events).ToNot(Receive(ContainSubstring("ScheduleFieldCount")))
+	})
+})
+
 var _ = Describe("scheduledbackup immediate event under a rejected creation", func() {
 	It("records the same event on every pass", func(ctx context.Context) {
 		cli := newScheduledBackupTestClient()

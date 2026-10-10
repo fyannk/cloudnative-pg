@@ -137,6 +137,11 @@ type Runnable struct {
 	// the new target.
 	yielded atomic.Bool
 
+	// waitReason says why the lease is not held yet, for the callers waiting
+	// on Acquire to report it
+	waitReasonMu sync.Mutex
+	waitReason   string
+
 	// observedRecord is the lease state tryTakeOver is timing for liveness and
 	// observedTime is when it first saw that state; see tryTakeOver for how they
 	// detect a holder that has stopped renewing without comparing against the
@@ -497,9 +502,11 @@ func (r *Runnable) tryTakeOver(ctx context.Context) (bool, error) {
 	if errors.IsNotFound(err) {
 		// The cluster controller owns lease creation; nothing to take over yet.
 		r.observedRecord = nil
+		r.setWaitReason("lease " + r.lock.Describe() + " not found")
 		return false, nil
 	}
 	if err != nil {
+		r.setWaitReason("cannot read lease " + r.lock.Describe() + ": " + err.Error())
 		return false, err
 	}
 
@@ -531,6 +538,8 @@ func (r *Runnable) tryTakeOver(ctx context.Context) (bool, error) {
 		}
 		return r.claim(ctx, record)
 	}
+
+	r.setWaitReason(fmt.Sprintf("lease %s held by %q", r.lock.Describe(), record.HolderIdentity))
 
 	// Another pod still holds the lease. The window runs only from the flip
 	// (the pending marker or this pod as target), which is what tells the old
@@ -576,6 +585,20 @@ func (r *Runnable) mayObserve() bool {
 // stale cache only delays the claim, as it delays a promotion.
 func (r *Runnable) isTargetPrimary() bool {
 	return r.instance.GetClusterOrDefault().Status.TargetPrimary == r.instance.GetPodName()
+}
+
+func (r *Runnable) setWaitReason(reason string) {
+	r.waitReasonMu.Lock()
+	defer r.waitReasonMu.Unlock()
+	r.waitReason = reason
+}
+
+// WaitReason returns why the lease is not held yet, as observed by the last
+// take-over attempt, or an empty string before the first attempt
+func (r *Runnable) WaitReason() string {
+	r.waitReasonMu.Lock()
+	defer r.waitReasonMu.Unlock()
+	return r.waitReason
 }
 
 // sameHolder reports whether two reads describe the same un-renewed lease
