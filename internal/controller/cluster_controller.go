@@ -286,6 +286,9 @@ func (r *ClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	}
 
 	if err != nil {
+		// The error is logged by the manager as "Reconciler error", which the
+		// owner of the Cluster usually cannot read: report it on the Cluster
+		recordReconciliationError(r.Recorder, cluster, err)
 		return ctrl.Result{}, err
 	}
 	return result, nil

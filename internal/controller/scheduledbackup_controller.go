@@ -89,10 +89,26 @@ func (r *ScheduledBackupReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		return ctrl.Result{}, err
 	}
 
+	// Run the inner reconcile loop, reporting on the ScheduledBackup the
+	// error that ends it: the "Reconciler error" log line is in the operator
+	// namespace, which the owner of the ScheduledBackup usually cannot read
+	result, err := r.reconcile(ctx, &scheduledBackup)
+	if err != nil {
+		recordReconciliationError(r.Recorder, &scheduledBackup, err)
+	}
+	return result, err
+}
+
+func (r *ScheduledBackupReconciler) reconcile(
+	ctx context.Context,
+	scheduledBackup *apiv1.ScheduledBackup,
+) (ctrl.Result, error) {
+	contextLogger := log.FromContext(ctx)
+
 	if result, err := r.Admission.EnsureResourceIsAdmitted(
 		ctx,
 		guard.AdmissionParams[*apiv1.ScheduledBackup]{
-			Object:       &scheduledBackup,
+			Object:       scheduledBackup,
 			Client:       r.Client,
 			ApplyChanges: true,
 		},
@@ -116,7 +132,7 @@ func (r *ScheduledBackupReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 
 	// Check if any backups created by this ScheduledBackup are still running.
 	// This provides concurrency control at the ScheduledBackup level.
-	childBackups, err := r.GetChildBackups(ctx, scheduledBackup)
+	childBackups, err := r.GetChildBackups(ctx, *scheduledBackup)
 	if err != nil {
 		contextLogger.Error(err,
 			"Cannot extract the list of created backups")
@@ -133,7 +149,7 @@ func (r *ScheduledBackupReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		}
 	}
 
-	return r.reconcileScheduledBackup(ctx, &scheduledBackup)
+	return r.reconcileScheduledBackup(ctx, scheduledBackup)
 }
 
 // reconcileScheduledBackup is the main reconciliation logic for a scheduled backup
