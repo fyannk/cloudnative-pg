@@ -44,7 +44,7 @@ import (
 	. "github.com/onsi/gomega"
 )
 
-func newScheduledBackupTestClient() client.Client {
+func newScheduledBackupTestClient() client.WithWatch {
 	scheme := schemeBuilder.BuildWithAllKnownScheme()
 	return fake.NewClientBuilder().
 		WithScheme(scheme).
@@ -518,7 +518,7 @@ var _ = Describe("scheduledbackup immediate event under a rejected creation", fu
 		namespace := newFakeNamespace(cli)
 		recorder := record.NewFakeRecorder(10)
 		r := &ScheduledBackupReconciler{
-			Client: interceptor.NewClient(cli.(client.WithWatch), interceptor.Funcs{
+			Client: interceptor.NewClient(cli, interceptor.Funcs{
 				Create: func(ctx context.Context, cl client.WithWatch, obj client.Object,
 					opts ...client.CreateOption,
 				) error {
