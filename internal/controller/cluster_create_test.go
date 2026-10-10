@@ -21,6 +21,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 
 	volumesnapshotv1 "github.com/kubernetes-csi/external-snapshotter/client/v8/apis/volumesnapshot/v1"
 	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
@@ -38,11 +39,14 @@ import (
 	"k8s.io/utils/ptr"
 	k8client "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
 	"github.com/cloudnative-pg/cloudnative-pg/internal/configuration"
 	schemeBuilder "github.com/cloudnative-pg/cloudnative-pg/internal/scheme"
+	"github.com/cloudnative-pg/cloudnative-pg/pkg/postgres"
+	"github.com/cloudnative-pg/cloudnative-pg/pkg/reconciler/persistentvolumeclaim"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/specs"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/utils"
 
@@ -1579,5 +1583,103 @@ var _ = Describe("generateNodeSerial", func() {
 			"unrelated-pod",
 		))
 		Expect(serial).To(Equal(1))
+	})
+})
+
+// The "CreatingInstance" event records the intent, before the Pod is
+// created. When the creation is rejected (for example by a ResourceQuota),
+// nothing says whether the instance was created. The "InstanceCreated"
+// event records the result, only once the Pod exists, with the bootstrap
+// method.
+var _ = Describe("bootstrapping a Cluster whose creations are rejected", func() {
+	var (
+		env           *testingEnvironment
+		namespace     string
+		rejectCreates bool
+		recorder      *record.FakeRecorder
+	)
+
+	// drainEvents returns the events recorded so far, by reason
+	drainEvents := func() []string {
+		var events []string
+		for {
+			select {
+			case e := <-recorder.Events:
+				events = append(events, e)
+			default:
+				return events
+			}
+		}
+	}
+
+	BeforeEach(func() {
+		env = buildTestEnvironment()
+		namespace = newFakeNamespace(env.client)
+		recorder = env.clusterReconciler.Recorder.(*record.FakeRecorder)
+
+		// Every CREATE is rejected while rejectCreates is set, like the API
+		// server does under a full quota
+		rejectCreates = false
+		env.clusterReconciler.Client = interceptor.NewClient(env.client, interceptor.Funcs{
+			Create: func(ctx context.Context, cl k8client.WithWatch, obj k8client.Object,
+				opts ...k8client.CreateOption,
+			) error {
+				if rejectCreates {
+					return apierrs.NewForbidden(corev1.Resource("objects"), obj.GetName(),
+						errors.New("exceeded quota"))
+				}
+				return cl.Create(ctx, obj, opts...)
+			},
+		})
+	})
+
+	It("records the instance once created, not when its creation is rejected", func(ctx SpecContext) {
+		cluster := newFakeCNPGCluster(env.client, namespace, func(c *apiv1.Cluster) {
+			c.Spec.Instances = 1
+		})
+		cluster.Status.Instances = 0
+		cluster.Status.ReadyInstances = 0
+		cluster.Status.InstanceNames = nil
+		cluster.Status.TargetPrimary = ""
+		cluster.Status.CurrentPrimary = ""
+		drainEvents()
+
+		// First pass, the PVC creation is rejected: the error is returned and
+		// nothing is recorded as created
+		rejectCreates = true
+		_, err := env.clusterReconciler.createPrimaryInstance(ctx, cluster)
+		Expect(err).To(HaveOccurred())
+		Expect(drainEvents()).ToNot(ContainElement(ContainSubstring("InstanceCreated")))
+
+		// Second pass, the quota has room: the PVCs are created
+		rejectCreates = false
+		_, err = env.clusterReconciler.createPrimaryInstance(ctx, cluster)
+		Expect(err).To(MatchError(ErrNextLoop))
+		cluster.TypeMeta = metav1.TypeMeta{Kind: apiv1.ClusterKind, APIVersion: apiv1.SchemeGroupVersion.String()}
+
+		var pvcs corev1.PersistentVolumeClaimList
+		Expect(env.client.List(ctx, &pvcs, k8client.InNamespace(namespace))).To(Succeed())
+		Expect(pvcs.Items).To(HaveLen(1))
+		pvcs.Items[0].Status.Phase = corev1.ClaimBound
+		persistentvolumeclaim.EnrichStatus(ctx, cluster, nil, nil, pvcs.Items)
+		Expect(cluster.Status.Instances).To(Equal(1), "the instance count is derived from the PVCs")
+
+		// Third pass, the Pod creation is rejected: the intent is recorded,
+		// the result is not
+		resources := &managedResources{pvcs: pvcs}
+		rejectCreates = true
+		_, err = env.clusterReconciler.ensureInstancesAreCreated(ctx, cluster, resources, postgres.PostgresqlStatusList{})
+		Expect(err).To(HaveOccurred())
+		Expect(drainEvents()).To(ConsistOf(ContainSubstring("CreatingInstance Primary instance (initdb)")))
+
+		// Fourth pass, the Pod is created: the intent, then the result naming
+		// the bootstrap method
+		rejectCreates = false
+		_, err = env.clusterReconciler.ensureInstancesAreCreated(ctx, cluster, resources, postgres.PostgresqlStatusList{})
+		Expect(err).ToNot(HaveOccurred())
+		Expect(drainEvents()).To(Equal([]string{
+			"Normal CreatingInstance Primary instance (initdb)",
+			"Normal InstanceCreated Created instance " + specs.GetInstanceName(cluster.Name, 1) + " (initdb)",
+		}))
 	})
 })

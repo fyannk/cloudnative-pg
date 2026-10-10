@@ -304,6 +304,20 @@ const (
 	jobRoleSnapshotRecovery jobRole = "snapshot-recovery"
 )
 
+// Description words the bootstrap method for the user, as the events do
+func (role jobRole) Description() string {
+	switch role {
+	case jobRoleFullRecovery:
+		return "from backup"
+	case jobRolePGBaseBackup:
+		return "from physical backup"
+	case jobRoleSnapshotRecovery:
+		return "from volumeSnapshots"
+	default:
+		return string(role)
+	}
+}
+
 // getJobName returns a string indicating the job name
 func (role jobRole) getJobName(instanceName string) string {
 	return fmt.Sprintf("%s-%s", instanceName, role)
