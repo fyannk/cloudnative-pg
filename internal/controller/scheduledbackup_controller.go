@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/cloudnative-pg/machinery/pkg/log"
@@ -150,6 +151,17 @@ func (r *ScheduledBackupReconciler) reconcileScheduledBackup(
 		return ctrl.Result{}, err
 	}
 
+	// The parser reads the seconds field first and makes the day of the week
+	// optional: a five-field schedule, the standard cron format, is accepted
+	// but shifted by one field. The webhook only warns, which GitOps tools
+	// never show: say it on the object too.
+	if fields := len(strings.Fields(scheduledBackup.GetSchedule())); fields != 6 {
+		r.Recorder.Eventf(scheduledBackup, "Warning", "ScheduleFieldCount",
+			"schedule %q has %d fields instead of 6: it is read with the seconds field first "+
+				"(see the next run time in the BackupSchedule events)",
+			scheduledBackup.GetSchedule(), fields)
+	}
+
 	// Immediate volume snapshot backups can be scheduled only when the cluster
 	// is ready as taking a cold backup meanwhile is being created may stop the
 	// cluster creation because the primary instance could be fenced.
@@ -223,7 +235,6 @@ func (r *ScheduledBackupReconciler) reconcileScheduledBackup(
 		}
 
 		// we populate the status (lastCheckTime...) by following the same rules of the scheduled backup
-		r.Recorder.Eventf(scheduledBackup, "Normal", "BackupSchedule", "Scheduled immediate backup now: %v", now)
 		return r.createBackup(ctx, scheduledBackup, now, now, schedule, true)
 	}
 
@@ -366,6 +377,12 @@ func (r *ScheduledBackupReconciler) createBackup(
 			"backupName", backup.GetName())
 		r.Recorder.Event(scheduledBackup, "Warning", "BackupCreation", "Error while creating backup object")
 		return ctrl.Result{}, err
+	}
+
+	// Recorded after the creation, once: a rejected creation would otherwise
+	// add one "scheduled now" event per retry
+	if immediate {
+		r.Recorder.Eventf(scheduledBackup, "Normal", "BackupSchedule", "Scheduled immediate backup now: %v", backupTime)
 	}
 
 	return r.advanceScheduledBackupStatus(ctx, scheduledBackup, backupTime, now, schedule.Next(now))

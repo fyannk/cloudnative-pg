@@ -21,6 +21,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/robfig/cron"
@@ -118,6 +119,38 @@ var _ = Describe("scheduledbackup createBackup", func() {
 		Expect(stored.Status.LastScheduleTime).ToNot(BeNil())
 		Expect(stored.Status.LastScheduleTime.Time).To(BeTemporally("==", backupTime))
 		Expect(stored.Status.NextScheduleTime).ToNot(BeNil())
+	})
+
+	It("records the immediate schedule event once, after the Backup is created", func(ctx context.Context) {
+		// Every creation of a Backup is rejected, like the API server does
+		// under a full quota: the warning is recorded, but not a "scheduled
+		// now" event that would be repeated on every retry
+		rejecting := &ScheduledBackupReconciler{
+			Client: interceptor.NewClient(cli.(client.WithWatch), interceptor.Funcs{
+				Create: func(ctx context.Context, cl client.WithWatch, obj client.Object,
+					opts ...client.CreateOption,
+				) error {
+					if _, ok := obj.(*apiv1.Backup); ok {
+						return apierrs.NewForbidden(schema.GroupResource{Group: "postgresql.cnpg.io", Resource: "backups"}, obj.GetName(),
+							errors.New("exceeded quota"))
+					}
+					return cl.Create(ctx, obj, opts...)
+				},
+			}),
+			Recorder: recorder,
+		}
+		_, err := rejecting.createBackup(ctx, sb, backupTime, now, sched, true)
+		Expect(err).To(HaveOccurred())
+		Expect(recorder.Events).To(HaveLen(1))
+		Expect(<-recorder.Events).To(ContainSubstring("Warning BackupCreation"))
+
+		// The quota has room: the Backup is created and the event recorded
+		// once, followed by the usual "next backup" event
+		_, err = r.createBackup(ctx, sb, backupTime, now, sched, true)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(recorder.Events).To(HaveLen(2))
+		Expect(<-recorder.Events).To(ContainSubstring("Normal BackupSchedule Scheduled immediate backup now"))
+		Expect(<-recorder.Events).To(ContainSubstring("Normal BackupSchedule Next backup scheduled by"))
 	})
 
 	It("requeues without advancing status when Create races with an existing backup", func(ctx context.Context) {
@@ -294,6 +327,35 @@ var _ = Describe("scheduledbackup reconcileScheduledBackup", func() {
 			ParentScheduledBackupLabelName: "other-sb",
 		}),
 	)
+})
+
+// A five-field schedule, the standard cron format, is accepted and read with
+// the seconds field first: "0 2 * * *" runs every hour at minute 2 instead
+// of daily at 02:00. The webhook warning is not shown by GitOps tools, so
+// the object must say it.
+var _ = Describe("scheduledbackup with a five-field schedule", func() {
+	It("records a Warning event with the field count", func(ctx context.Context) {
+		cli := newScheduledBackupTestClient()
+		ns := newFakeNamespace(cli)
+		sb := &apiv1.ScheduledBackup{
+			ObjectMeta: metav1.ObjectMeta{Name: "sb-five", Namespace: ns},
+			Spec: apiv1.ScheduledBackupSpec{
+				Schedule: "0 2 * * *",
+				Cluster:  apiv1.LocalObjectReference{Name: "cluster-x"},
+			},
+		}
+		Expect(cli.Create(ctx, sb)).To(Succeed())
+
+		recorder := record.NewFakeRecorder(10)
+		r := &ScheduledBackupReconciler{Client: cli, Recorder: recorder}
+		_, err := r.reconcileScheduledBackup(ctx, sb)
+		Expect(err).ToNot(HaveOccurred())
+
+		Expect(recorder.Events).To(Receive(And(
+			ContainSubstring("Warning ScheduleFieldCount"),
+			ContainSubstring(`"0 2 * * *" has 5 fields instead of 6`),
+		)))
+	})
 })
 
 var _ = Describe("scheduledbackup reconcileScheduledBackup immediate", func() {

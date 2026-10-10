@@ -23,6 +23,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/cloudnative-pg/machinery/pkg/log"
@@ -267,20 +268,25 @@ func (r *PoolerReconciler) ensureManagedResourcesAreOwned(
 	contextLogger := log.FromContext(ctx)
 
 	var invalidData []interface{}
+	var notOwned []string
 	if resources.Deployment != nil && !isOwnedByPooler(pooler.Name, resources.Deployment) {
 		invalidData = append(invalidData, "notOwnedDeploymentName", resources.Deployment.Name)
+		notOwned = append(notOwned, "Deployment "+resources.Deployment.Name)
 	}
 
 	if resources.Service != nil && !isOwnedByPooler(pooler.Name, resources.Service) {
 		invalidData = append(invalidData, "notOwnedServiceName", resources.Service.Name)
+		notOwned = append(notOwned, "Service "+resources.Service.Name)
 	}
 
 	if resources.Role != nil && !isOwnedByPooler(pooler.Name, resources.Role) {
 		invalidData = append(invalidData, "notOwnedRoleName", resources.Role.Name)
+		notOwned = append(notOwned, "Role "+resources.Role.Name)
 	}
 
 	if resources.RoleBinding != nil && !isOwnedByPooler(pooler.Name, resources.RoleBinding) {
 		invalidData = append(invalidData, "notOwnedRoleBindingName", resources.RoleBinding.Name)
+		notOwned = append(notOwned, "RoleBinding "+resources.RoleBinding.Name)
 	}
 
 	if len(invalidData) == 0 {
@@ -292,10 +298,10 @@ func (r *PoolerReconciler) ensureManagedResourcesAreOwned(
 		"while ensuring managed resources are owned, requeueing...",
 		invalidData...,
 	)
-	r.Recorder.Event(&pooler,
+	r.Recorder.Eventf(&pooler,
 		"Warning",
 		"InvalidOwnership",
-		"found invalid ownership for managed resources, check logs")
+		"found managed resources not owned by this Pooler: %s", strings.Join(notOwned, ", "))
 
 	return ctrl.Result{RequeueAfter: 120 * time.Second}
 }
