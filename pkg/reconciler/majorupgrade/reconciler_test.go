@@ -590,3 +590,38 @@ func buildFailedUpgradeJob() *batchv1.Job {
 		},
 	}
 }
+
+// The upgrade Job has no retry and the instance Pods are deleted before it
+// runs: a failed Job used to leave the cluster down with "Upgrading" as its
+// only signal, since the completion it waits for never comes.
+var _ = Describe("Major upgrade job failure", func() {
+	It("registers the Unrecoverable phase with the job name", func(ctx SpecContext) {
+		job := buildFailedUpgradeJob()
+		job.Status.Conditions = []batchv1.JobCondition{{
+			Type: batchv1.JobFailed, Status: corev1.ConditionTrue, Reason: "BackoffLimitExceeded",
+		}}
+		cluster := &apiv1.Cluster{
+			ObjectMeta: metav1.ObjectMeta{Name: "cluster-example"},
+			Spec:       apiv1.ClusterSpec{ImageName: "postgres:16"},
+			Status: apiv1.ClusterStatus{
+				Image:           "postgres:16",
+				Phase:           apiv1.PhaseMajorUpgrade,
+				PGDataImageInfo: &apiv1.ImageInfo{Image: "postgres:15", MajorVersion: 15},
+			},
+		}
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(schemeBuilder.BuildWithAllKnownScheme()).
+			WithRuntimeObjects(job, cluster).
+			WithStatusSubresource(cluster).
+			Build()
+
+		result, err := Reconcile(ctx, fakeClient, record.NewFakeRecorder(10), cluster, nil, nil, []batchv1.Job{*job})
+		Expect(err).ToNot(HaveOccurred())
+		Expect(result).To(Equal(&ctrl.Result{RequeueAfter: 30 * time.Second}))
+
+		var updated apiv1.Cluster
+		Expect(fakeClient.Get(ctx, client.ObjectKeyFromObject(cluster), &updated)).To(Succeed())
+		Expect(updated.Status.Phase).To(Equal(apiv1.PhaseUnrecoverable))
+		Expect(updated.Status.PhaseReason).To(ContainSubstring("Major upgrade failed for job cluster-example-major-upgrade"))
+	})
+})
