@@ -21,10 +21,9 @@ package v1
 
 import (
 	"context"
-	"strings"
+	"fmt"
 
 	"github.com/cloudnative-pg/machinery/pkg/log"
-	"github.com/robfig/cron"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/validation/field"
@@ -32,6 +31,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
+	"github.com/cloudnative-pg/cloudnative-pg/internal/configuration"
 	"github.com/cloudnative-pg/cloudnative-pg/internal/webhook/guard"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/utils"
 )
@@ -51,7 +51,8 @@ func SetupScheduledBackupWebhookWithManager(mgr ctrl.Manager) error {
 func NewScheduledBackupAdmissionGuard() *guard.Admission[*apiv1.ScheduledBackup] {
 	return &guard.Admission[*apiv1.ScheduledBackup]{
 		Defaulter: &ScheduledBackupCustomDefaulter{},
-		Validator: newBypassableValidator[*apiv1.ScheduledBackup](&ScheduledBackupCustomValidator{}),
+		Validator: newBypassableValidator[*apiv1.ScheduledBackup](
+			&ScheduledBackupCustomValidator{ExistingObjects: true}),
 	}
 }
 
@@ -79,7 +80,10 @@ func (d *ScheduledBackupCustomDefaulter) Default(_ context.Context, scheduledBac
 // ScheduledBackupCustomValidator struct is responsible for validating the ScheduledBackup resource
 // when it is created, updated, or deleted.
 type ScheduledBackupCustomValidator struct {
-	// TODO(user): Add more fields as needed for validation
+	// ExistingObjects is set when the validator runs on objects that already
+	// exist, from the admission guard of the reconciler: the rules that only
+	// apply to a creation are then skipped.
+	ExistingObjects bool
 }
 
 // ValidateCreate implements webhook.CustomValidator so a webhook will be registered for the type ScheduledBackup.
@@ -90,7 +94,7 @@ func (v *ScheduledBackupCustomValidator) ValidateCreate(
 	scheduledBackupLog.Info("Validation for ScheduledBackup upon creation",
 		"name", scheduledBackup.GetName(), "namespace", scheduledBackup.GetNamespace())
 
-	warnings, allErrs := v.validate(scheduledBackup)
+	warnings, allErrs := v.validate(scheduledBackup, !v.ExistingObjects)
 	if len(allErrs) == 0 {
 		return warnings, nil
 	}
@@ -108,7 +112,7 @@ func (v *ScheduledBackupCustomValidator) ValidateUpdate(
 	scheduledBackupLog.Info("Validation for ScheduledBackup upon update",
 		"name", scheduledBackup.GetName(), "namespace", scheduledBackup.GetNamespace())
 
-	warnings, allErrs := v.validate(scheduledBackup)
+	warnings, allErrs := v.validate(scheduledBackup, false)
 	if len(allErrs) == 0 {
 		return warnings, nil
 	}
@@ -131,21 +135,43 @@ func (v *ScheduledBackupCustomValidator) ValidateDelete(
 	return nil, nil
 }
 
-func (v *ScheduledBackupCustomValidator) validate(r *apiv1.ScheduledBackup) (admission.Warnings, field.ErrorList) {
+// validate checks a ScheduledBackup. creating tells whether the object is
+// being created, which is stricter than an update for the schedule format.
+func (v *ScheduledBackupCustomValidator) validate(
+	r *apiv1.ScheduledBackup,
+	creating bool,
+) (admission.Warnings, field.ErrorList) {
 	var result field.ErrorList
 	var warnings admission.Warnings
 
-	if _, err := cron.Parse(r.GetSchedule()); err != nil {
+	format := configuration.Current.GetScheduledBackupCronFormat()
+	if _, fiveField, err := utils.ParseCronSchedule(r.GetSchedule(), format); err != nil {
 		result = append(result,
 			field.Invalid(
 				field.NewPath("spec", "schedule"),
 				r.Spec.Schedule, err.Error()))
-	} else if len(strings.Fields(r.Spec.Schedule)) != 6 {
-		warnings = append(
-			warnings,
-			"Schedule parameter may not have the right number of arguments "+
-				"(usually six arguments are needed)",
-		)
+	} else if fiveField {
+		// The standard cron format, read with the seconds field first unless
+		// the operator is told otherwise. Existing objects are kept editable
+		// under "seconds-strict": only their creation is rejected.
+		switch {
+		case format == utils.CronFormatStandard:
+			// read as written, nothing to say
+		case format == utils.CronFormatSecondsStrict && creating:
+			result = append(result,
+				field.Invalid(
+					field.NewPath("spec", "schedule"),
+					r.Spec.Schedule,
+					fmt.Sprintf("a five-field schedule is read with the seconds field first; "+
+						"use the six-field form %q",
+						utils.SixFieldSchedule(r.Spec.Schedule))))
+		default:
+			warnings = append(
+				warnings,
+				"Schedule parameter may not have the right number of arguments "+
+					"(usually six arguments are needed)",
+			)
+		}
 	}
 
 	if r.Spec.Method == apiv1.BackupMethodVolumeSnapshot && !utils.HaveVolumeSnapshot() {
