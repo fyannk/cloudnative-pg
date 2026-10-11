@@ -145,6 +145,14 @@ func (r *ScheduledBackupReconciler) reconcile(
 				"The system is already taking a backup for this ScheduledBackup, retrying in 60 seconds",
 				"backupName", backup.GetName(),
 				"backupPhase", backup.Status.Phase)
+			// A schedule that passes meanwhile is delayed: say so on the
+			// ScheduledBackup, which otherwise only shows a next schedule
+			// time in the past
+			if next := scheduledBackup.Status.NextScheduleTime; next != nil && time.Now().After(next.Time) {
+				r.Recorder.Eventf(scheduledBackup, "Warning", "BackupDelayed",
+					"Schedule %s passed while backup %s is still %s",
+					next.UTC().Format(time.RFC3339), backup.GetName(), backup.Status.Phase)
+			}
 			return ctrl.Result{RequeueAfter: time.Minute}, nil
 		}
 	}

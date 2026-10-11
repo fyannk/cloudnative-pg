@@ -1152,6 +1152,12 @@ func (r *BackupReconciler) waitIfOtherBackupsRunning(
 			contextLogger.Error(patchErr, "while setting backup as pending")
 			return ctrl.Result{}, patchErr
 		}
+		// Name the backup this one waits for: a pending backup has no
+		// status.error, and its owner may not know which one is in its way
+		if blocker := clusterBackups.GetBlockingBackup(backup.Name); blocker != nil {
+			r.Recorder.Eventf(backup, "Normal", "BackupPending",
+				"Waiting for backup %s to complete (%s)", blocker.Name, blocker.Status.Phase)
+		}
 		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
 	}
 

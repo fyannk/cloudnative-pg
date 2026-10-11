@@ -549,3 +549,43 @@ var _ = Describe("scheduledbackup immediate event under a rejected creation", fu
 		}
 	})
 })
+
+// past. The owner is told which Backup delays the schedule.
+var _ = Describe("scheduledbackup delayed by a backup that is not done", func() {
+	It("records the delay with the backup name and phase", func(ctx SpecContext) {
+		cli := newScheduledBackupTestClient()
+		namespace := newFakeNamespace(cli)
+		recorder := record.NewFakeRecorder(10)
+		r := &ScheduledBackupReconciler{Client: cli, Recorder: recorder}
+
+		scheduledBackup := &apiv1.ScheduledBackup{
+			ObjectMeta: metav1.ObjectMeta{Name: "every-minute", Namespace: namespace},
+			Spec: apiv1.ScheduledBackupSpec{
+				Schedule: "0 * * * * *",
+				Cluster:  apiv1.LocalObjectReference{Name: "cluster-x"},
+			},
+		}
+		Expect(cli.Create(ctx, scheduledBackup)).To(Succeed())
+		past := metav1.NewTime(time.Date(2026, 10, 10, 11, 27, 0, 0, time.UTC))
+		scheduledBackup.Status.NextScheduleTime = &past
+		Expect(cli.Status().Update(ctx, scheduledBackup)).To(Succeed())
+
+		running := &apiv1.Backup{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "every-minute-20261010112600", Namespace: namespace,
+				Labels: map[string]string{ParentScheduledBackupLabelName: scheduledBackup.Name},
+			},
+			Spec: apiv1.BackupSpec{Cluster: apiv1.LocalObjectReference{Name: "cluster-x"}},
+		}
+		Expect(cli.Create(ctx, running)).To(Succeed())
+		running.Status.Phase = apiv1.BackupPhaseStarted
+		Expect(cli.Status().Update(ctx, running)).To(Succeed())
+
+		result, err := r.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(scheduledBackup)})
+		Expect(err).ToNot(HaveOccurred())
+		Expect(result.RequeueAfter).To(Equal(time.Minute))
+		Expect(recordedEvents(recorder)).To(ContainElement(
+			"Warning BackupDelayed Schedule 2026-10-10T11:27:00Z passed while backup " +
+				"every-minute-20261010112600 is still started"))
+	})
+})
