@@ -512,17 +512,19 @@ var _ = Describe("scheduledbackup with a five-field schedule", func() {
 	})
 })
 
-var _ = Describe("scheduledbackup immediate event under a rejected creation", func() {
-	It("records the same event on every pass", func(ctx context.Context) {
+var _ = Describe("scheduledbackup immediate backup under a rejected creation", func() {
+	It("records the same event and asks for the same name on every pass", func(ctx context.Context) {
 		cli := newScheduledBackupTestClient()
 		namespace := newFakeNamespace(cli)
 		recorder := record.NewFakeRecorder(10)
+		var requestedNames []string
 		r := &ScheduledBackupReconciler{
 			Client: interceptor.NewClient(cli, interceptor.Funcs{
 				Create: func(ctx context.Context, cl client.WithWatch, obj client.Object,
 					opts ...client.CreateOption,
 				) error {
 					if _, ok := obj.(*apiv1.Backup); ok {
+						requestedNames = append(requestedNames, obj.GetName())
 						return apierrs.NewForbidden(schema.GroupResource{Group: "postgresql.cnpg.io", Resource: "backups"},
 							obj.GetName(), errors.New("exceeded quota"))
 					}
@@ -532,7 +534,11 @@ var _ = Describe("scheduledbackup immediate event under a rejected creation", fu
 			Recorder: recorder,
 		}
 		scheduledBackup := &apiv1.ScheduledBackup{
-			ObjectMeta: metav1.ObjectMeta{Name: "immediate", Namespace: namespace},
+			ObjectMeta: metav1.ObjectMeta{
+				Name:              "immediate",
+				Namespace:         namespace,
+				CreationTimestamp: metav1.NewTime(time.Date(2026, 10, 10, 18, 31, 22, 0, time.UTC)),
+			},
 			Spec: apiv1.ScheduledBackupSpec{
 				Schedule:  "0 0 0 * * *",
 				Immediate: ptr.To(true),
@@ -547,6 +553,9 @@ var _ = Describe("scheduledbackup immediate event under a rejected creation", fu
 			Expect(<-recorder.Events).To(Equal("Normal BackupSchedule Scheduled immediate backup now"))
 			Expect(<-recorder.Events).To(ContainSubstring("Warning BackupCreation"))
 		}
+		// the same name on both passes, so that the API server rejection
+		// (recorded by the reconciliation funnel) is the same event too
+		Expect(requestedNames).To(Equal([]string{"immediate-20261010183122", "immediate-20261010183122"}))
 	})
 })
 
