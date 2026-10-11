@@ -25,7 +25,6 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/cloudnative-pg/machinery/pkg/log"
@@ -40,6 +39,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
+	"github.com/cloudnative-pg/cloudnative-pg/internal/configuration"
 	"github.com/cloudnative-pg/cloudnative-pg/internal/webhook/guard"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/utils"
 )
@@ -168,24 +168,22 @@ func (r *ScheduledBackupReconciler) reconcileScheduledBackup(
 	contextLogger := log.FromContext(ctx)
 
 	// Let's check
-	schedule, err := cron.Parse(scheduledBackup.GetSchedule())
+	format := configuration.Current.GetScheduledBackupCronFormat()
+	schedule, fiveField, err := utils.ParseCronSchedule(scheduledBackup.GetSchedule(), format)
 	if err != nil {
 		contextLogger.Info("Detected an invalid cron schedule",
 			"schedule", scheduledBackup.GetSchedule())
 		return ctrl.Result{}, err
 	}
 
-	// The parser reads the seconds field first and makes the day of the week
-	// optional: a five-field schedule, the standard cron format, is accepted
-	// but shifted by one field. The webhook only warns, which GitOps tools
-	// never show: say it on the object too. Descriptors such as "@daily" or
-	// "@every 1h" have their own syntax and are left alone.
-	spec := scheduledBackup.GetSchedule()
-	if fields := len(strings.Fields(spec)); !strings.HasPrefix(spec, "@") && fields != 6 {
+	// A five-field schedule, the standard cron format, is read with the
+	// seconds field first unless the operator is told otherwise. The webhook
+	// only warns, which GitOps tools never show: say it on the object too.
+	if fiveField && format != utils.CronFormatStandard {
 		r.Recorder.Eventf(scheduledBackup, "Warning", "ScheduleFieldCount",
-			"schedule %q has %d fields instead of 6: it is read with the seconds field first "+
+			"schedule %q has 5 fields instead of 6: it is read with the seconds field first "+
 				"(see the next run time in the BackupSchedule events)",
-			scheduledBackup.GetSchedule(), fields)
+			scheduledBackup.GetSchedule())
 	}
 
 	// Immediate volume snapshot backups can be scheduled only when the cluster
