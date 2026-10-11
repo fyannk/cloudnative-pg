@@ -222,8 +222,10 @@ func (r *ScheduledBackupReconciler) reconcileScheduledBackup(
 			return r.advanceScheduledBackupStatus(ctx, scheduledBackup, adopted, now, schedule.Next(now))
 		}
 
-		// we populate the status (lastCheckTime...) by following the same rules of the scheduled backup
-		r.Recorder.Eventf(scheduledBackup, "Normal", "BackupSchedule", "Scheduled immediate backup now: %v", now)
+		// we populate the status (lastCheckTime...) by following the same rules of the scheduled backup.
+		// No timestamp in the message: a retry of a rejected creation records the
+		// same event, which the recorder merges into one with a count
+		r.Recorder.Event(scheduledBackup, "Normal", "BackupSchedule", "Scheduled immediate backup now")
 		return r.createBackup(ctx, scheduledBackup, now, now, schedule, true)
 	}
 

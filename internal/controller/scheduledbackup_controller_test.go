@@ -21,6 +21,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/robfig/cron"
@@ -463,5 +464,43 @@ var _ = Describe("scheduledbackup advanceScheduledBackupStatus", func() {
 		result, err := r.advanceScheduledBackupStatus(ctx, sb, backupTime, now, nextBackupTime)
 		Expect(err).ToNot(HaveOccurred())
 		Expect(result.RequeueAfter).To(Equal(time.Second))
+	})
+})
+
+var _ = Describe("scheduledbackup immediate event under a rejected creation", func() {
+	It("records the same event on every pass", func(ctx context.Context) {
+		cli := newScheduledBackupTestClient()
+		namespace := newFakeNamespace(cli)
+		recorder := record.NewFakeRecorder(10)
+		r := &ScheduledBackupReconciler{
+			Client: interceptor.NewClient(cli.(client.WithWatch), interceptor.Funcs{
+				Create: func(ctx context.Context, cl client.WithWatch, obj client.Object,
+					opts ...client.CreateOption,
+				) error {
+					if _, ok := obj.(*apiv1.Backup); ok {
+						return apierrs.NewForbidden(schema.GroupResource{Group: "postgresql.cnpg.io", Resource: "backups"},
+							obj.GetName(), errors.New("exceeded quota"))
+					}
+					return cl.Create(ctx, obj, opts...)
+				},
+			}),
+			Recorder: recorder,
+		}
+		scheduledBackup := &apiv1.ScheduledBackup{
+			ObjectMeta: metav1.ObjectMeta{Name: "immediate", Namespace: namespace},
+			Spec: apiv1.ScheduledBackupSpec{
+				Schedule:  "0 0 0 * * *",
+				Immediate: ptr.To(true),
+				Cluster:   apiv1.LocalObjectReference{Name: "cluster-x"},
+			},
+		}
+		Expect(cli.Create(ctx, scheduledBackup)).To(Succeed())
+
+		for range 2 {
+			_, err := r.reconcileScheduledBackup(ctx, scheduledBackup)
+			Expect(err).To(HaveOccurred())
+			Expect(<-recorder.Events).To(Equal("Normal BackupSchedule Scheduled immediate backup now"))
+			Expect(<-recorder.Events).To(ContainSubstring("Warning BackupCreation"))
+		}
 	})
 })
