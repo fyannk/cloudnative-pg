@@ -264,7 +264,15 @@ func (r *ScheduledBackupReconciler) reconcileScheduledBackup(
 		// No timestamp in the message: a retry of a rejected creation records the
 		// same event, which the recorder merges into one with a count
 		r.Recorder.Event(scheduledBackup, "Normal", "BackupSchedule", "Scheduled immediate backup now")
-		return r.createBackup(ctx, scheduledBackup, now, now, schedule, true)
+		// The immediate backup is named after the creation time of the
+		// ScheduledBackup, not after the current time: a retry of a rejected
+		// creation then asks for the same name, and the API server rejection
+		// records the same event, which the recorder merges with a count.
+		immediateTime := scheduledBackup.CreationTimestamp.Time
+		if immediateTime.IsZero() {
+			immediateTime = now
+		}
+		return r.createBackup(ctx, scheduledBackup, immediateTime, now, schedule, true)
 	}
 
 	if scheduledBackup.Status.LastCheckTime == nil {
