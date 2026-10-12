@@ -151,6 +151,21 @@ func (w *ReloadWatch) Source(
 	return source.Kind(w.cache, partial(gvk), adapter, stubPredicate(predicates)), nil
 }
 
+// CachedObjects counts, per kind, the objects whose metadata the watch
+// holds, without copying them
+func (w *ReloadWatch) CachedObjects(ctx context.Context) (map[string]int, error) {
+	counts := make(map[string]int)
+	for _, gvk := range watchedKinds() {
+		list := &metav1.PartialObjectMetadataList{}
+		list.SetGroupVersionKind(gvk.GroupVersion().WithKind(gvk.Kind + "List"))
+		if err := w.cache.List(ctx, list, client.UnsafeDisableDeepCopy); err != nil {
+			return nil, err
+		}
+		counts[gvk.Kind] = len(list.Items)
+	}
+	return counts, nil
+}
+
 // partial is an empty PartialObjectMetadata of the given kind
 func partial(gvk schema.GroupVersionKind) *metav1.PartialObjectMetadata {
 	object := &metav1.PartialObjectMetadata{}

@@ -339,6 +339,11 @@ func RunController(
 		}
 	}
 
+	if err := registerCacheMetrics(mgr, cacheFilter, reloadWatch); err != nil {
+		setupLog.Error(err, "unable to register the operator cache metrics")
+		return err
+	}
+
 	reconcilerClient, err := filteredcache.NewClient(mgr.GetClient(), mgr.GetAPIReader(), mgr.GetScheme(), cacheFilter)
 	if err != nil {
 		setupLog.Error(err, "unable to create the operator client")
@@ -511,6 +516,21 @@ func buildMetricsOpts(metricsAddr string, conf *configuration.Data) server.Optio
 	setupLog.Info("Metrics server enabled with TLS", "certDir", conf.MetricsCertDir)
 
 	return metricsOptions
+}
+
+// registerCacheMetrics registers the metrics of the operator cache. They count
+// the manager cache itself, never the read-through client: a count must not
+// reach the API server.
+func registerCacheMetrics(
+	mgr ctrl.Manager, cacheFilter filteredcache.Options, reloadWatch *filteredcache.ReloadWatch,
+) error {
+	// a nil *ReloadWatch in the interface would not compare equal to nil
+	var metadataCounter operatormetrics.MetadataCounter
+	if reloadWatch != nil {
+		metadataCounter = reloadWatch
+	}
+	return operatormetrics.RegisterCache(
+		mgr.GetCache(), mgr.GetScheme(), filteredcache.FilteredObjects(cacheFilter), metadataCounter)
 }
 
 // probeOptionalAPIs resolves which optional APIs the operator uses, before
