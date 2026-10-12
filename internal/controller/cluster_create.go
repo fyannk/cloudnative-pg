@@ -798,6 +798,10 @@ func (r *ClusterReconciler) createOrPatchRole(ctx context.Context, cluster *apiv
 		return r.createRole(ctx, cluster, originBackup, roleList.Items)
 	}
 
+	if err := ensureReconcileLabel(ctx, r.Client, &role); err != nil {
+		return fmt.Errorf("while labelling role: %w", err)
+	}
+
 	generatedRole := specs.CreateRole(
 		specs.RoleOptions{
 			Cluster:      cluster,
@@ -875,6 +879,7 @@ func (r *ClusterReconciler) createOrPatchDefaultMetricsConfigmap(ctx context.Con
 				Namespace: cluster.Namespace,
 				Labels: map[string]string{
 					utils.WatchedLabelName:                "true",
+					utils.ReconcileLabelName:              "true",
 					utils.KubernetesAppManagedByLabelName: utils.ManagerName,
 				},
 			},
@@ -963,6 +968,7 @@ func (r *ClusterReconciler) createOrPatchDefaultMetricsSecret(ctx context.Contex
 				Namespace: cluster.Namespace,
 				Labels: map[string]string{
 					utils.WatchedLabelName:                "true",
+					utils.ReconcileLabelName:              "true",
 					utils.KubernetesAppManagedByLabelName: utils.ManagerName,
 				},
 			},
@@ -1149,7 +1155,7 @@ func (r *ClusterReconciler) createRoleBinding(ctx context.Context, cluster *apiv
 	var existing rbacv1.RoleBinding
 	err := r.Get(ctx, client.ObjectKeyFromObject(&roleBinding), &existing)
 	if err == nil {
-		return nil
+		return ensureReconcileLabel(ctx, r.Client, &existing)
 	}
 	if !apierrs.IsNotFound(err) {
 		return fmt.Errorf("while getting role binding: %w", err)

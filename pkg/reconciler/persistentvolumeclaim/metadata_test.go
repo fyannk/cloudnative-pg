@@ -68,8 +68,9 @@ var _ = Describe("metadataReconciler", func() {
 				reconciler.update(pvc)
 
 				// Assert that the PVC is up-to-date with the correct labels
-				Expect(pvc.Labels).To(HaveLen(6))
+				Expect(pvc.Labels).To(HaveLen(7))
 				Expect(pvc.Labels).To(HaveKeyWithValue("label1", "value1"))
+				Expect(pvc.Labels).To(HaveKeyWithValue(utils.ReconcileLabelName, "true"))
 				Expect(pvc.Labels).To(HaveKeyWithValue("label2", "value2"))
 				Expect(pvc.Labels).To(HaveKeyWithValue(utils.PvcRoleLabelName, string(utils.PVCRolePgData)))
 				Expect(pvc.Labels).To(HaveKeyWithValue(utils.KubernetesAppLabelName, "my-custom-app"))
@@ -109,6 +110,7 @@ var _ = Describe("metadataReconciler", func() {
 							utils.KubernetesAppManagedByLabelName: utils.ManagerName,
 							utils.KubernetesAppLabelName:          utils.AppName,
 							utils.KubernetesAppComponentLabelName: utils.DatabaseComponentName,
+							utils.ReconcileLabelName:              "true",
 						},
 						Annotations: map[string]string{},
 					},
@@ -122,7 +124,7 @@ var _ = Describe("metadataReconciler", func() {
 				reconciler.update(pvc)
 
 				// Assert that the PVC labels are unchanged
-				Expect(pvc.Labels).To(HaveLen(7))
+				Expect(pvc.Labels).To(HaveLen(8))
 				Expect(pvc.Labels).To(HaveKeyWithValue(utils.PvcRoleLabelName, string(utils.PVCRolePgData)))
 				Expect(pvc.Labels).To(HaveKeyWithValue(utils.InstanceNameLabelName, "instance1"))
 				Expect(pvc.Labels).To(HaveKeyWithValue("label1", "value1"))

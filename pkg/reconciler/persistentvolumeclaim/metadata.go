@@ -214,6 +214,7 @@ func newLabelReconciler(cluster *apiv1.Cluster) metadataReconciler { //nolint: g
 				utils.KubernetesAppManagedByLabelName,
 				utils.KubernetesAppLabelName,
 				utils.KubernetesAppComponentLabelName,
+				utils.ReconcileLabelName,
 			}
 			for _, label := range commonLabels {
 				if _, found := pvc.Labels[label]; !found {
@@ -267,6 +268,7 @@ func newLabelReconciler(cluster *apiv1.Cluster) metadataReconciler { //nolint: g
 			pvc.Labels[utils.KubernetesAppManagedByLabelName] = utils.ManagerName
 			pvc.Labels[utils.KubernetesAppLabelName] = utils.AppName
 			pvc.Labels[utils.KubernetesAppComponentLabelName] = utils.DatabaseComponentName
+			pvc.Labels[utils.ReconcileLabelName] = "true"
 
 			pvcRole := pvc.Labels[utils.PvcRoleLabelName]
 			for _, instanceName := range cluster.Status.InstanceNames {

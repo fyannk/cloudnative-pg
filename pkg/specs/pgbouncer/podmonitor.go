@@ -54,6 +54,7 @@ func (c PoolerPodMonitorManager) BuildPodMonitor() *monitoringv1.PodMonitor {
 		Name:      c.pooler.Name,
 		Labels: map[string]string{
 			utils.PgbouncerNameLabel:              c.pooler.Name,
+			utils.ReconcileLabelName:              "true",
 			utils.PodRoleLabelName:                string(utils.PodRolePooler),
 			utils.KubernetesAppLabelName:          utils.AppName,
 			utils.KubernetesAppInstanceLabelName:  c.pooler.Name,
