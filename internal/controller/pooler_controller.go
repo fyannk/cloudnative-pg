@@ -33,7 +33,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
@@ -44,16 +43,16 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
+	"github.com/cloudnative-pg/cloudnative-pg/internal/configuration"
 	"github.com/cloudnative-pg/cloudnative-pg/internal/webhook/guard"
 )
 
 // PoolerReconciler reconciles a Pooler object
 type PoolerReconciler struct {
 	client.Client
-	DiscoveryClient discovery.DiscoveryInterface
-	Scheme          *runtime.Scheme
-	Recorder        record.EventRecorder
-	Admission       *guard.Admission[*apiv1.Pooler]
+	Scheme    *runtime.Scheme
+	Recorder  record.EventRecorder
+	Admission *guard.Admission[*apiv1.Pooler]
 }
 
 // +kubebuilder:rbac:groups=postgresql.cnpg.io,resources=poolers,verbs=get;list;watch;create;update;patch;delete
@@ -169,7 +168,7 @@ func (r *PoolerReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manage
 		return err
 	}
 
-	return ctrl.NewControllerManagedBy(mgr).
+	ctrlBuilder := ctrl.NewControllerManagedBy(mgr).
 		WithOptions(controller.Options{MaxConcurrentReconciles: maxConcurrentReconciles}).
 		For(&apiv1.Pooler{}).
 		Named("pooler").
@@ -187,13 +186,19 @@ func (r *PoolerReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manage
 			&apiv1.ImageCatalog{},
 			handler.EnqueueRequestsFromMapFunc(r.mapImageCatalogToPoolers()),
 			builder.WithPredicates(predicate.ResourceVersionChangedPredicate{}),
-		).
-		Watches(
+		)
+
+	// ClusterImageCatalog is cluster-scoped and optional: an informer on a
+	// kind the operator cannot list would never sync
+	if configuration.Current.APIClusterImageCatalogEnabled {
+		ctrlBuilder = ctrlBuilder.Watches(
 			&apiv1.ClusterImageCatalog{},
 			handler.EnqueueRequestsFromMapFunc(r.mapClusterImageCatalogToPoolers()),
 			builder.WithPredicates(predicate.ResourceVersionChangedPredicate{}),
-		).
-		Complete(r)
+		)
+	}
+
+	return ctrlBuilder.Complete(r)
 }
 
 // poolerImageCatalogKey is the field index key for Poolers referencing an image catalog.

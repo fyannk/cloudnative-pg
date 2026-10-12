@@ -37,7 +37,6 @@ import (
 	apierrs "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/discovery"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -100,7 +99,7 @@ func (r *ClusterReconciler) createPostgresClusterObjects(ctx context.Context, cl
 		}
 	}
 
-	err = createOrPatchPodMonitor(ctx, r.Client, r.DiscoveryClient, specs.NewClusterPodMonitorManager(cluster))
+	err = createOrPatchPodMonitor(ctx, r.Client, specs.NewClusterPodMonitorManager(cluster))
 	if err != nil {
 		return err
 	}
@@ -1026,22 +1025,17 @@ type podMonitorManager interface {
 func createOrPatchPodMonitor(
 	ctx context.Context,
 	cli client.Client,
-	discoveryClient discovery.DiscoveryInterface,
 	manager podMonitorManager,
 ) error {
 	contextLogger := log.FromContext(ctx)
 
-	// Checking for the PodMonitor Custom Resource Definition in the Kubernetes cluster
-	havePodMonitorCRD, err := utils.PodMonitorExist(discoveryClient)
-	if err != nil {
-		return err
-	}
-
-	if !havePodMonitorCRD {
+	// The PodMonitor API is probed once at startup: not installed, forbidden,
+	// or disabled by the administrator
+	if !configuration.Current.APIPodMonitorEnabled {
 		if manager.IsPodMonitorEnabled() {
 			// If the PodMonitor CRD does not exist, but the cluster has monitoring enabled,
 			// the controller cannot do anything until the CRD is installed
-			contextLogger.Warning("PodMonitor CRD not present. Cannot create the PodMonitor object")
+			contextLogger.Warning("PodMonitor API not available. Cannot create the PodMonitor object")
 		}
 		return nil
 	}
