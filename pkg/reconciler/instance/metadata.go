@@ -243,5 +243,11 @@ func updateOperatorLabels(
 		modified = true
 	}
 
+	if instance.Labels[utils.ReconcileLabelName] != "true" {
+		contextLogger.Info("Setting reconcile label", "pod", instance.Name)
+		utils.LabelReconciled(&instance.ObjectMeta)
+		modified = true
+	}
+
 	return modified
 }

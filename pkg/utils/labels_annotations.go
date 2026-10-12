@@ -123,6 +123,10 @@ const (
 	// or not, use for Secrets or ConfigMaps
 	WatchedLabelName = MetadataNamespace + "/reload"
 
+	// ReconcileLabelName is the name of the label the operator sets on every
+	// object it creates and manages. Objects provided by users do not need it.
+	ReconcileLabelName = MetadataNamespace + "/reconcile"
+
 	// UserTypeLabelName the name of the label which tells if a Secret refers
 	// to a superuser database role or an application one
 	UserTypeLabelName = MetadataNamespace + "/userType"
@@ -396,6 +400,15 @@ func LabelClusterName(object *metav1.ObjectMeta, name string) {
 	}
 
 	object.Labels[ClusterLabelName] = name
+}
+
+// LabelReconciled marks an object as created and managed by the operator
+func LabelReconciled(object *metav1.ObjectMeta) {
+	if object.Labels == nil {
+		object.Labels = make(map[string]string)
+	}
+
+	object.Labels[ReconcileLabelName] = "true"
 }
 
 // SetOperatorVersion set inside a certain object metadata the annotation

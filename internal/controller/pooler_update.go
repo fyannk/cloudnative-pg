@@ -109,7 +109,9 @@ func (r *PoolerReconciler) updateDeployment(
 	case resources.Deployment != nil:
 		currentVersion := resources.Deployment.Annotations[utils.PoolerSpecHashAnnotationName]
 		updatedVersion := generatedDeployment.Annotations[utils.PoolerSpecHashAnnotationName]
-		if currentVersion == updatedVersion {
+		labelled := isReconcileLabelled(resources.Deployment) &&
+			hasReconcileLabel(resources.Deployment.Spec.Template.Labels)
+		if currentVersion == updatedVersion && labelled {
 			// Everything fine, the two deployments are using the
 			// same specifications
 			return nil
@@ -125,6 +127,7 @@ func (r *PoolerReconciler) updateDeployment(
 		}
 
 		utils.MergeObjectsMetadata(deployment, generatedDeployment)
+		utils.LabelReconciled(&deployment.Spec.Template.ObjectMeta)
 
 		contextLog.Info("Updating deployment")
 		err = r.Patch(ctx, deployment, client.MergeFrom(resources.Deployment))
@@ -207,9 +210,10 @@ func (r *PoolerReconciler) updateRBAC(
 			return err
 		}
 		resources.Role = role
-	} else if !reflect.DeepEqual(role.Rules, resources.Role.Rules) {
+	} else if !reflect.DeepEqual(role.Rules, resources.Role.Rules) || !isReconcileLabelled(resources.Role) {
 		contextLog.Info("Updating role")
 		resources.Role.Rules = role.Rules
+		utils.LabelReconciled(&resources.Role.ObjectMeta)
 		if err := r.Update(ctx, resources.Role); err != nil {
 			return err
 		}
@@ -227,9 +231,11 @@ func (r *PoolerReconciler) updateRBAC(
 		}
 		resources.RoleBinding = &roleBinding
 	} else if !reflect.DeepEqual(roleBinding.Subjects, resources.RoleBinding.Subjects) ||
-		!reflect.DeepEqual(roleBinding.RoleRef, resources.RoleBinding.RoleRef) {
+		!reflect.DeepEqual(roleBinding.RoleRef, resources.RoleBinding.RoleRef) ||
+		!isReconcileLabelled(resources.RoleBinding) {
 		resources.RoleBinding.RoleRef = roleBinding.RoleRef
 		resources.RoleBinding.Subjects = roleBinding.Subjects
+		utils.LabelReconciled(&resources.RoleBinding.ObjectMeta)
 		if err := r.Update(ctx, resources.RoleBinding); err != nil {
 			return err
 		}
@@ -281,6 +287,7 @@ func (r *PoolerReconciler) updateServiceAccount(
 
 	origServiceAccount := resources.ServiceAccount.DeepCopy()
 	ensureServiceAccountHaveImagePullSecret(resources.ServiceAccount, pullSecretName)
+	utils.LabelReconciled(&resources.ServiceAccount.ObjectMeta)
 	if !reflect.DeepEqual(origServiceAccount, resources.ServiceAccount) {
 		contextLog.Info("Updating service account")
 		if err := r.Patch(ctx, resources.ServiceAccount, client.MergeFrom(origServiceAccount)); err != nil {
@@ -348,7 +355,8 @@ func (r *PoolerReconciler) ensureServiceAccountPullSecret(
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace: pooler.Namespace,
 			// we change name to avoid ownership conflicts with the managed secret from cnpg cluster
-			Name: pullSecretName,
+			Name:   pullSecretName,
+			Labels: map[string]string{utils.ReconcileLabelName: "true"},
 		},
 		Data: operatorSecret.Data,
 		Type: operatorSecret.Type,
