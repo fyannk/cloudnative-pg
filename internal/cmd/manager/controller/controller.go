@@ -95,6 +95,55 @@ type leaderElectionConfiguration struct {
 	renewDeadline time.Duration
 }
 
+// cacheOptions returns the options of the manager cache: which objects of
+// each kind are listed and watched, and what is stripped from them before
+// they are stored. They apply to the cluster-wide cache and to the
+// per-namespace caches alike.
+func cacheOptions(conf *configuration.Data) cache.Options {
+	cacheFilters := map[client.Object]cache.ByObject{
+		// Helm stores each release revision as a Secret containing the full
+		// (compressed, base64-encoded) manifest. These can be large, and
+		// CNPG has no use for them, but the default cache would otherwise
+		// list, watch, and store every one of them in every watched
+		// namespace. Excluding them at the informer level, rather than via
+		// a controller predicate, means they never get listed/watched/stored
+		// at all.
+		&corev1.Secret{}: {
+			Field: fields.OneTermNotEqualSelector("type", string(helmReleaseSecretType)),
+		},
+	}
+
+	// EndpointSlices are watched only to detect CNPG-i plugin rollouts, and
+	// plugins are deployed in the operator namespace. Restricting the informer
+	// to that namespace avoids listing and watching every EndpointSlice in the
+	// cluster (one or more per Service in every namespace), which would
+	// otherwise be cached just to be dropped by the controller predicate.
+	//
+	// The restriction is only applied when the operator namespace is known: an
+	// empty namespace key is interpreted by controller-runtime as "all
+	// namespaces", which would silently widen the cache instead of narrowing
+	// it. When the namespace is unknown (e.g. local development without
+	// OPERATOR_NAMESPACE set) we simply fall back to the default (unrestricted)
+	// EndpointSlice caching.
+	if conf.OperatorNamespace != "" {
+		cacheFilters[&discoveryv1.EndpointSlice{}] = cache.ByObject{
+			Namespaces: map[string]cache.Config{
+				conf.OperatorNamespace: {},
+			},
+		}
+	} else {
+		setupLog.Info("Plugin EndpointSlice watch disabled: OPERATOR_NAMESPACE not set")
+	}
+
+	return cache.Options{
+		ByObject: cacheFilters,
+		// The operator never reads metadata.managedFields, and they are often
+		// the largest part of a cached object's metadata: drop them before
+		// the object is stored.
+		DefaultTransform: cache.TransformStripManagedFields(),
+	}
+}
+
 // RunController is the main procedure of the operator, and is used as the
 // controller-manager of the operator and as the controller of a certain
 // PostgreSQL instance.
@@ -195,42 +244,7 @@ func RunController(
 		LeaderElectionReleaseOnCancel: true,
 	}
 
-	cacheFilters := map[client.Object]cache.ByObject{
-		// Helm stores each release revision as a Secret containing the full
-		// (compressed, base64-encoded) manifest. These can be large, and
-		// CNPG has no use for them, but the default cache would otherwise
-		// list, watch, and store every one of them in every watched
-		// namespace. Excluding them at the informer level, rather than via
-		// a controller predicate, means they never get listed/watched/stored
-		// at all.
-		&corev1.Secret{}: {
-			Field: fields.OneTermNotEqualSelector("type", string(helmReleaseSecretType)),
-		},
-	}
-
-	// EndpointSlices are watched only to detect CNPG-i plugin rollouts, and
-	// plugins are deployed in the operator namespace. Restricting the informer
-	// to that namespace avoids listing and watching every EndpointSlice in the
-	// cluster (one or more per Service in every namespace), which would
-	// otherwise be cached just to be dropped by the controller predicate.
-	//
-	// The restriction is only applied when the operator namespace is known: an
-	// empty namespace key is interpreted by controller-runtime as "all
-	// namespaces", which would silently widen the cache instead of narrowing
-	// it. When the namespace is unknown (e.g. local development without
-	// OPERATOR_NAMESPACE set) we simply fall back to the default (unrestricted)
-	// EndpointSlice caching.
-	if conf.OperatorNamespace != "" {
-		cacheFilters[&discoveryv1.EndpointSlice{}] = cache.ByObject{
-			Namespaces: map[string]cache.Config{
-				conf.OperatorNamespace: {},
-			},
-		}
-	} else {
-		setupLog.Info("Plugin EndpointSlice watch disabled: OPERATOR_NAMESPACE not set")
-	}
-
-	managerOptions.Cache = cache.Options{ByObject: cacheFilters}
+	managerOptions.Cache = cacheOptions(conf)
 
 	if conf.WatchNamespace != "" {
 		namespaces := conf.WatchedNamespaces()
