@@ -1192,6 +1192,13 @@ const (
 	// or .spec.postgresql.synchronous.nodeFailureDomainKeys.
 	// Only set when one of those fields is configured.
 	ConditionSyncReplicationTopologySatisfied ClusterConditionType = "SyncReplicationTopologySatisfied"
+
+	// ConditionTopologyUnavailable is True when the topology of the instances
+	// needs node labels (.spec.postgresql.syncReplicaElectionConstraint or
+	// .spec.postgresql.synchronous.nodeFailureDomainKeys) and the operator
+	// does not read the Node API: the topology cannot be extracted, and the
+	// instance manager stops waiting for it.
+	ConditionTopologyUnavailable ClusterConditionType = "TopologyUnavailable"
 )
 
 // ConditionStatus defines conditions of resources
@@ -1261,6 +1268,10 @@ const (
 	// are set but no synchronous replica in a different failure domain than
 	// the primary exists.
 	ConditionReasonInsufficientCrossDomainReplicas ConditionReason = "InsufficientCrossDomainReplicas"
+
+	// ConditionReasonNodeAccessUnavailable is the reason set on
+	// ConditionTopologyUnavailable when the operator does not read the Node API
+	ConditionReasonNodeAccessUnavailable ConditionReason = "NodeAccessUnavailable"
 )
 
 // EmbeddedObjectMetadata contains metadata to be inherited by all resources related to a Cluster

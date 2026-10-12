@@ -30,9 +30,11 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/rand"
+	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/ptr"
 
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
+	"github.com/cloudnative-pg/cloudnative-pg/internal/configuration"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/certs"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/postgres"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/reconciler/persistentvolumeclaim"
@@ -579,6 +581,44 @@ var _ = Describe("updateClusterStatusThatRequiresInstancesState tests", func() {
 			}
 
 			Expect(isWALSpaceAvailableOnPod(pod)).To(BeFalse())
+		})
+	})
+
+	// Without the Node API, a topology that needs node labels cannot be
+	// extracted: the Cluster says so once through a condition and a Warning
+	// Event, the nodes used are still counted from the Pods, and the
+	// condition goes away when node labels are no longer needed.
+	Describe("the topology without the Node API", func() {
+		const zoneLabel = "topology.kubernetes.io/zone"
+
+		BeforeEach(func() {
+			configuration.Current.APINodeEnabled = false
+			DeferCleanup(func() { configuration.Current.APINodeEnabled = true })
+		})
+
+		It("is declared unavailable when node labels are needed, with one event", func() {
+			recorder := record.NewFakeRecorder(10)
+			r := &ClusterReconciler{Recorder: recorder}
+			cluster := &apiv1.Cluster{}
+			pods := []corev1.Pod{
+				{ObjectMeta: metav1.ObjectMeta{Name: "pg-1"}, Spec: corev1.PodSpec{NodeName: "node-1"}},
+				{ObjectMeta: metav1.ObjectMeta{Name: "pg-2"}, Spec: corev1.PodSpec{NodeName: "node-2"}},
+			}
+
+			r.updateTopologyAvailability(cluster, nil, pods, []string{zoneLabel})
+			Expect(cluster.IsTopologyUnavailable()).To(BeTrue())
+			Expect(cluster.Status.Topology.SuccessfullyExtracted).To(BeFalse())
+			Expect(cluster.Status.Topology.NodesUsed).To(BeEquivalentTo(2))
+			Expect(recorder.Events).To(Receive(ContainSubstring(zoneLabel)))
+
+			// a later reconciliation keeps the condition without a new event
+			previous := cluster.Status.Conditions
+			r.updateTopologyAvailability(cluster, previous, pods, []string{zoneLabel})
+			Expect(recorder.Events).ToNot(Receive())
+
+			// pod failure domain keys only: nothing to declare
+			r.updateTopologyAvailability(cluster, cluster.Status.Conditions, pods, nil)
+			Expect(cluster.IsTopologyUnavailable()).To(BeFalse())
 		})
 	})
 

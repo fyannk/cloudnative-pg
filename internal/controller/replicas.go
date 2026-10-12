@@ -31,6 +31,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
+	"github.com/cloudnative-pg/cloudnative-pg/internal/configuration"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/postgres"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/specs"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/utils"
@@ -270,6 +271,12 @@ func (r *ClusterReconciler) isNodeUnschedulableOrBeingDrained(
 	ctx context.Context,
 	nodeName string,
 ) (bool, error) {
+	// Without the Node API there is no drain detection: the primary on a
+	// drained node is evicted instead of being switched over first
+	if !configuration.Current.APINodeEnabled {
+		return false, nil
+	}
+
 	var node corev1.Node
 	err := r.Get(ctx, client.ObjectKey{Name: nodeName}, &node)
 	if err != nil {

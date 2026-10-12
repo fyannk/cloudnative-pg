@@ -165,6 +165,7 @@ func RunController(
 		"apiPodMonitor", conf.APIPodMonitorEnabled,
 		"apiVolumeSnapshot", conf.APIVolumeSnapshotEnabled,
 		"apiClusterImageCatalog", conf.APIClusterImageCatalogEnabled,
+		"apiNode", conf.APINodeEnabled,
 		"availableArchitectures", utils.GetAvailableArchitectures(),
 	)
 
@@ -472,9 +473,13 @@ func probeOptionalAPIs(ctx context.Context, c client.Reader, conf *configuration
 		&volumesnapshotv1.VolumeSnapshotList{}, namespaces); err != nil {
 		return err
 	}
-	// ClusterImageCatalog is cluster-scoped: probed cluster-wide whatever the watched namespaces
-	return probe("ClusterImageCatalog", &conf.APIClusterImageCatalogEnabled,
-		&apiv1.ClusterImageCatalogList{}, nil)
+	// ClusterImageCatalog and Node are cluster-scoped: probed cluster-wide
+	// whatever the watched namespaces
+	if err := probe("ClusterImageCatalog", &conf.APIClusterImageCatalogEnabled,
+		&apiv1.ClusterImageCatalogList{}, nil); err != nil {
+		return err
+	}
+	return probe("Node", &conf.APINodeEnabled, &corev1.NodeList{}, nil)
 }
 
 // loadConfiguration reads the configuration from the provided configmap and secret

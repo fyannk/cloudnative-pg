@@ -1351,11 +1351,6 @@ func (r *ClusterReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manag
 			&apiv1.Pooler{},
 			handler.EnqueueRequestsFromMapFunc(r.mapPoolersToClusters()),
 		).
-		Watches(
-			&corev1.Node{},
-			handler.EnqueueRequestsFromMapFunc(r.mapNodeToClusters()),
-			builder.WithPredicates(r.nodesPredicate()),
-		).
 		// Watch external (non-owned) pods for podSelectorRefs IP resolution.
 		// Owned pods are already handled by Owns(&corev1.Pod{}) above.
 		Watches(
@@ -1403,6 +1398,15 @@ func (r *ClusterReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manag
 			handler.EnqueueRequestsFromMapFunc(mapClusterOwnedResourceToCluster),
 			builder.WithPredicates(isBeingDeletedPredicate),
 		)
+
+	// Nodes are watched to detect drains: cluster-scoped and optional
+	if configuration.Current.APINodeEnabled {
+		ctrlBuilder = ctrlBuilder.Watches(
+			&corev1.Node{},
+			handler.EnqueueRequestsFromMapFunc(r.mapNodeToClusters()),
+			builder.WithPredicates(r.nodesPredicate()),
+		)
+	}
 
 	// ClusterImageCatalog is cluster-scoped and optional: an informer on a
 	// kind the operator cannot list would never sync

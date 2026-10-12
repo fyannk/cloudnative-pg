@@ -192,6 +192,27 @@ func (s *SynchronousReplicaConfiguration) FailureDomainKeys() []string {
 	return s.NodeFailureDomainKeys
 }
 
+// IsTopologyUnavailable reports whether the operator declared, through the
+// TopologyUnavailable condition, that it cannot extract the topology of the
+// instances because it does not read the Node API
+func (cluster *Cluster) IsTopologyUnavailable() bool {
+	return meta.IsStatusConditionTrue(cluster.Status.Conditions, string(ConditionTopologyUnavailable))
+}
+
+// GetTopologyLabelKeys returns the label keys of the topology of the
+// instances: those of the Pods and those of their Nodes. The failure domain
+// keys of the synchronous replicas, when set, replace the node labels of
+// syncReplicaElectionConstraint
+func (cluster *Cluster) GetTopologyLabelKeys() (podLabelKeys, nodeLabelKeys []string) {
+	nodeLabelKeys = cluster.Spec.PostgresConfiguration.SyncReplicaElectionConstraint.NodeLabelsAntiAffinity
+	if sync := cluster.Spec.PostgresConfiguration.Synchronous; sync != nil &&
+		(len(sync.PodFailureDomainKeys) > 0 || len(sync.NodeFailureDomainKeys) > 0) {
+		return sync.PodFailureDomainKeys, sync.NodeFailureDomainKeys
+	}
+
+	return nil, nodeLabelKeys
+}
+
 // MatchesTopology checks if the two topologies have
 // the same label values (labels are specified in SyncReplicaElectionConstraints.NodeLabelsAntiAffinity)
 func (topologyLabels PodTopologyLabels) MatchesTopology(instanceTopology PodTopologyLabels) bool {

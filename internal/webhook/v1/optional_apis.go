@@ -22,6 +22,7 @@ package v1
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
@@ -108,6 +109,16 @@ func getClusterUnavailableAPIProblems(r, old *apiv1.Cluster) (field.ErrorList, a
 
 	if r.IsPodMonitorEnabled() && !configuration.Current.APIPodMonitorEnabled {
 		problems.optional(field.NewPath("spec", "monitoring", "enablePodMonitor"), podMonitorUnavailable)
+	}
+
+	if _, nodeLabelKeys := r.GetTopologyLabelKeys(); len(nodeLabelKeys) > 0 && !configuration.Current.APINodeEnabled {
+		path := field.NewPath("spec", "postgresql", "syncReplicaElectionConstraint", "nodeLabelsAntiAffinity")
+		if sync := r.Spec.PostgresConfiguration.Synchronous; sync != nil && len(sync.NodeFailureDomainKeys) > 0 {
+			path = field.NewPath("spec", "postgresql", "synchronous", "nodeFailureDomainKeys")
+		}
+		problems.optional(path, unavailableAPIMessage("Node", "API_NODE_ENABLED")+": the node labels "+
+			strings.Join(nodeLabelKeys, ", ")+" cannot be resolved and the failure domain constraints "+
+			"of the synchronous replicas are not applied")
 	}
 
 	return problems.errs, problems.warnings
