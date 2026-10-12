@@ -868,6 +868,21 @@ for more details), and two families of its own:
 Both are computed when scraped, from the operator's cache: with several
 replicas, each one reports its own view.
 
+A third family reports the effective configuration of the operator:
+
+- `cnpg_operator_config_info{name, value}`: always `1`, one series per
+  setting listed in ["Operator configuration"](operator_conf.md), named as
+  its environment variable, with its effective value: defaults included, and
+  for the `API_*_ENABLED` settings the result of the startup probe. Lists are
+  comma-separated and an unset optional value is empty. A setting read from
+  the operator `Secret` is reported with the value `<redacted>`.
+
+```text
+cnpg_operator_config_info{name="API_NODE_ENABLED",value="false"} 1
+cnpg_operator_config_info{name="WATCH_NAMESPACE",value="tenant-a,tenant-b"} 1
+cnpg_operator_config_info{name="PULL_SECRET_NAME",value="<redacted>"} 1
+```
+
 ```text
 # HELP cnpg_operator_build_info Build of the running operator
 # TYPE cnpg_operator_build_info gauge
