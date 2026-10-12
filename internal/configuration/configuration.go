@@ -208,6 +208,11 @@ type Data struct {
 	// cluster-scoped ClusterImageCatalog API, with the same rules as
 	// APIPodMonitorEnabled
 	APIClusterImageCatalogEnabled bool `json:"apiClusterImageCatalogEnabled" env:"API_CLUSTER_IMAGE_CATALOG_ENABLED"`
+
+	// APINodeEnabled is true when the operator reads the cluster-scoped Node
+	// API, to detect drained nodes and to resolve node labels in the
+	// instance topology, with the same rules as APIPodMonitorEnabled
+	APINodeEnabled bool `json:"apiNodeEnabled" env:"API_NODE_ENABLED"`
 }
 
 // Current is the configuration used by the operator
@@ -231,6 +236,7 @@ func newDefaultConfig() *Data {
 		APIPodMonitorEnabled:          true,
 		APIVolumeSnapshotEnabled:      true,
 		APIClusterImageCatalogEnabled: true,
+		APINodeEnabled:                true,
 	}
 }
 

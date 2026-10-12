@@ -170,6 +170,52 @@ var _ = Describe("Objects asking for an unavailable optional API", func() {
 		})
 	})
 
+	Context("a Cluster with topology constraints on node labels", func() {
+		withTopology := func(election []string, sync *apiv1.SynchronousReplicaConfiguration) *apiv1.Cluster {
+			return &apiv1.Cluster{Spec: apiv1.ClusterSpec{PostgresConfiguration: apiv1.PostgresConfiguration{
+				SyncReplicaElectionConstraint: apiv1.SyncReplicaElectionConstraints{NodeLabelsAntiAffinity: election},
+				Synchronous:                   sync,
+			}}}
+		}
+
+		It("is not affected while the Node API is available", func() {
+			errs, warnings := getClusterUnavailableAPIProblems(withTopology([]string{"kubernetes.io/hostname"}, nil), nil)
+			Expect(errs).To(BeEmpty())
+			Expect(warnings).To(BeEmpty())
+		})
+
+		DescribeTable("is only warned about without the Node API, on the field asking for node labels",
+			func(cluster *apiv1.Cluster, path string, keys string) {
+				configuration.Current.APINodeEnabled = false
+				for _, old := range []*apiv1.Cluster{nil, cluster} {
+					errs, warnings := getClusterUnavailableAPIProblems(cluster, old)
+					Expect(errs).To(BeEmpty())
+					Expect(warnings).To(ConsistOf(SatisfyAll(
+						HavePrefix(path+": the Node API is not available to this operator"),
+						ContainSubstring("API_NODE_ENABLED"),
+						ContainSubstring("the node labels "+keys+" cannot be resolved"),
+					)))
+				}
+			},
+			Entry("the election constraint",
+				withTopology([]string{"kubernetes.io/hostname", "topology.kubernetes.io/zone"}, nil),
+				"spec.postgresql.syncReplicaElectionConstraint.nodeLabelsAntiAffinity",
+				"kubernetes.io/hostname, topology.kubernetes.io/zone"),
+			Entry("node failure domain keys",
+				withTopology([]string{"kubernetes.io/hostname"},
+					&apiv1.SynchronousReplicaConfiguration{NodeFailureDomainKeys: []string{"rack"}}),
+				"spec.postgresql.synchronous.nodeFailureDomainKeys", "rack"),
+		)
+
+		It("is not affected by pod failure domain keys, which keep working", func() {
+			configuration.Current.APINodeEnabled = false
+			errs, warnings := getClusterUnavailableAPIProblems(withTopology([]string{"kubernetes.io/hostname"},
+				&apiv1.SynchronousReplicaConfiguration{PodFailureDomainKeys: []string{"zone"}}), nil)
+			Expect(errs).To(BeEmpty())
+			Expect(warnings).To(BeEmpty())
+		})
+	})
+
 	// The admission guard validates the stored objects at every
 	// reconciliation through ValidateCreate: an object admitted before the
 	// API was disabled must not be marked invalid, which would stop its
