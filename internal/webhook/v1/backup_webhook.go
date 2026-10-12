@@ -81,15 +81,20 @@ func (d *BackupCustomDefaulter) Default(_ context.Context, backup *apiv1.Backup)
 type BackupCustomValidator struct{}
 
 // ValidateCreate implements webhook.CustomValidator so a webhook will be registered for the type Backup.
-func (v *BackupCustomValidator) ValidateCreate(_ context.Context, backup *apiv1.Backup) (admission.Warnings, error) {
+func (v *BackupCustomValidator) ValidateCreate(ctx context.Context, backup *apiv1.Backup) (admission.Warnings, error) {
 	backupLog.Info("Validation for Backup upon creation", "name", backup.GetName(), "namespace", backup.GetNamespace())
 
 	allErrs := v.validate(backup)
+	var warnings admission.Warnings
+	if !isAdmissionRequest(ctx) {
+		// A stored Backup, validated by the admission guard: unchanged
+		allErrs, warnings = volumeSnapshotMethodOnUpdate(allErrs, backup.Spec.Method, backup.Spec.Method)
+	}
 	if len(allErrs) == 0 {
-		return nil, nil
+		return warnings, nil
 	}
 
-	return nil, apierrors.NewInvalid(
+	return warnings, apierrors.NewInvalid(
 		schema.GroupKind{Group: apiv1.SchemeGroupVersion.Group, Kind: "Backup"},
 		backup.Name, allErrs)
 }
@@ -97,16 +102,16 @@ func (v *BackupCustomValidator) ValidateCreate(_ context.Context, backup *apiv1.
 // ValidateUpdate implements webhook.CustomValidator so a webhook will be registered for the type Backup.
 func (v *BackupCustomValidator) ValidateUpdate(
 	_ context.Context,
-	_ *apiv1.Backup, backup *apiv1.Backup,
+	oldBackup *apiv1.Backup, backup *apiv1.Backup,
 ) (admission.Warnings, error) {
 	backupLog.Info("Validation for Backup upon update", "name", backup.GetName(), "namespace", backup.GetNamespace())
 
-	allErrs := v.validate(backup)
+	allErrs, warnings := volumeSnapshotMethodOnUpdate(v.validate(backup), backup.Spec.Method, oldBackup.Spec.Method)
 	if len(allErrs) == 0 {
-		return nil, nil
+		return warnings, nil
 	}
 
-	return nil, apierrors.NewInvalid(
+	return warnings, apierrors.NewInvalid(
 		schema.GroupKind{Group: apiv1.SchemeGroupVersion.Group, Kind: "Backup"},
 		backup.Name, allErrs)
 }
@@ -123,16 +128,7 @@ func (v *BackupCustomValidator) ValidateDelete(_ context.Context, backup *apiv1.
 func (v *BackupCustomValidator) validate(r *apiv1.Backup) field.ErrorList {
 	var result field.ErrorList
 
-	if r.Spec.Method == apiv1.BackupMethodVolumeSnapshot && !utils.HaveVolumeSnapshot() {
-		result = append(result, field.Invalid(
-			field.NewPath("spec", "method"),
-			r.Spec.Method,
-			"Cannot use volumeSnapshot backup method due to missing "+
-				"VolumeSnapshot CRD. If you installed the CRD after having "+
-				"started the operator, please restart it to enable "+
-				"VolumeSnapshot support",
-		))
-	}
+	result = append(result, volumeSnapshotMethodErrors(r.Spec.Method)...)
 
 	if r.Spec.Method == apiv1.BackupMethodBarmanObjectStore && r.Spec.Online != nil {
 		result = append(result, field.Invalid(

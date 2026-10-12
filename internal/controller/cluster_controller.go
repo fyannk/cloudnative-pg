@@ -40,7 +40,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
@@ -95,7 +94,6 @@ var errOldPrimaryDetected = errors.New("old primary detected")
 type ClusterReconciler struct {
 	client.Client
 
-	DiscoveryClient    discovery.DiscoveryInterface
 	Scheme             *runtime.Scheme
 	Recorder           record.EventRecorder
 	InstanceClient     remote.InstanceClient
@@ -110,7 +108,6 @@ type ClusterReconciler struct {
 // NewClusterReconciler creates a new ClusterReconciler initializing it
 func NewClusterReconciler(
 	mgr manager.Manager,
-	discoveryClient discovery.DiscoveryInterface,
 	plugins repository.Interface,
 	drainTaints []string,
 	operatorClientCert *tls.Certificate,
@@ -118,7 +115,6 @@ func NewClusterReconciler(
 ) *ClusterReconciler {
 	return &ClusterReconciler{
 		InstanceClient:     remote.NewClient().Instance(),
-		DiscoveryClient:    discoveryClient,
 		Client:             operatorclient.NewExtendedClient(mgr.GetClient()),
 		Scheme:             mgr.GetScheme(),
 		Recorder:           mgr.GetEventRecorderFor("cloudnative-pg"), //nolint:staticcheck
@@ -1373,11 +1369,6 @@ func (r *ClusterReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manag
 			builder.WithPredicates(predicate.ResourceVersionChangedPredicate{}),
 		).
 		Watches(
-			&apiv1.ClusterImageCatalog{},
-			handler.EnqueueRequestsFromMapFunc(r.mapClusterImageCatalogsToClusters()),
-			builder.WithPredicates(predicate.ResourceVersionChangedPredicate{}),
-		).
-		Watches(
 			&apiv1.DatabaseRole{},
 			handler.EnqueueRequestsFromMapFunc(mapClusterOwnedResourceToCluster),
 			// The cluster only consumes spec.passwordSecret (to maintain the
@@ -1412,6 +1403,16 @@ func (r *ClusterReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manag
 			handler.EnqueueRequestsFromMapFunc(mapClusterOwnedResourceToCluster),
 			builder.WithPredicates(isBeingDeletedPredicate),
 		)
+
+	// ClusterImageCatalog is cluster-scoped and optional: an informer on a
+	// kind the operator cannot list would never sync
+	if configuration.Current.APIClusterImageCatalogEnabled {
+		ctrlBuilder = ctrlBuilder.Watches(
+			&apiv1.ClusterImageCatalog{},
+			handler.EnqueueRequestsFromMapFunc(r.mapClusterImageCatalogsToClusters()),
+			builder.WithPredicates(predicate.ResourceVersionChangedPredicate{}),
+		)
+	}
 
 	if configuration.Current.OperatorNamespace != "" {
 		ctrlBuilder = ctrlBuilder.Watches(

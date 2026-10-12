@@ -1547,6 +1547,7 @@ snapshotBackupStatus
 snapshotOwnerReference
 snapshotownerreference
 snapshotted
+snapshotter
 snapshotting
 snapshottype
 sourceNamespace

@@ -29,6 +29,8 @@ import (
 	"time"
 
 	"github.com/cloudnative-pg/machinery/pkg/log"
+	volumesnapshotv1 "github.com/kubernetes-csi/external-snapshotter/client/v8/apis/volumesnapshot/v1"
+	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
 	apierrs "k8s.io/apimachinery/pkg/api/errors"
@@ -41,6 +43,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
+	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
 	"github.com/cloudnative-pg/cloudnative-pg/internal/cnpi/plugin/repository"
 	"github.com/cloudnative-pg/cloudnative-pg/internal/configuration"
 	"github.com/cloudnative-pg/cloudnative-pg/internal/controller"
@@ -111,6 +114,59 @@ func RunController(
 	setupLog.Info("Starting CloudNativePG Operator",
 		"version", versions.Version,
 		"build", versions.Info)
+
+	// kubeClient is the Kubernetes client used during the initialization of
+	// the operator, before the manager and its cache exist
+	kubeClient, err := client.New(ctrl.GetConfigOrDie(), client.Options{Scheme: scheme})
+	if err != nil {
+		setupLog.Error(err, "unable to create Kubernetes client")
+		return err
+	}
+
+	// The configuration is loaded before the manager is built, so that the
+	// settings read from the operator ConfigMap and Secret apply to the
+	// cache, to the watches and to the probes of the optional APIs
+	err = loadConfiguration(ctx, kubeClient, configMapName, secretName, conf)
+	if err != nil {
+		return err
+	}
+
+	setupLog.Info("Operator configuration loaded", "configuration", conf)
+
+	if conf.EnableWebhookNamespaceSuffix && conf.OperatorNamespace == "" {
+		return fmt.Errorf("ENABLE_WEBHOOK_NAMESPACE_SUFFIX requires OPERATOR_NAMESPACE to be set " +
+			"as a pod environment variable (typically via the Downward API fieldRef.fieldPath = metadata.namespace)")
+	}
+
+	discoveryClient, err := utils.GetDiscoveryClient()
+	if err != nil {
+		return err
+	}
+
+	// Detect if we are running under a system that implements OpenShift Security Context Constraints
+	if err = utils.DetectSecurityContextConstraints(discoveryClient); err != nil {
+		setupLog.Error(err, "unable to detect OpenShift Security Context Constraints presence")
+		return err
+	}
+
+	if err := probeOptionalAPIs(ctx, kubeClient, conf); err != nil {
+		return err
+	}
+	utils.SetVolumeSnapshot(conf.APIVolumeSnapshotEnabled)
+
+	// Detect the available architectures
+	if err = utils.DetectAvailableArchitectures(); err != nil {
+		setupLog.Error(err, "unable to detect the available instance's architectures")
+		return err
+	}
+
+	setupLog.Info("Kubernetes system metadata",
+		"haveSCC", utils.HaveSecurityContextConstraints(),
+		"apiPodMonitor", conf.APIPodMonitorEnabled,
+		"apiVolumeSnapshot", conf.APIVolumeSnapshotEnabled,
+		"apiClusterImageCatalog", conf.APIClusterImageCatalogEnabled,
+		"availableArchitectures", utils.GetAvailableArchitectures(),
+	)
 
 	managerOptions := ctrl.Options{
 		Scheme:           scheme,
@@ -206,57 +262,6 @@ func RunController(
 		webhookServer.Options.KeyName = "tls.key"
 	}
 
-	// kubeClient is the kubernetes client set with
-	// support for the apiextensions that is used
-	// during the initialization of the operator
-	// kubeClient client.Client
-	kubeClient, err := client.New(mgr.GetConfig(), client.Options{Scheme: scheme})
-	if err != nil {
-		setupLog.Error(err, "unable to create Kubernetes client")
-		return err
-	}
-
-	err = loadConfiguration(ctx, kubeClient, configMapName, secretName, conf)
-	if err != nil {
-		return err
-	}
-
-	setupLog.Info("Operator configuration loaded", "configuration", conf)
-
-	if conf.EnableWebhookNamespaceSuffix && conf.OperatorNamespace == "" {
-		return fmt.Errorf("ENABLE_WEBHOOK_NAMESPACE_SUFFIX requires OPERATOR_NAMESPACE to be set " +
-			"as a pod environment variable (typically via the Downward API fieldRef.fieldPath = metadata.namespace)")
-	}
-
-	discoveryClient, err := utils.GetDiscoveryClient()
-	if err != nil {
-		return err
-	}
-
-	// Detect if we are running under a system that implements OpenShift Security Context Constraints
-	if err = utils.DetectSecurityContextConstraints(discoveryClient); err != nil {
-		setupLog.Error(err, "unable to detect OpenShift Security Context Constraints presence")
-		return err
-	}
-
-	// Detect if we are running under a system that provides Volume Snapshots
-	if err = utils.DetectVolumeSnapshotExist(discoveryClient); err != nil {
-		setupLog.Error(err, "unable to detect the if the cluster have the VolumeSnapshot CRD installed")
-		return err
-	}
-
-	// Detect the available architectures
-	if err = utils.DetectAvailableArchitectures(); err != nil {
-		setupLog.Error(err, "unable to detect the available instance's architectures")
-		return err
-	}
-
-	setupLog.Info("Kubernetes system metadata",
-		"haveSCC", utils.HaveSecurityContextConstraints(),
-		"haveVolumeSnapshot", utils.HaveVolumeSnapshot(),
-		"availableArchitectures", utils.GetAvailableArchitectures(),
-	)
-
 	if err := ensurePKI(ctx, kubeClient, webhookServer.Options.CertDir, conf); err != nil {
 		return err
 	}
@@ -314,7 +319,6 @@ func setupReconcilers(
 ) error {
 	if err := controller.NewClusterReconciler(
 		mgr,
-		discoveryClient,
 		pluginRepository,
 		conf.DrainTaints,
 		operatorClientCert,
@@ -352,11 +356,10 @@ func setupReconcilers(
 	}
 
 	if err := (&controller.PoolerReconciler{
-		Client:          mgr.GetClient(),
-		DiscoveryClient: discoveryClient,
-		Scheme:          mgr.GetScheme(),
-		Recorder:        mgr.GetEventRecorderFor("cloudnative-pg-pooler"), //nolint:staticcheck
-		Admission:       webhookv1.NewPoolerAdmissionGuard(),
+		Client:    mgr.GetClient(),
+		Scheme:    mgr.GetScheme(),
+		Recorder:  mgr.GetEventRecorderFor("cloudnative-pg-pooler"), //nolint:staticcheck
+		Admission: webhookv1.NewPoolerAdmissionGuard(),
 	}).SetupWithManager(ctx, mgr, maxConcurrentReconciles); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Pooler")
 		return err
@@ -433,6 +436,45 @@ func buildMetricsOpts(metricsAddr string, conf *configuration.Data) server.Optio
 	setupLog.Info("Metrics server enabled with TLS", "certDir", conf.MetricsCertDir)
 
 	return metricsOptions
+}
+
+// probeOptionalAPIs resolves which optional APIs the operator uses, before
+// the manager is built: an informer on a kind the operator is forbidden to
+// list never syncs and stops the manager. Each enabled API is probed in the
+// scope its informer will use. A probe that finds the API not installed or
+// forbidden disables it, with a log line; any other error aborts the start,
+// so that the probe runs again on the next one.
+func probeOptionalAPIs(ctx context.Context, c client.Reader, conf *configuration.Data) error {
+	namespaces := conf.WatchedNamespaces()
+
+	probe := func(name string, enabled *bool, list client.ObjectList, scopes []string) error {
+		if !*enabled {
+			setupLog.Info("Optional API disabled by configuration", "api", name)
+			return nil
+		}
+		available, err := utils.ProbeListable(ctx, c, list, scopes)
+		if err != nil {
+			setupLog.Error(err, "unable to probe an optional API", "api", name)
+			return err
+		}
+		if !available {
+			setupLog.Info("Optional API not installed or forbidden, disabled", "api", name)
+			*enabled = false
+		}
+		return nil
+	}
+
+	if err := probe("PodMonitor", &conf.APIPodMonitorEnabled,
+		&monitoringv1.PodMonitorList{}, namespaces); err != nil {
+		return err
+	}
+	if err := probe("VolumeSnapshot", &conf.APIVolumeSnapshotEnabled,
+		&volumesnapshotv1.VolumeSnapshotList{}, namespaces); err != nil {
+		return err
+	}
+	// ClusterImageCatalog is cluster-scoped: probed cluster-wide whatever the watched namespaces
+	return probe("ClusterImageCatalog", &conf.APIClusterImageCatalogEnabled,
+		&apiv1.ClusterImageCatalogList{}, nil)
 }
 
 // loadConfiguration reads the configuration from the provided configmap and secret

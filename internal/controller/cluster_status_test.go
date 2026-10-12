@@ -150,10 +150,9 @@ var _ = Describe("cluster_status unit tests", func() {
 			Client: fakeClientWithIndexAdapter{
 				Client: env.clusterReconciler.Client,
 			},
-			DiscoveryClient: env.clusterReconciler.DiscoveryClient,
-			Scheme:          env.clusterReconciler.Scheme,
-			Recorder:        env.clusterReconciler.Recorder,
-			InstanceClient:  env.clusterReconciler.InstanceClient,
+			Scheme:         env.clusterReconciler.Scheme,
+			Recorder:       env.clusterReconciler.Recorder,
+			InstanceClient: env.clusterReconciler.InstanceClient,
 		}
 
 		namespace := newFakeNamespace(env.client)
