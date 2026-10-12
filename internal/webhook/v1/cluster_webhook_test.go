@@ -38,6 +38,7 @@ import (
 	"k8s.io/utils/ptr"
 
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
+	"github.com/cloudnative-pg/cloudnative-pg/internal/configuration"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/utils"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/versions"
 
@@ -6639,6 +6640,34 @@ var _ = Describe("getInTreeBarmanWarnings", func() {
 		Expect(warnings).To(HaveLen(1))
 		Expect(warnings[0]).To(ContainSubstring("spec.backup.barmanObjectStore"))
 		Expect(warnings[0]).To(ContainSubstring("spec.externalClusters.0.barmanObjectStore"))
+	})
+})
+
+var _ = Describe("getFilteredCacheWarnings", func() {
+	AfterEach(func() {
+		configuration.Current = configuration.NewConfiguration()
+	})
+
+	It("warns about podSelectorRefs only when the cache is filtered", func() {
+		cluster := &apiv1.Cluster{
+			Spec: apiv1.ClusterSpec{
+				PodSelectorRefs: []apiv1.PodSelectorRef{{
+					Name:     "app",
+					Selector: metav1.LabelSelector{MatchLabels: map[string]string{"app": "web"}},
+				}},
+			},
+		}
+
+		// The default cache sees every Pod: nothing to say
+		Expect(getFilteredCacheWarnings(cluster)).To(BeEmpty())
+
+		// A filtered cache only sees the labelled Pods
+		configuration.Current.FilteredCacheMode = "strict"
+		Expect(getFilteredCacheWarnings(cluster)).To(HaveLen(1))
+		Expect(getFilteredCacheWarnings(cluster)[0]).To(ContainSubstring("cnpg.io/reconcile=true"))
+
+		// And a Cluster without selectors is never concerned
+		Expect(getFilteredCacheWarnings(&apiv1.Cluster{})).To(BeEmpty())
 	})
 })
 

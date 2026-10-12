@@ -58,6 +58,7 @@ import (
 	rolloutManager "github.com/cloudnative-pg/cloudnative-pg/internal/controller/rollout"
 	"github.com/cloudnative-pg/cloudnative-pg/internal/webhook/guard"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/certs"
+	"github.com/cloudnative-pg/cloudnative-pg/pkg/filteredcache"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/management/postgres/webserver/client/remote"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/postgres"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/reconciler/hibernation"
@@ -94,9 +95,13 @@ var errOldPrimaryDetected = errors.New("old primary detected")
 type ClusterReconciler struct {
 	client.Client
 
-	Scheme             *runtime.Scheme
-	Recorder           record.EventRecorder
-	InstanceClient     remote.InstanceClient
+	Scheme         *runtime.Scheme
+	Recorder       record.EventRecorder
+	InstanceClient remote.InstanceClient
+
+	// ReloadWatch delivers the changes of the user Secrets and ConfigMaps
+	// carrying cnpg.io/reload when the cache is filtered, nil otherwise
+	ReloadWatch        *filteredcache.ReloadWatch
 	Plugins            repository.Interface
 	OperatorClientCert *tls.Certificate
 
@@ -108,6 +113,7 @@ type ClusterReconciler struct {
 // NewClusterReconciler creates a new ClusterReconciler initializing it
 func NewClusterReconciler(
 	mgr manager.Manager,
+	c client.Client,
 	plugins repository.Interface,
 	drainTaints []string,
 	operatorClientCert *tls.Certificate,
@@ -115,7 +121,7 @@ func NewClusterReconciler(
 ) *ClusterReconciler {
 	return &ClusterReconciler{
 		InstanceClient:     remote.NewClient().Instance(),
-		Client:             operatorclient.NewExtendedClient(mgr.GetClient()),
+		Client:             operatorclient.NewExtendedClient(c),
 		Scheme:             mgr.GetScheme(),
 		Recorder:           mgr.GetEventRecorderFor("cloudnative-pg"), //nolint:staticcheck
 		Plugins:            plugins,
@@ -1429,6 +1435,18 @@ func (r *ClusterReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manag
 				operatorNamespaceServiceEndpointSlicePredicate(configuration.Current.OperatorNamespace),
 			),
 		)
+	}
+
+	if r.ReloadWatch != nil {
+		secrets, err := r.ReloadWatch.Source(&corev1.Secret{}, r.mapSecretsToClusters(), secretsPredicate)
+		if err != nil {
+			return err
+		}
+		configMaps, err := r.ReloadWatch.Source(&corev1.ConfigMap{}, r.mapConfigMapsToClusters(), configMapsPredicate)
+		if err != nil {
+			return err
+		}
+		ctrlBuilder = ctrlBuilder.WatchesRawSource(secrets).WatchesRawSource(configMaps)
 	}
 
 	return ctrlBuilder.Complete(r)

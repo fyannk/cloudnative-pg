@@ -50,6 +50,7 @@ import (
 	schemeBuilder "github.com/cloudnative-pg/cloudnative-pg/internal/scheme"
 	webhookv1 "github.com/cloudnative-pg/cloudnative-pg/internal/webhook/v1"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/certs"
+	"github.com/cloudnative-pg/cloudnative-pg/pkg/filteredcache"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/multicache"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/operatormetrics"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/utils"
@@ -244,7 +245,24 @@ func RunController(
 		LeaderElectionReleaseOnCancel: true,
 	}
 
-	managerOptions.Cache = cacheOptions(conf)
+	cacheMode, err := filteredcache.ParseMode(conf.FilteredCacheMode)
+	if err != nil {
+		setupLog.Error(err, "invalid operator configuration")
+		return err
+	}
+
+	// The optional kinds are cached only when their API passed the startup probe
+	cacheFilter := filteredcache.Options{
+		Mode:               cacheMode,
+		OperatorNamespace:  conf.OperatorNamespace,
+		HavePodMonitor:     conf.APIPodMonitorEnabled,
+		HaveVolumeSnapshot: conf.APIVolumeSnapshotEnabled,
+	}
+	if conf.WatchNamespace != "" {
+		cacheFilter.WatchedNamespaces = conf.WatchedNamespaces()
+	}
+	setupLog.Info("Operator cache", "filteredCacheMode", cacheMode)
+	managerOptions.Cache = filteredcache.Apply(cacheOptions(conf), cacheFilter)
 
 	if conf.WatchNamespace != "" {
 		namespaces := conf.WatchedNamespaces()
@@ -305,9 +323,33 @@ func RunController(
 	}
 	defer pluginRepository.Close()
 
+	reloadWatch, err := filteredcache.NewReloadWatch(mgr.GetConfig(), filteredcache.ReloadWatchConfig{
+		HTTPClient: mgr.GetHTTPClient(),
+		Scheme:     mgr.GetScheme(),
+		Mapper:     mgr.GetRESTMapper(),
+	}, cacheFilter)
+	if err != nil {
+		setupLog.Error(err, "unable to create the reload metadata cache")
+		return err
+	}
+	if reloadWatch != nil {
+		if err := mgr.Add(reloadWatch); err != nil {
+			setupLog.Error(err, "unable to add the reload metadata cache to the manager")
+			return err
+		}
+	}
+
+	reconcilerClient, err := filteredcache.NewClient(mgr.GetClient(), mgr.GetAPIReader(), mgr.GetScheme(), cacheFilter)
+	if err != nil {
+		setupLog.Error(err, "unable to create the operator client")
+		return err
+	}
+
 	if err = setupReconcilers(
 		ctx,
 		mgr,
+		reconcilerClient,
+		reloadWatch,
 		discoveryClient,
 		pluginRepository,
 		operatorClientCert,
@@ -336,25 +378,31 @@ func RunController(
 func setupReconcilers(
 	ctx context.Context,
 	mgr ctrl.Manager,
+	c client.Client,
+	reloadWatch *filteredcache.ReloadWatch,
 	discoveryClient discovery.DiscoveryInterface,
 	pluginRepository repository.Interface,
 	operatorClientCert *tls.Certificate,
 	conf *configuration.Data,
 	maxConcurrentReconciles int,
 ) error {
-	if err := controller.NewClusterReconciler(
+	clusterReconciler := controller.NewClusterReconciler(
 		mgr,
+		c,
 		pluginRepository,
 		conf.DrainTaints,
 		operatorClientCert,
 		webhookv1.NewClusterAdmissionGuard(),
-	).SetupWithManager(ctx, mgr, maxConcurrentReconciles); err != nil {
+	)
+	clusterReconciler.ReloadWatch = reloadWatch
+	if err := clusterReconciler.SetupWithManager(ctx, mgr, maxConcurrentReconciles); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Cluster")
 		return err
 	}
 
 	if err := controller.NewBackupReconciler(
 		mgr,
+		c,
 		discoveryClient,
 		pluginRepository,
 		operatorClientCert,
@@ -364,14 +412,14 @@ func setupReconcilers(
 		return err
 	}
 
-	if err := controller.NewPluginReconciler(mgr, conf.OperatorNamespace, pluginRepository).
+	if err := controller.NewPluginReconciler(mgr, c, conf.OperatorNamespace, pluginRepository).
 		SetupWithManager(mgr, maxConcurrentReconciles); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Plugin")
 		return err
 	}
 
 	if err := (&controller.ScheduledBackupReconciler{
-		Client:    mgr.GetClient(),
+		Client:    c,
 		Scheme:    mgr.GetScheme(),
 		Recorder:  mgr.GetEventRecorderFor("cloudnative-pg-scheduledbackup"), //nolint:staticcheck
 		Admission: webhookv1.NewScheduledBackupAdmissionGuard(),
@@ -381,18 +429,20 @@ func setupReconcilers(
 	}
 
 	if err := (&controller.PoolerReconciler{
-		Client:    mgr.GetClient(),
-		Scheme:    mgr.GetScheme(),
-		Recorder:  mgr.GetEventRecorderFor("cloudnative-pg-pooler"), //nolint:staticcheck
-		Admission: webhookv1.NewPoolerAdmissionGuard(),
+		ReloadWatch: reloadWatch,
+		Client:      c,
+		Scheme:      mgr.GetScheme(),
+		Recorder:    mgr.GetEventRecorderFor("cloudnative-pg-pooler"), //nolint:staticcheck
+		Admission:   webhookv1.NewPoolerAdmissionGuard(),
 	}).SetupWithManager(ctx, mgr, maxConcurrentReconciles); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Pooler")
 		return err
 	}
 
 	if err := (&controller.DatabaseRoleReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		ReloadWatch: reloadWatch,
+		Client:      c,
+		Scheme:      mgr.GetScheme(),
 	}).SetupWithManager(mgr, maxConcurrentReconciles); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "DatabaseRole")
 		return err
