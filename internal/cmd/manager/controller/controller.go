@@ -51,6 +51,7 @@ import (
 	webhookv1 "github.com/cloudnative-pg/cloudnative-pg/internal/webhook/v1"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/certs"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/multicache"
+	"github.com/cloudnative-pg/cloudnative-pg/pkg/operatormetrics"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/utils"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/versions"
 )
@@ -126,7 +127,7 @@ func RunController(
 	// The configuration is loaded before the manager is built, so that the
 	// settings read from the operator ConfigMap and Secret apply to the
 	// cache, to the watches and to the probes of the optional APIs
-	err = loadConfiguration(ctx, kubeClient, configMapName, secretName, conf)
+	settingsFromSecret, err := loadConfiguration(ctx, kubeClient, configMapName, secretName, conf)
 	if err != nil {
 		return err
 	}
@@ -250,6 +251,15 @@ func RunController(
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), managerOptions)
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")
+		return err
+	}
+
+	if err := operatormetrics.Register(mgr.GetCache()); err != nil {
+		setupLog.Error(err, "unable to register the operator metrics")
+		return err
+	}
+	if err := operatormetrics.RegisterConfiguration(conf, settingsFromSecret); err != nil {
+		setupLog.Error(err, "unable to register the operator configuration metrics")
 		return err
 	}
 
@@ -482,15 +492,17 @@ func probeOptionalAPIs(ctx context.Context, c client.Reader, conf *configuration
 	return probe("Node", &conf.APINodeEnabled, &corev1.NodeList{}, nil)
 }
 
-// loadConfiguration reads the configuration from the provided configmap and secret
+// loadConfiguration reads the configuration from the provided configmap and
+// secret, and returns the names of the settings read from the secret
 func loadConfiguration(
 	ctx context.Context,
 	kubeClient client.Client,
 	configMapName string,
 	secretName string,
 	conf *configuration.Data,
-) error {
+) ([]string, error) {
 	configData := make(map[string]string)
+	var fromSecret []string
 
 	// First read the configmap if provided and store it in configData
 	if configMapName != "" {
@@ -499,7 +511,7 @@ func loadConfiguration(
 			setupLog.Error(err, "unable to read ConfigMap",
 				"namespace", conf.OperatorNamespace,
 				"name", configMapName)
-			return err
+			return nil, err
 		}
 		for k, v := range configMapData {
 			configData[k] = v
@@ -513,10 +525,11 @@ func loadConfiguration(
 			setupLog.Error(err, "unable to read Secret",
 				"namespace", conf.OperatorNamespace,
 				"name", secretName)
-			return err
+			return nil, err
 		}
 		for k, v := range secretData {
 			configData[k] = v
+			fromSecret = append(fromSecret, k)
 		}
 	}
 
@@ -525,7 +538,7 @@ func loadConfiguration(
 		conf.ReadConfigMap(configData)
 	}
 
-	return nil
+	return fromSecret, nil
 }
 
 // readinessProbeHandler is used to implement the readiness probe handler
