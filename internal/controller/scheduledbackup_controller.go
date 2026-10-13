@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/cloudnative-pg/machinery/pkg/log"
@@ -88,10 +89,26 @@ func (r *ScheduledBackupReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		return ctrl.Result{}, err
 	}
 
+	// Run the inner reconcile loop, reporting on the ScheduledBackup the
+	// error that ends it: the "Reconciler error" log line is in the operator
+	// namespace, which the owner of the ScheduledBackup usually cannot read
+	result, err := r.reconcile(ctx, &scheduledBackup)
+	if err != nil {
+		recordReconciliationError(r.Recorder, &scheduledBackup, err)
+	}
+	return result, err
+}
+
+func (r *ScheduledBackupReconciler) reconcile(
+	ctx context.Context,
+	scheduledBackup *apiv1.ScheduledBackup,
+) (ctrl.Result, error) {
+	contextLogger := log.FromContext(ctx)
+
 	if result, err := r.Admission.EnsureResourceIsAdmitted(
 		ctx,
 		guard.AdmissionParams[*apiv1.ScheduledBackup]{
-			Object:       &scheduledBackup,
+			Object:       scheduledBackup,
 			Client:       r.Client,
 			ApplyChanges: true,
 		},
@@ -115,7 +132,7 @@ func (r *ScheduledBackupReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 
 	// Check if any backups created by this ScheduledBackup are still running.
 	// This provides concurrency control at the ScheduledBackup level.
-	childBackups, err := r.GetChildBackups(ctx, scheduledBackup)
+	childBackups, err := r.GetChildBackups(ctx, *scheduledBackup)
 	if err != nil {
 		contextLogger.Error(err,
 			"Cannot extract the list of created backups")
@@ -128,11 +145,19 @@ func (r *ScheduledBackupReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 				"The system is already taking a backup for this ScheduledBackup, retrying in 60 seconds",
 				"backupName", backup.GetName(),
 				"backupPhase", backup.Status.Phase)
+			// A schedule that passes meanwhile is delayed: say so on the
+			// ScheduledBackup, which otherwise only shows a next schedule
+			// time in the past
+			if next := scheduledBackup.Status.NextScheduleTime; next != nil && time.Now().After(next.Time) {
+				r.Recorder.Eventf(scheduledBackup, "Warning", "BackupDelayed",
+					"Schedule %s passed while backup %s is still %s",
+					next.UTC().Format(time.RFC3339), backup.GetName(), backup.Status.Phase)
+			}
 			return ctrl.Result{RequeueAfter: time.Minute}, nil
 		}
 	}
 
-	return r.reconcileScheduledBackup(ctx, &scheduledBackup)
+	return r.reconcileScheduledBackup(ctx, scheduledBackup)
 }
 
 // reconcileScheduledBackup is the main reconciliation logic for a scheduled backup
@@ -148,6 +173,19 @@ func (r *ScheduledBackupReconciler) reconcileScheduledBackup(
 		contextLogger.Info("Detected an invalid cron schedule",
 			"schedule", scheduledBackup.GetSchedule())
 		return ctrl.Result{}, err
+	}
+
+	// The parser reads the seconds field first and makes the day of the week
+	// optional: a five-field schedule, the standard cron format, is accepted
+	// but shifted by one field. The webhook only warns, which GitOps tools
+	// never show: say it on the object too. Descriptors such as "@daily" or
+	// "@every 1h" have their own syntax and are left alone.
+	spec := scheduledBackup.GetSchedule()
+	if fields := len(strings.Fields(spec)); !strings.HasPrefix(spec, "@") && fields != 6 {
+		r.Recorder.Eventf(scheduledBackup, "Warning", "ScheduleFieldCount",
+			"schedule %q has %d fields instead of 6: it is read with the seconds field first "+
+				"(see the next run time in the BackupSchedule events)",
+			scheduledBackup.GetSchedule(), fields)
 	}
 
 	// Immediate volume snapshot backups can be scheduled only when the cluster
@@ -222,8 +260,10 @@ func (r *ScheduledBackupReconciler) reconcileScheduledBackup(
 			return r.advanceScheduledBackupStatus(ctx, scheduledBackup, adopted, now, schedule.Next(now))
 		}
 
-		// we populate the status (lastCheckTime...) by following the same rules of the scheduled backup
-		r.Recorder.Eventf(scheduledBackup, "Normal", "BackupSchedule", "Scheduled immediate backup now: %v", now)
+		// we populate the status (lastCheckTime...) by following the same rules of the scheduled backup.
+		// No timestamp in the message: a retry of a rejected creation records the
+		// same event, which the recorder merges into one with a count
+		r.Recorder.Event(scheduledBackup, "Normal", "BackupSchedule", "Scheduled immediate backup now")
 		return r.createBackup(ctx, scheduledBackup, now, now, schedule, true)
 	}
 

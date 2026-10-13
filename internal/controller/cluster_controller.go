@@ -286,6 +286,9 @@ func (r *ClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	}
 
 	if err != nil {
+		// The error is logged by the manager as "Reconciler error", which the
+		// owner of the Cluster usually cannot read: report it on the Cluster
+		recordReconciliationError(r.Recorder, cluster, err)
 		return ctrl.Result{}, err
 	}
 	return result, nil
@@ -971,12 +974,13 @@ func (r *ClusterReconciler) reconcileResources(
 			// to an unready instance.
 			contextLogger.Debug("Instance pod not active. Retrying...")
 
-			// Register a phase indicating some instances aren't active yet
+			// Register a phase indicating some instances aren't active yet,
+			// with what the Pods report as the cause
 			if err := r.RegisterPhase(
 				ctx,
 				cluster,
 				apiv1.PhaseWaitingForInstancesToBeActive,
-				"Some instances are not yet active. Please wait.",
+				resources.waitingForInstancesReason(),
 			); err != nil {
 				return ctrl.Result{}, err
 			}

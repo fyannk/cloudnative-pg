@@ -1524,6 +1524,11 @@ func (r *ClusterReconciler) joinReplicaInstance(
 		return ctrl.Result{RequeueAfter: time.Second}, ErrNextLoop
 	}
 
+	// The result, after the creation: the CreatingInstance event above is
+	// the intent, recorded whether the creation succeeds or not
+	r.Recorder.Eventf(cluster, "Normal", "InstanceCreated",
+		"Created instance %v (%v)", pod.Name, cmd.Role.Description())
+
 	return ctrl.Result{RequeueAfter: 30 * time.Second}, ErrNextLoop
 }
 
@@ -1549,11 +1554,11 @@ func (r *ClusterReconciler) attachReplicaBootstrapInitContainer(
 	serial int,
 	pgdataDataSource *corev1.TypedLocalObjectReference,
 	pvcGroupComplete bool,
-) (ctrl.Result, error) {
+) (ctrl.Result, string, error) {
 	if !pvcGroupComplete {
 		pgdataDataSource = nil
 		if err := persistentvolumeclaim.CreateInstancePVCs(ctx, r.Client, cluster, nil, serial); err != nil {
-			return ctrl.Result{}, fmt.Errorf("cannot recreate the missing PVCs of instance %v: %w",
+			return ctrl.Result{}, "", fmt.Errorf("cannot recreate the missing PVCs of instance %v: %w",
 				specs.GetInstanceName(cluster.Name, serial), err)
 		}
 	}
@@ -1574,12 +1579,12 @@ func (r *ClusterReconciler) attachReplicaBootstrapInitContainer(
 	if err := r.RegisterPhase(ctx, cluster,
 		apiv1.PhaseCreatingReplica,
 		fmt.Sprintf("Creating replica %v", instanceToCreate.Name)); err != nil {
-		return ctrl.Result{}, err
+		return ctrl.Result{}, "", err
 	}
 
 	specs.AddBootstrapInitContainer(instanceToCreate, *cluster, cmd)
 
-	return ctrl.Result{}, nil
+	return ctrl.Result{}, cmd.Role.Description(), nil
 }
 
 // ensureInstancesAreCreated recreates any missing instance
@@ -1639,12 +1644,15 @@ func (r *ClusterReconciler) ensureInstancesAreCreated(
 	needsBootstrap := slices.ContainsFunc(instancePVCs, func(pvc corev1.PersistentVolumeClaim) bool {
 		return pvc.Annotations[utils.PVCStatusAnnotationName] != persistentvolumeclaim.StatusReady
 	})
+	var bootstrapMethod string
 	if needsBootstrap {
-		if res, err := r.attachInstanceBootstrapInitContainer(
+		res, method, err := r.attachInstanceBootstrapInitContainer(
 			ctx, cluster, instanceToCreate, resources,
-		); err != nil || !res.IsZero() {
+		)
+		if err != nil || !res.IsZero() {
 			return res, err
 		}
+		bootstrapMethod = method
 	}
 
 	// If this cluster has been restarted, mark the Pod with the latest restart time
@@ -1677,6 +1685,16 @@ func (r *ClusterReconciler) ensureInstancesAreCreated(
 		}
 
 		return ctrl.Result{}, fmt.Errorf("unable to create Pod: %w", err)
+	}
+
+	// The result, after the creation: the CreatingInstance events are the
+	// intent, recorded whether the creation succeeds or not
+	if bootstrapMethod != "" {
+		r.Recorder.Eventf(cluster, "Normal", "InstanceCreated",
+			"Created instance %v (%v)", instanceToCreate.Name, bootstrapMethod)
+	} else {
+		r.Recorder.Eventf(cluster, "Normal", "InstanceCreated",
+			"Created instance %v (reattaching its PVCs)", instanceToCreate.Name)
 	}
 
 	return ctrl.Result{RequeueAfter: 1 * time.Second}, nil
@@ -1752,10 +1770,10 @@ func (r *ClusterReconciler) attachInstanceBootstrapInitContainer(
 	cluster *apiv1.Cluster,
 	instanceToCreate *corev1.Pod,
 	resources *managedResources,
-) (ctrl.Result, error) {
+) (ctrl.Result, string, error) {
 	serial, err := specs.GetNodeSerial(instanceToCreate.ObjectMeta)
 	if err != nil {
-		return ctrl.Result{}, err
+		return ctrl.Result{}, "", err
 	}
 
 	var pgdataDataSource *corev1.TypedLocalObjectReference
@@ -1805,7 +1823,7 @@ func (r *ClusterReconciler) attachInstanceBootstrapInitContainer(
 	// snapshot than the one already restored.
 	if !pvcGroupComplete {
 		if res, err := r.ensurePrimaryInstancePVCs(ctx, cluster, serial, pgdataDataSource); !res.IsZero() || err != nil {
-			return res, err
+			return res, "", err
 		}
 	}
 
@@ -1813,13 +1831,13 @@ func (r *ClusterReconciler) attachInstanceBootstrapInitContainer(
 	// shut the primary down as soon as it starts (see reconcileOldPrimary).
 	if cluster.Status.TargetPrimary != instanceToCreate.Name {
 		if err := r.setPrimaryInstance(ctx, cluster, instanceToCreate.Name); err != nil {
-			return ctrl.Result{}, fmt.Errorf("unable to set the primary instance name: %w", err)
+			return ctrl.Result{}, "", fmt.Errorf("unable to set the primary instance name: %w", err)
 		}
 	}
 
 	cmd, err := r.buildPrimaryBootstrapCommand(ctx, cluster, serial, pgdataDataSource)
 	if err != nil {
-		return ctrl.Result{}, err
+		return ctrl.Result{}, "", err
 	}
 
 	log.FromContext(ctx).Info("Attaching the bootstrap init container for the primary instance",
@@ -1829,7 +1847,7 @@ func (r *ClusterReconciler) attachInstanceBootstrapInitContainer(
 
 	specs.AddBootstrapInitContainer(instanceToCreate, *cluster, cmd)
 
-	return ctrl.Result{}, nil
+	return ctrl.Result{}, cmd.Role.Description(), nil
 }
 
 // checkReadyForRecovery checks if the backup or volumeSnapshots are ready, and

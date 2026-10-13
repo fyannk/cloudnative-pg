@@ -1289,7 +1289,8 @@ func (r *InstanceReconciler) reconcilePrimary(ctx context.Context, cluster *apiv
 
 	if err := r.acquirePrimaryLease(ctx, cluster); err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
-			contextLogger.Warning("Primary lease not yet acquired, retrying")
+			contextLogger.Warning("Primary lease not yet acquired, retrying",
+				"reason", r.primaryLeaseAcquirer.WaitReason())
 			// Retry soon: the runnable's preAcquire loop may complete the
 			// take-over in the background just after our context fired, in
 			// which case the next Acquire returns immediately via heldCh.

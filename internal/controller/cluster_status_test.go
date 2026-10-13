@@ -22,6 +22,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -31,6 +32,8 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/rand"
 	"k8s.io/utils/ptr"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/certs"
@@ -902,5 +905,50 @@ var _ = Describe("failedBootstrapPodNames", func() {
 		pod := corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "cluster-2"}}
 		resources := &managedResources{instances: corev1.PodList{Items: []corev1.Pod{pod}}}
 		Expect(resources.failedBootstrapPodNames()).To(BeEmpty())
+	})
+})
+
+// While the operator waits for an instance Pod that is not active, the
+// cause is on the Pod (scheduling, a container that cannot start). The
+// owner of the Cluster, who may not know where to look, gets it in the
+// phase reason next to the generic sentence. The Pod here is scheduled but
+// its container cannot start (an unschedulable Pod has its own handling).
+var _ = Describe("waiting for an instance that reports why it is not active", func() {
+	It("copies the Pod's cause into the phase reason", func(ctx SpecContext) {
+		pendingPod := corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: "cluster-example-1", Namespace: "default"},
+			Status: corev1.PodStatus{
+				Phase:      corev1.PodPending,
+				Conditions: []corev1.PodCondition{{Type: corev1.PodScheduled, Status: corev1.ConditionTrue}},
+				ContainerStatuses: []corev1.ContainerStatus{{
+					Name: "postgres",
+					State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{
+						Reason:  "ContainerCreating",
+						Message: "MountVolume.SetUp failed for volume \"app-secret\": secret \"app\" not found",
+					}},
+				}},
+			},
+		}
+		cluster := &apiv1.Cluster{
+			ObjectMeta: metav1.ObjectMeta{Name: "cluster-example", Namespace: "default"},
+			Spec:       apiv1.ClusterSpec{ImageName: "postgres:17.2", Instances: 1},
+			Status:     apiv1.ClusterStatus{CurrentPrimary: "cluster-example-1", TargetPrimary: "cluster-example-1"},
+		}
+		r, _ := newUnrecoverableReconciler(interceptor.Funcs{}, cluster, &pendingPod)
+		resources := &managedResources{instances: corev1.PodList{Items: []corev1.Pod{pendingPod}}}
+
+		result, err := r.reconcileResources(ctx, cluster, resources, postgres.PostgresqlStatusList{})
+		Expect(err).ToNot(HaveOccurred())
+		Expect(result).To(Equal(ctrl.Result{RequeueAfter: time.Second}))
+		Expect(cluster.Status.Phase).To(Equal(apiv1.PhaseWaitingForInstancesToBeActive))
+		Expect(cluster.Status.PhaseReason).To(Equal("Some instances are not yet active. Please wait. " +
+			"cluster-example-1: container postgres waiting (ContainerCreating: " +
+			"MountVolume.SetUp failed for volume \"app-secret\": secret \"app\" not found)"))
+
+		// A Pod that reports nothing yet keeps the generic sentence alone
+		resources.instances.Items[0].Status.ContainerStatuses = nil
+		_, err = r.reconcileResources(ctx, cluster, resources, postgres.PostgresqlStatusList{})
+		Expect(err).ToNot(HaveOccurred())
+		Expect(cluster.Status.PhaseReason).To(Equal("Some instances are not yet active. Please wait."))
 	})
 })

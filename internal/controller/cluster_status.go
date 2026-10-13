@@ -26,6 +26,7 @@ import (
 	"runtime"
 	"slices"
 	"sort"
+	"strings"
 
 	"github.com/cloudnative-pg/machinery/pkg/log"
 	pgTime "github.com/cloudnative-pg/machinery/pkg/postgres/time"
@@ -113,6 +114,34 @@ func (resources *managedResources) inactiveInstanceNames() []string {
 }
 
 // Check if every managed Pod is active and will be schedules
+// inactiveInstanceReasons returns, for each inactive instance Pod, what the
+// Pod reports as the cause ("name: cause"), skipping Pods reporting nothing
+func (resources *managedResources) inactiveInstanceReasons() []string {
+	result := make([]string, 0, len(resources.instances.Items))
+	for idx := range resources.instances.Items {
+		pod := resources.instances.Items[idx]
+		if utils.IsPodActive(pod) {
+			continue
+		}
+		if reason := utils.PodInactiveReason(pod); reason != "" {
+			result = append(result, fmt.Sprintf("%s: %s", pod.Name, reason))
+		}
+	}
+	return result
+}
+
+// waitingForInstancesReason is the reason of the PhaseWaitingForInstancesToBeActive
+// phase: the generic sentence, followed by what each inactive Pod reports as
+// the cause, which the owner of the Cluster would otherwise have to find on
+// the Pods themselves
+func (resources *managedResources) waitingForInstancesReason() string {
+	reason := "Some instances are not yet active. Please wait."
+	if causes := resources.inactiveInstanceReasons(); len(causes) > 0 {
+		reason = fmt.Sprintf("%s %s", reason, strings.Join(causes, "; "))
+	}
+	return reason
+}
+
 func (resources *managedResources) allInstancesAreActive() bool {
 	return len(resources.inactiveInstanceNames()) == 0
 }

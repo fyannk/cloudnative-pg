@@ -21,6 +21,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/robfig/cron"
@@ -43,7 +44,7 @@ import (
 	. "github.com/onsi/gomega"
 )
 
-func newScheduledBackupTestClient() client.Client {
+func newScheduledBackupTestClient() client.WithWatch {
 	scheme := schemeBuilder.BuildWithAllKnownScheme()
 	return fake.NewClientBuilder().
 		WithScheme(scheme).
@@ -463,5 +464,128 @@ var _ = Describe("scheduledbackup advanceScheduledBackupStatus", func() {
 		result, err := r.advanceScheduledBackupStatus(ctx, sb, backupTime, now, nextBackupTime)
 		Expect(err).ToNot(HaveOccurred())
 		Expect(result.RequeueAfter).To(Equal(time.Second))
+	})
+})
+
+var _ = Describe("scheduledbackup with a five-field schedule", func() {
+	It("records a Warning event with the field count", func(ctx context.Context) {
+		cli := newScheduledBackupTestClient()
+		ns := newFakeNamespace(cli)
+		sb := &apiv1.ScheduledBackup{
+			ObjectMeta: metav1.ObjectMeta{Name: "sb-five", Namespace: ns},
+			Spec: apiv1.ScheduledBackupSpec{
+				Schedule: "0 2 * * *",
+				Cluster:  apiv1.LocalObjectReference{Name: "cluster-x"},
+			},
+		}
+		Expect(cli.Create(ctx, sb)).To(Succeed())
+
+		recorder := record.NewFakeRecorder(10)
+		r := &ScheduledBackupReconciler{Client: cli, Recorder: recorder}
+		_, err := r.reconcileScheduledBackup(ctx, sb)
+		Expect(err).ToNot(HaveOccurred())
+
+		Expect(recorder.Events).To(Receive(And(
+			ContainSubstring("Warning ScheduleFieldCount"),
+			ContainSubstring(`"0 2 * * *" has 5 fields instead of 6`),
+		)))
+	})
+
+	It("leaves a descriptor alone", func(ctx context.Context) {
+		cli := newScheduledBackupTestClient()
+		ns := newFakeNamespace(cli)
+		sb := &apiv1.ScheduledBackup{
+			ObjectMeta: metav1.ObjectMeta{Name: "sb-every", Namespace: ns},
+			Spec: apiv1.ScheduledBackupSpec{
+				Schedule: "@every 1h",
+				Cluster:  apiv1.LocalObjectReference{Name: "cluster-x"},
+			},
+		}
+		Expect(cli.Create(ctx, sb)).To(Succeed())
+
+		recorder := record.NewFakeRecorder(10)
+		r := &ScheduledBackupReconciler{Client: cli, Recorder: recorder}
+		_, err := r.reconcileScheduledBackup(ctx, sb)
+		Expect(err).ToNot(HaveOccurred())
+
+		Expect(recorder.Events).ToNot(Receive(ContainSubstring("ScheduleFieldCount")))
+	})
+})
+
+var _ = Describe("scheduledbackup immediate event under a rejected creation", func() {
+	It("records the same event on every pass", func(ctx context.Context) {
+		cli := newScheduledBackupTestClient()
+		namespace := newFakeNamespace(cli)
+		recorder := record.NewFakeRecorder(10)
+		r := &ScheduledBackupReconciler{
+			Client: interceptor.NewClient(cli, interceptor.Funcs{
+				Create: func(ctx context.Context, cl client.WithWatch, obj client.Object,
+					opts ...client.CreateOption,
+				) error {
+					if _, ok := obj.(*apiv1.Backup); ok {
+						return apierrs.NewForbidden(schema.GroupResource{Group: "postgresql.cnpg.io", Resource: "backups"},
+							obj.GetName(), errors.New("exceeded quota"))
+					}
+					return cl.Create(ctx, obj, opts...)
+				},
+			}),
+			Recorder: recorder,
+		}
+		scheduledBackup := &apiv1.ScheduledBackup{
+			ObjectMeta: metav1.ObjectMeta{Name: "immediate", Namespace: namespace},
+			Spec: apiv1.ScheduledBackupSpec{
+				Schedule:  "0 0 0 * * *",
+				Immediate: ptr.To(true),
+				Cluster:   apiv1.LocalObjectReference{Name: "cluster-x"},
+			},
+		}
+		Expect(cli.Create(ctx, scheduledBackup)).To(Succeed())
+
+		for range 2 {
+			_, err := r.reconcileScheduledBackup(ctx, scheduledBackup)
+			Expect(err).To(HaveOccurred())
+			Expect(<-recorder.Events).To(Equal("Normal BackupSchedule Scheduled immediate backup now"))
+			Expect(<-recorder.Events).To(ContainSubstring("Warning BackupCreation"))
+		}
+	})
+})
+
+// past. The owner is told which Backup delays the schedule.
+var _ = Describe("scheduledbackup delayed by a backup that is not done", func() {
+	It("records the delay with the backup name and phase", func(ctx SpecContext) {
+		cli := newScheduledBackupTestClient()
+		namespace := newFakeNamespace(cli)
+		recorder := record.NewFakeRecorder(10)
+		r := &ScheduledBackupReconciler{Client: cli, Recorder: recorder}
+
+		scheduledBackup := &apiv1.ScheduledBackup{
+			ObjectMeta: metav1.ObjectMeta{Name: "every-minute", Namespace: namespace},
+			Spec: apiv1.ScheduledBackupSpec{
+				Schedule: "0 * * * * *",
+				Cluster:  apiv1.LocalObjectReference{Name: "cluster-x"},
+			},
+		}
+		Expect(cli.Create(ctx, scheduledBackup)).To(Succeed())
+		past := metav1.NewTime(time.Date(2026, 10, 10, 11, 27, 0, 0, time.UTC))
+		scheduledBackup.Status.NextScheduleTime = &past
+		Expect(cli.Status().Update(ctx, scheduledBackup)).To(Succeed())
+
+		running := &apiv1.Backup{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "every-minute-20261010112600", Namespace: namespace,
+				Labels: map[string]string{ParentScheduledBackupLabelName: scheduledBackup.Name},
+			},
+			Spec: apiv1.BackupSpec{Cluster: apiv1.LocalObjectReference{Name: "cluster-x"}},
+		}
+		Expect(cli.Create(ctx, running)).To(Succeed())
+		running.Status.Phase = apiv1.BackupPhaseStarted
+		Expect(cli.Status().Update(ctx, running)).To(Succeed())
+
+		result, err := r.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(scheduledBackup)})
+		Expect(err).ToNot(HaveOccurred())
+		Expect(result.RequeueAfter).To(Equal(time.Minute))
+		Expect(recordedEvents(recorder)).To(ContainElement(
+			"Warning BackupDelayed Schedule 2026-10-10T11:27:00Z passed while backup " +
+				"every-minute-20261010112600 is still started"))
 	})
 })
