@@ -106,12 +106,63 @@ func getReplacedByMandatoryWarnings(
 					parentImposed[key] == imposed[key] {
 					continue
 				}
-				result = append(result, fmt.Sprintf(
-					"%s %q: %q set on this %s is replaced with %q by MANDATORY_METADATA on %s",
-					kind.name, key, value, resource, imposed[key], target))
+				result = append(result, replacedWarning(
+					kind.name, key, value, resource, imposed[key], "MANDATORY_METADATA", target))
 			}
 		}
 	}
 
 	return result
+}
+
+// getReplacedByDiscoveryWarnings warns about the annotations a resource sets
+// on its Pods and MONITORING_DISCOVERY_ANNOTATIONS replaces
+func getReplacedByDiscoveryWarnings(
+	resource metadatarules.Resource,
+	target metadatarules.Target,
+	annotations, discovery map[string]string,
+) admission.Warnings {
+	var result admission.Warnings
+	for _, key := range slices.Sorted(maps.Keys(discovery)) {
+		if value, found := annotations[key]; found && value != discovery[key] {
+			result = append(result, replacedWarning(
+				"annotation", key, value, resource, discovery[key], "MONITORING_DISCOVERY_ANNOTATIONS", target))
+		}
+	}
+
+	return result
+}
+
+// withoutDiscoveryOn wraps the annotations a resource sets on a kind of
+// object, leaving out, on its Pods, the keys of the monitoring discovery
+// annotations: those win over the mandatory ones there, and are reported by
+// getReplacedByDiscoveryWarnings
+func withoutDiscoveryOn(
+	pods metadatarules.Target,
+	annotationsFor func(metadatarules.Target) map[string]string,
+	discovery map[string]string,
+) func(metadatarules.Target) map[string]string {
+	return func(target metadatarules.Target) map[string]string {
+		annotations := annotationsFor(target)
+		if target != pods {
+			return annotations
+		}
+		result := make(map[string]string, len(annotations))
+		for key, value := range annotations {
+			if _, found := discovery[key]; !found {
+				result[key] = value
+			}
+		}
+		return result
+	}
+}
+
+func replacedWarning(
+	kind, key, value string,
+	resource metadatarules.Resource,
+	imposed, setting string,
+	target metadatarules.Target,
+) string {
+	return fmt.Sprintf("%s %q: %q set on this %s is replaced with %q by %s on %s",
+		kind, key, value, resource, imposed, setting, target)
 }

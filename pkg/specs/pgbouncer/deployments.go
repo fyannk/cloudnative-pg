@@ -175,14 +175,18 @@ func Deployment(pooler *apiv1.Pooler, cluster *apiv1.Cluster) (*appsv1.Deploymen
 	}
 	pooler.ApplyMetadataTo(&deployment.ObjectMeta, metadatarules.PoolerDeployments)
 	pooler.ApplyMetadataTo(&deployment.Spec.Template.ObjectMeta, metadatarules.PoolerPods)
-	reachesPods := pooler.MetadataReaches(metadatarules.PoolerPods)
+	discoveryAnnotations := pooler.GetMonitoringDiscoveryAnnotations()
+	if len(discoveryAnnotations) > 0 {
+		utils.SetAnnotations(&deployment.Spec.Template.ObjectMeta, discoveryAnnotations)
+	}
+	reachesPods := pooler.MetadataReaches(metadatarules.PoolerPods) || len(discoveryAnnotations) > 0
 	reachesDeployment := pooler.MetadataReaches(metadatarules.PoolerDeployments)
 	if reachesPods || reachesDeployment {
 		// The Deployment is updated when its hash changes, and the hash of
-		// the Pooler spec misses the rules of the operator: include the
+		// the Pooler spec misses the settings of the operator: include the
 		// metadata of the Pods and of the Deployment, each only when a rule
-		// reaches it, so that the Deployment follows every rule and keeps
-		// its hash otherwise
+		// or the monitoring discovery reaches it, so that the Deployment
+		// follows them and keeps its hash otherwise
 		var podMetadata, deploymentMetadata metav1.ObjectMeta
 		if reachesPods {
 			podMetadata = deployment.Spec.Template.ObjectMeta
