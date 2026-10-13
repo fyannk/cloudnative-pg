@@ -23,6 +23,7 @@ package controller
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -220,8 +221,11 @@ func RunController(
 	if err != nil {
 		return err
 	}
-	if err := conf.ParseDefaultAndMandatoryMetadata(); err != nil {
-		setupLog.Error(err, "invalid default or mandatory metadata in the operator configuration")
+	if err := errors.Join(
+		conf.ParseDefaultAndMandatoryMetadata(),
+		conf.ParseMonitoringDiscoveryAnnotations(),
+	); err != nil {
+		setupLog.Error(err, "invalid operator configuration")
 		return err
 	}
 

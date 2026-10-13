@@ -2779,11 +2779,15 @@ func (v *ClusterCustomValidator) validateMetadataPropagation(r *apiv1.Cluster) f
 
 // getMetadataPropagationWarnings warns about the keys of the
 // metadataPropagation rules the operator sets itself, and about the values
-// of the Cluster MANDATORY_METADATA replaces
+// of the Cluster MANDATORY_METADATA and MONITORING_DISCOVERY_ANNOTATIONS
+// replace
 func getMetadataPropagationWarnings(r *apiv1.Cluster) admission.Warnings {
 	_, warnings := validateMetadataPropagation(r.Spec.MetadataPropagation, apiv1.ClusterMetadataTargets)
-	return append(warnings, getReplacedByMandatoryWarnings(metadatarules.ClusterResource,
-		apiv1.ClusterMetadataTargets, r.GetClusterLabelsFor, r.GetClusterAnnotationsFor)...)
+	discovery := r.GetMonitoringDiscoveryAnnotations()
+	warnings = append(warnings, getReplacedByMandatoryWarnings(metadatarules.ClusterResource, apiv1.ClusterMetadataTargets,
+		r.GetClusterLabelsFor, withoutDiscoveryOn(metadatarules.PgPods, r.GetClusterAnnotationsFor, discovery))...)
+	return append(warnings, getReplacedByDiscoveryWarnings(metadatarules.ClusterResource, metadatarules.PgPods,
+		r.GetClusterAnnotationsFor(metadatarules.PgPods), discovery)...)
 }
 
 func getMonitoringFieldsWarnings(r *apiv1.Cluster) admission.Warnings {

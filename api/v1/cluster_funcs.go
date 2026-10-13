@@ -44,7 +44,9 @@ import (
 
 	"github.com/cloudnative-pg/cloudnative-pg/internal/configuration"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/configfile"
+	"github.com/cloudnative-pg/cloudnative-pg/pkg/management/url"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/metadatarules"
+	"github.com/cloudnative-pg/cloudnative-pg/pkg/monitoringdiscovery"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/system"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/utils"
 	contextutils "github.com/cloudnative-pg/cloudnative-pg/pkg/utils/context"
@@ -1377,10 +1379,29 @@ func (cluster *Cluster) GetClusterLabelsFor(target metadatarules.Target) map[str
 
 // GetInheritedAnnotationsFor gets the annotations the operator sets on a kind
 // of object of the Cluster: those of GetClusterAnnotationsFor, between the
-// default and the mandatory metadata of the operator
+// default and the mandatory metadata of the operator. The instance Pods also
+// get the monitoring discovery annotations, over everything else
 func (cluster *Cluster) GetInheritedAnnotationsFor(target metadatarules.Target) map[string]string {
-	return configuration.Current.MetadataLayers(metadatarules.ClusterResource, cluster.GetMetadataRules()).Annotations(
-		target, cluster.getInheritedAnnotations())
+	annotations := configuration.Current.MetadataLayers(metadatarules.ClusterResource, cluster.GetMetadataRules()).
+		Annotations(target, cluster.getInheritedAnnotations())
+	if target == metadatarules.PgPods {
+		maps.Copy(annotations, cluster.GetMonitoringDiscoveryAnnotations())
+	}
+
+	return annotations
+}
+
+// GetMonitoringDiscoveryAnnotations gets the annotations telling monitoring
+// agents how to collect the metrics and the logs of the instance Pods, for
+// the families of MONITORING_DISCOVERY_ANNOTATIONS. Nil when there is none
+func (cluster *Cluster) GetMonitoringDiscoveryAnnotations() map[string]string {
+	return monitoringdiscovery.Annotations(configuration.Current.MonitoringDiscoveryFamilies(),
+		monitoringdiscovery.Endpoint{
+			MetricsPort:   url.PostgresMetricsPort,
+			MetricsTLS:    cluster.IsMetricsTLSEnabled(),
+			JobName:       "cloudnative-pg",
+			LogsContainer: "postgres",
+		})
 }
 
 // GetInheritedLabelsFor gets the labels the operator sets on a kind of

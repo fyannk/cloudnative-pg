@@ -162,8 +162,11 @@ func (v *PoolerCustomValidator) getAdmissionWarnings(r *apiv1.Pooler) admission.
 
 	_, metadataWarnings := validateMetadataPropagation(r.Spec.MetadataPropagation, apiv1.PoolerMetadataTargets)
 	warns = append(warns, metadataWarnings...)
-	return append(warns, getReplacedByMandatoryWarnings(metadatarules.PoolerResource, apiv1.PoolerMetadataTargets,
-		r.GetPoolerLabelsFor, r.GetPoolerAnnotationsFor)...)
+	discovery := r.GetMonitoringDiscoveryAnnotations()
+	warns = append(warns, getReplacedByMandatoryWarnings(metadatarules.PoolerResource, apiv1.PoolerMetadataTargets,
+		r.GetPoolerLabelsFor, withoutDiscoveryOn(metadatarules.PoolerPods, r.GetPoolerAnnotationsFor, discovery))...)
+	return append(warns, getReplacedByDiscoveryWarnings(metadatarules.PoolerResource, metadatarules.PoolerPods,
+		r.GetPoolerAnnotationsFor(metadatarules.PoolerPods), discovery)...)
 }
 
 // ValidateUpdate implements webhook.CustomValidator so a webhook will be registered for the type Pooler.

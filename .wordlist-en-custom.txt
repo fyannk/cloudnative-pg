@@ -129,6 +129,7 @@ DBA
 DBaaS
 DISA
 DNS
+DaemonSet
 DataBackupConfiguration
 DataBase
 DataDurabilityLevel
@@ -348,6 +349,7 @@ OpenID
 OpenSSF
 OpenSSL
 OpenShift
+OpenTelemetry
 Openshift
 OperatorCapabilities
 OperatorCertificateFingerprint
