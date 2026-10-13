@@ -192,6 +192,27 @@ type Data struct {
 	// be disabled when the webhook configurations are managed externally (e.g.
 	// by cert-manager's CA injector or by GitOps).
 	ManageWebhookConfigurations bool `json:"manageWebhookConfigurations" env:"MANAGE_WEBHOOK_CONFIGURATIONS"`
+
+	// APIPodMonitorEnabled is true when the operator uses the PodMonitor API
+	// (monitoring.coreos.com/v1). It is false when disabled by the
+	// administrator, or when the API is not installed or the operator is not
+	// allowed to list it where it would watch it.
+	APIPodMonitorEnabled bool `json:"apiPodMonitorEnabled" env:"API_POD_MONITOR_ENABLED"`
+
+	// APIVolumeSnapshotEnabled is true when the operator uses the
+	// VolumeSnapshot API (snapshot.storage.k8s.io/v1), with the same rules as
+	// APIPodMonitorEnabled
+	APIVolumeSnapshotEnabled bool `json:"apiVolumeSnapshotEnabled" env:"API_VOLUME_SNAPSHOT_ENABLED"`
+
+	// APIClusterImageCatalogEnabled is true when the operator uses the
+	// cluster-scoped ClusterImageCatalog API, with the same rules as
+	// APIPodMonitorEnabled
+	APIClusterImageCatalogEnabled bool `json:"apiClusterImageCatalogEnabled" env:"API_CLUSTER_IMAGE_CATALOG_ENABLED"`
+
+	// APINodeEnabled is true when the operator reads the cluster-scoped Node
+	// API, to detect drained nodes and to resolve node labels in the
+	// instance topology, with the same rules as APIPodMonitorEnabled
+	APINodeEnabled bool `json:"apiNodeEnabled" env:"API_NODE_ENABLED"`
 }
 
 // Current is the configuration used by the operator
@@ -200,18 +221,22 @@ var Current = NewConfiguration()
 // newDefaultConfig creates a configuration holding the defaults
 func newDefaultConfig() *Data {
 	return &Data{
-		OperatorPullSecretName:      DefaultOperatorPullSecretName,
-		OperatorImageName:           versions.DefaultOperatorImageName,
-		PostgresImageName:           versions.DefaultImageName,
-		PgbouncerImageName:          versions.DefaultPgbouncerImage,
-		PluginSocketDir:             DefaultPluginSocketDir,
-		CreateAnyService:            false,
-		CertificateDuration:         CertificateDuration,
-		ExpiringCheckThreshold:      ExpiringCheckThreshold,
-		StandbyTCPUserTimeout:       nil,
-		KubernetesClusterDomain:     DefaultKubernetesClusterDomain,
-		DrainTaints:                 DefaultDrainTaints,
-		ManageWebhookConfigurations: true,
+		OperatorPullSecretName:        DefaultOperatorPullSecretName,
+		OperatorImageName:             versions.DefaultOperatorImageName,
+		PostgresImageName:             versions.DefaultImageName,
+		PgbouncerImageName:            versions.DefaultPgbouncerImage,
+		PluginSocketDir:               DefaultPluginSocketDir,
+		CreateAnyService:              false,
+		CertificateDuration:           CertificateDuration,
+		ExpiringCheckThreshold:        ExpiringCheckThreshold,
+		StandbyTCPUserTimeout:         nil,
+		KubernetesClusterDomain:       DefaultKubernetesClusterDomain,
+		DrainTaints:                   DefaultDrainTaints,
+		ManageWebhookConfigurations:   true,
+		APIPodMonitorEnabled:          true,
+		APIVolumeSnapshotEnabled:      true,
+		APIClusterImageCatalogEnabled: true,
+		APINodeEnabled:                true,
 	}
 }
 

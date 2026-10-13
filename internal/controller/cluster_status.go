@@ -26,6 +26,7 @@ import (
 	"runtime"
 	"slices"
 	"sort"
+	"strings"
 
 	"github.com/cloudnative-pg/machinery/pkg/log"
 	pgTime "github.com/cloudnative-pg/machinery/pkg/postgres/time"
@@ -38,6 +39,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
+	"github.com/cloudnative-pg/cloudnative-pg/internal/configuration"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/certs"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/postgres"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/postgres/replication"
@@ -148,9 +150,11 @@ func (r *ClusterReconciler) getManagedResources(
 		return nil, err
 	}
 
-	nodes, err := r.getNodes(ctx)
-	if err != nil {
-		return nil, err
+	nodes := map[string]corev1.Node{}
+	if configuration.Current.APINodeEnabled {
+		if nodes, err = r.getNodes(ctx); err != nil {
+			return nil, err
+		}
 	}
 
 	return &managedResources{
@@ -271,13 +275,7 @@ func (r *ClusterReconciler) updateResourceStatus(
 	newJobs := int32(len(resources.jobs.Items)) //nolint:gosec
 	cluster.Status.JobCount = newJobs
 
-	var podLabelKeys []string
-	nodeLabelKeys := cluster.Spec.PostgresConfiguration.SyncReplicaElectionConstraint.NodeLabelsAntiAffinity
-	if sync := cluster.Spec.PostgresConfiguration.Synchronous; sync != nil &&
-		(len(sync.PodFailureDomainKeys) > 0 || len(sync.NodeFailureDomainKeys) > 0) {
-		podLabelKeys = sync.PodFailureDomainKeys
-		nodeLabelKeys = sync.NodeFailureDomainKeys
-	}
+	podLabelKeys, nodeLabelKeys := cluster.GetTopologyLabelKeys()
 	cluster.Status.Topology = getPodsTopology(
 		ctx,
 		resources.instances.Items,
@@ -285,6 +283,7 @@ func (r *ClusterReconciler) updateResourceStatus(
 		podLabelKeys,
 		nodeLabelKeys,
 	)
+	r.updateTopologyAvailability(cluster, existingClusterStatus.Conditions, resources.instances.Items, nodeLabelKeys)
 	updateSyncReplicationTopologyCondition(cluster)
 
 	// Services
@@ -908,6 +907,39 @@ func getPodsTopology(
 	}
 
 	return apiv1.Topology{SuccessfullyExtracted: true, Instances: data, NodesUsed: int32(len(nodesMap))} //nolint:gosec
+}
+
+// updateTopologyAvailability declares, through the TopologyUnavailable
+// condition, that the topology needs node labels the operator cannot read
+// because the Node API is disabled. The nodes used are still counted from
+// the instance Pods, and a Warning Event is emitted when the condition is
+// first set: the node label constraints are not applied.
+func (r *ClusterReconciler) updateTopologyAvailability(
+	cluster *apiv1.Cluster,
+	previous []metav1.Condition,
+	pods []corev1.Pod,
+	nodeLabelKeys []string,
+) {
+	if configuration.Current.APINodeEnabled || len(nodeLabelKeys) == 0 {
+		meta.RemoveStatusCondition(&cluster.Status.Conditions, string(apiv1.ConditionTopologyUnavailable))
+		return
+	}
+
+	cluster.Status.Topology = apiv1.Topology{
+		NodesUsed: getPodsTopology(context.Background(), pods, nil, nil, nil).NodesUsed,
+	}
+	message := "The operator does not read the Node API (API_NODE_ENABLED): the node labels " +
+		strings.Join(nodeLabelKeys, ", ") + " cannot be resolved and the failure domain " +
+		"constraints of the synchronous replicas are not applied"
+	meta.SetStatusCondition(&cluster.Status.Conditions, metav1.Condition{
+		Type:    string(apiv1.ConditionTopologyUnavailable),
+		Status:  metav1.ConditionTrue,
+		Reason:  string(apiv1.ConditionReasonNodeAccessUnavailable),
+		Message: message,
+	})
+	if !meta.IsStatusConditionTrue(previous, string(apiv1.ConditionTopologyUnavailable)) && r.Recorder != nil {
+		r.Recorder.Event(cluster, corev1.EventTypeWarning, string(apiv1.ConditionTopologyUnavailable), message)
+	}
 }
 
 // updateSyncReplicationTopologyCondition sets the SyncReplicationTopologySatisfied

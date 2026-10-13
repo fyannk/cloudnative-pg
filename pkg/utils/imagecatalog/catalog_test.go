@@ -27,6 +27,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
+	"github.com/cloudnative-pg/cloudnative-pg/internal/configuration"
 	schemeBuilder "github.com/cloudnative-pg/cloudnative-pg/internal/scheme"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -107,6 +108,18 @@ var _ = Describe("Get", func() {
 		result, err := Get(ctx, fakeClient, cluster)
 		Expect(err).ToNot(HaveOccurred())
 		Expect(result.GetName()).To(Equal("my-catalog"))
+	})
+
+	// Without the ClusterImageCatalog API, a reference to one is an explicit
+	// error, not a lookup on an informer that would never sync
+	It("refuses a ClusterImageCatalog reference when that API is disabled", func() {
+		configuration.Current.APIClusterImageCatalogEnabled = false
+		DeferCleanup(func() { configuration.Current.APIClusterImageCatalogEnabled = true })
+		cluster.Spec.ImageCatalogRef.Kind = "ClusterImageCatalog"
+		fakeClient := fake.NewClientBuilder().WithScheme(schemeBuilder.BuildWithAllKnownScheme()).Build()
+
+		_, err := Get(ctx, fakeClient, cluster)
+		Expect(err).To(MatchError(ErrClusterImageCatalogDisabled))
 	})
 
 	It("errors on unknown catalog kind", func() {
