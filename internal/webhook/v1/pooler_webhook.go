@@ -33,6 +33,7 @@ import (
 
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
 	"github.com/cloudnative-pg/cloudnative-pg/internal/webhook/guard"
+	"github.com/cloudnative-pg/cloudnative-pg/pkg/metadatarules"
 )
 
 // AllowedPgbouncerGenericConfigurationParameters is the list of allowed parameters for PgBouncer
@@ -159,7 +160,10 @@ func (v *PoolerCustomValidator) getAdmissionWarnings(r *apiv1.Pooler) admission.
 			"The .spec.pgbouncer.authQuerySecret field has been deprecated")
 	}
 
-	return warns
+	_, metadataWarnings := validateMetadataPropagation(r.Spec.MetadataPropagation, apiv1.PoolerMetadataTargets)
+	warns = append(warns, metadataWarnings...)
+	return append(warns, getReplacedByMandatoryWarnings(metadatarules.PoolerResource, apiv1.PoolerMetadataTargets,
+		r.GetPoolerLabelsFor, r.GetPoolerAnnotationsFor)...)
 }
 
 // ValidateUpdate implements webhook.CustomValidator so a webhook will be registered for the type Pooler.
@@ -250,6 +254,8 @@ func (v *PoolerCustomValidator) validate(r *apiv1.Pooler) (allErrs field.ErrorLi
 	allErrs = append(allErrs, v.validatePgBouncer(r)...)
 	allErrs = append(allErrs, v.validateCluster(r)...)
 	allErrs = append(allErrs, v.validateMonitoring(r)...)
+	metadataErrs, _ := validateMetadataPropagation(r.Spec.MetadataPropagation, apiv1.PoolerMetadataTargets)
+	allErrs = append(allErrs, metadataErrs...)
 	return allErrs
 }
 

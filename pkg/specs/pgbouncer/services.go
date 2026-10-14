@@ -26,6 +26,7 @@ import (
 
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
 	pgBouncerConfig "github.com/cloudnative-pg/cloudnative-pg/pkg/management/pgbouncer/config"
+	"github.com/cloudnative-pg/cloudnative-pg/pkg/metadatarules"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/servicespec"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/utils"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/utils/hash"
@@ -58,7 +59,7 @@ func Service(pooler *apiv1.Pooler, cluster *apiv1.Cluster) (*corev1.Service, err
 		SetPGBouncerSelector(pooler.Name).
 		Build()
 
-	return &corev1.Service{
+	service := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        pooler.Name,
 			Namespace:   pooler.Namespace,
@@ -66,5 +67,8 @@ func Service(pooler *apiv1.Pooler, cluster *apiv1.Cluster) (*corev1.Service, err
 			Annotations: serviceTemplate.ObjectMeta.Annotations,
 		},
 		Spec: serviceTemplate.Spec,
-	}, nil
+	}
+	pooler.ApplyMetadataTo(&service.ObjectMeta, metadatarules.Services)
+
+	return service, nil
 }

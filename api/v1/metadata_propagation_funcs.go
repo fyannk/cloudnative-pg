@@ -20,6 +20,9 @@ SPDX-License-Identifier: Apache-2.0
 package v1
 
 import (
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"github.com/cloudnative-pg/cloudnative-pg/internal/configuration"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/metadatarules"
 )
 
@@ -39,4 +42,24 @@ func ToMetadataRules(rules []MetadataPropagationRule) []metadatarules.Rule {
 		result[i] = metadatarules.Rule{Targets: targets, Labels: rule.Labels, Annotations: rule.Annotations}
 	}
 	return result
+}
+
+// applyMetadataRules stacks, on the metadata of an object of a kind of a
+// resource, the default metadata of the operator below the labels and
+// annotations the object already has, and the rules of the resource and the
+// mandatory metadata of the operator above them. Metadata left empty stays
+// nil
+func applyMetadataRules(
+	meta *metav1.ObjectMeta,
+	resource metadatarules.Resource,
+	own metadatarules.Set,
+	target metadatarules.Target,
+) {
+	layers := configuration.Current.MetadataLayers(resource, own)
+	if labels := layers.Labels(target, meta.Labels); len(labels) > 0 {
+		meta.Labels = labels
+	}
+	if annotations := layers.Annotations(target, meta.Annotations); len(annotations) > 0 {
+		meta.Annotations = annotations
+	}
 }

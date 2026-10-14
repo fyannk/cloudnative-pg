@@ -219,3 +219,122 @@ var _ = Describe("The metadataPropagation rules of a Cluster", func() {
 		})
 	})
 })
+
+var _ = Describe("The metadataPropagation rules of a Pooler", func() {
+	rule := func(labels, annotations map[string]string, targets ...apiv1.MetadataPropagationTarget,
+	) apiv1.MetadataPropagationRule {
+		return apiv1.MetadataPropagationRule{Targets: targets, Labels: labels, Annotations: annotations}
+	}
+	mandatory := func(yaml string) {
+		configuration.Current.MandatoryMetadata = yaml
+		Expect(configuration.Current.ParseDefaultAndMandatoryMetadata()).To(Succeed())
+	}
+	replaced := func(kind, key, value, imposed, target string) string {
+		return fmt.Sprintf("%s %q: %q set on this Pooler is replaced with %q by MANDATORY_METADATA on %s",
+			kind, key, value, imposed, target)
+	}
+	pooler := func(template map[string]string, rules ...apiv1.MetadataPropagationRule) *apiv1.Pooler {
+		result := &apiv1.Pooler{Spec: apiv1.PoolerSpec{MetadataPropagation: rules}}
+		if template != nil {
+			result.Spec.Template = &apiv1.PodTemplateSpec{ObjectMeta: apiv1.Metadata{Labels: template}}
+		}
+		return result
+	}
+	warningsOf := func(pooler *apiv1.Pooler) []string {
+		return getReplacedByMandatoryWarnings(metadatarules.PoolerResource, apiv1.PoolerMetadataTargets,
+			pooler.GetPoolerLabelsFor, pooler.GetPoolerAnnotationsFor)
+	}
+
+	BeforeEach(func() {
+		previous := configuration.Current
+		configuration.Current = configuration.NewConfiguration()
+		DeferCleanup(func() { configuration.Current = previous })
+	})
+
+	Context("validation", func() {
+		It("accepts every target of a Pooler", func() {
+			errs, warnings := validateMetadataPropagation([]apiv1.MetadataPropagationRule{
+				rule(map[string]string{"team": "payments"}, nil,
+					"all", "poolerPods", "poolerDeployments", "services", "secrets"),
+			}, apiv1.PoolerMetadataTargets)
+			Expect(errs).To(BeEmpty())
+			Expect(warnings).To(BeEmpty())
+		})
+
+		DescribeTable("refuses the targets of a Cluster",
+			func(target apiv1.MetadataPropagationTarget) {
+				errs, _ := validateMetadataPropagation([]apiv1.MetadataPropagationRule{
+					rule(map[string]string{"team": "payments"}, nil, "poolerPods", target),
+				}, apiv1.PoolerMetadataTargets)
+				Expect(errs).To(HaveLen(1))
+				Expect(errs[0].Field).To(Equal("spec.metadataPropagation[0].targets[1]"))
+			},
+			Entry("allPods", apiv1.MetadataPropagationTarget("allPods")),
+			Entry("pgPods", apiv1.MetadataPropagationTarget("pgPods")),
+			Entry("majorUpgradePods", apiv1.MetadataPropagationTarget("majorUpgradePods")),
+			Entry("persistentVolumeClaims", apiv1.MetadataPropagationTarget("persistentVolumeClaims")),
+			Entry("podDisruptionBudgets", apiv1.MetadataPropagationTarget("podDisruptionBudgets")),
+			Entry("backups", apiv1.MetadataPropagationTarget("backups")),
+		)
+
+		It("is part of the validation and the warnings of a Pooler", func() {
+			p := pooler(nil, rule(map[string]string{"team": "a b", "cnpg.io/poolerName": "x"}, nil, "poolerPods"))
+			v := &PoolerCustomValidator{}
+			Expect(v.validate(p)).To(ContainElement(HaveField("Field", "spec.metadataPropagation[0].labels[team]")))
+			Expect(v.getAdmissionWarnings(p)).To(ContainElement(
+				ContainSubstring(`spec.metadataPropagation[0].labels[cnpg.io/poolerName]`)))
+		})
+	})
+
+	Context("values replaced by MANDATORY_METADATA", func() {
+		It("says nothing without mandatory metadata, or when the Pooler agrees", func() {
+			Expect(warningsOf(pooler(map[string]string{"team": "a"}))).To(BeEmpty())
+			mandatory(`[{"targets": ["all"], "labels": {"team": "a"}}]`)
+			Expect(warningsOf(pooler(map[string]string{"team": "a"}))).To(BeEmpty())
+		})
+
+		It("only sees the mandatory rules reaching the objects of a Pooler", func() {
+			mandatory(`[{"resources": ["Cluster"], "targets": ["all"], "labels": {"team": "databases"}},
+				{"resources": ["Pooler"], "targets": ["allPods"], "labels": {"team": "platform"}}]`)
+			Expect(warningsOf(pooler(map[string]string{"team": "mine"}))).To(Equal([]string{
+				replaced("label", "team", "mine", "platform", "poolerPods"),
+			}))
+		})
+
+		It("are part of the admission warnings of a Pooler, for the rules naming it only", func() {
+			mandatory(`[{"resources": ["Cluster"], "targets": ["all"], "labels": {"team": "databases"}},
+				{"resources": ["Pooler"], "targets": ["poolerPods"], "labels": {"team": "platform"}}]`)
+			Expect((&PoolerCustomValidator{}).getAdmissionWarnings(pooler(map[string]string{"team": "mine"}))).To(
+				ConsistOf(replaced("label", "team", "mine", "platform", "poolerPods")))
+		})
+
+		It("reports a value of the pod template on the Pooler Pods", func() {
+			mandatory(`[{"targets": ["all"], "labels": {"team": "platform"}}]`)
+			Expect(warningsOf(pooler(map[string]string{"team": "mine"}))).To(Equal([]string{
+				replaced("label", "team", "mine", "platform", "poolerPods"),
+			}))
+		})
+
+		It("reports a value of a rule for all once", func() {
+			mandatory(`[{"targets": ["all"], "labels": {"team": "platform"}}]`)
+			Expect(warningsOf(pooler(nil, rule(map[string]string{"team": "mine"}, nil, "all")))).To(Equal([]string{
+				replaced("label", "team", "mine", "platform", "all"),
+			}))
+		})
+
+		It("reports a value of a rule for the Deployments", func() {
+			mandatory(`[{"targets": ["poolerDeployments"], "annotations": {"example.com/owner": "platform"}}]`)
+			p := pooler(nil, rule(nil, map[string]string{"example.com/owner": "mine"}, "poolerDeployments"))
+			Expect(warningsOf(p)).To(Equal([]string{
+				replaced("annotation", "example.com/owner", "mine", "platform", "poolerDeployments"),
+			}))
+		})
+
+		It("is part of the admission warnings of a Pooler", func() {
+			mandatory(`[{"targets": ["allPods"], "labels": {"team": "platform"}}]`)
+			v := &PoolerCustomValidator{}
+			Expect(v.getAdmissionWarnings(pooler(map[string]string{"team": "mine"}))).To(
+				ContainElement(replaced("label", "team", "mine", "platform", "poolerPods")))
+		})
+	})
+})

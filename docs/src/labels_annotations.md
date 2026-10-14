@@ -424,6 +424,42 @@ job is created. The CA and certificate secrets the operator generates get the
 cluster's metadata like the other objects; the secrets provided in the
 cluster spec are left untouched.
 
+A pooler takes the same rules, for its own objects:
+
+```yaml
+apiVersion: postgresql.cnpg.io/v1
+kind: Pooler
+metadata:
+  name: pooler-example-rw
+spec:
+  cluster:
+    name: cluster-example
+  metadataPropagation:
+    - targets: [poolerDeployments]
+      annotations:
+        reloader.stakater.com/auto: "true"
+    - targets: [poolerPods]
+      labels:
+        sidecar.istio.io/inject: "false"
+     # ... <snip>
+```
+
+A pooler accepts the following targets:
+
+- `poolerPods`: the pods of the pooler.
+- `poolerDeployments`: the deployment of the pooler.
+- `services`: the service of the pooler.
+- `secrets`: the pull secret the operator creates for the pooler.
+- `all`: every object the operator creates for the pooler, including its
+  service account, role, role binding, and pod monitor.
+
+The rules apply on top of the metadata of the pod template for `poolerPods`,
+and of the service template for `services`. The deployment, the service, the
+pull secret, the service account, and the pod monitor are updated in place; the role and the
+role binding get their metadata when they are created. A change of the
+metadata of the pods rolls them out, as any change of the pod template does.
+A service account named in `serviceAccountName` is left untouched.
+
 ## Default and mandatory labels and annotations
 
 Two settings of the [operator configuration](operator_conf.md) put labels and
@@ -518,9 +554,10 @@ same target of the same resource are an error.
 On a given object, by increasing precedence:
 
 1. `DEFAULT_METADATA`
-2. the metadata set by the resource: `inheritedMetadata`, the cluster's own
+2. the metadata set by the resource: `inheritedMetadata` and the cluster's own
    labels and annotations selected by `INHERITED_LABELS` and
-   `INHERITED_ANNOTATIONS`, then its `metadataPropagation` rules
+   `INHERITED_ANNOTATIONS` for a cluster, the pod and service templates for a
+   pooler, then its `metadataPropagation` rules
 3. `MANDATORY_METADATA`
 
 The rules cannot target the labels and annotations the operator sets itself

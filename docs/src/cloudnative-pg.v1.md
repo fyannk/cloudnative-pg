@@ -1730,6 +1730,7 @@ most specific target wins: a kind of Pod over allPods, any kind over all
 _Appears in:_
 
 - [ClusterSpec](#clusterspec)
+- [PoolerSpec](#poolerspec)
 
 | Field | Description | Required | Default | Validation |
 | --- | --- | --- | --- | --- |
@@ -2239,6 +2240,7 @@ _Appears in:_
 | `deploymentStrategy` _[DeploymentStrategy](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.34/#deploymentstrategy-v1-apps)_ | The deployment strategy to use for pgbouncer to replace existing pods with new ones |  |  |  |
 | `monitoring` _[PoolerMonitoringConfiguration](#poolermonitoringconfiguration)_ | The configuration of the monitoring infrastructure of this pooler. |  |  |  |
 | `serviceTemplate` _[ServiceTemplateSpec](#servicetemplatespec)_ | Template for the Service to be created |  |  |  |
+| `metadataPropagation` _[MetadataPropagationRule](#metadatapropagationrule) array_ | Labels and annotations to put on the objects of the Pooler, per kind<br />of object, on top of the template and the service template |  |  | MaxItems: 64 <br /> |
 | `serviceAccountName` _string_ | Name of an existing ServiceAccount in the same namespace to use for the pooler.<br />When specified, the operator will not create a new ServiceAccount<br />but will use the provided one. This is useful for sharing a single<br />ServiceAccount across multiple poolers (e.g., for cloud IAM configurations).<br />If not specified, a ServiceAccount will be created with the pooler name. |  |  | MaxLength: 253 <br />Pattern: `^[a-z0-9]([-a-z0-9]*[a-z0-9])?$` <br /> |
 
 
