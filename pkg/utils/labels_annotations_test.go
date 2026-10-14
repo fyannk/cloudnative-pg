@@ -210,3 +210,28 @@ var _ = Describe("Password passthrough annotation", func() {
 		Expect(IsPasswordPassthroughEnabled(objectMeta)).To(BeTrue())
 	})
 })
+
+// The keys the operator sets itself must never be overwritten by the rules
+// propagating labels and annotations
+var _ = DescribeTable("Recognizing the keys the operator sets itself",
+	func(key string, expected bool) {
+		Expect(IsOperatorMetadataKey(key)).To(Equal(expected))
+	},
+	Entry("the cnpg.io domain", "cnpg.io/cluster", true),
+	Entry("a cnpg.io key unknown to this version", "cnpg.io/somethingNew", true),
+	Entry("the alpha subdomain", "alpha.cnpg.io/unrecoverable", true),
+	Entry("any subdomain", "anything.cnpg.io/x", true),
+	Entry("app.kubernetes.io/name", "app.kubernetes.io/name", true),
+	Entry("app.kubernetes.io/instance", "app.kubernetes.io/instance", true),
+	Entry("app.kubernetes.io/version", "app.kubernetes.io/version", true),
+	Entry("app.kubernetes.io/component", "app.kubernetes.io/component", true),
+	Entry("app.kubernetes.io/managed-by", "app.kubernetes.io/managed-by", true),
+	Entry("a recommended label the operator does not set", "app.kubernetes.io/part-of", false),
+	Entry("another recommended label the operator does not set", "app.kubernetes.io/created-by", false),
+	Entry("a key without prefix", "cluster", false),
+	Entry("a key named like a domain, without prefix", "cnpg.io", false),
+	Entry("a domain ending like the operator's", "notcnpg.io/cluster", false),
+	Entry("a domain containing the operator's", "cnpg.io.example.com/cluster", false),
+	Entry("the legacy EDB domain", "k8s.enterprisedb.io/cluster", false),
+	Entry("an empty key", "", false),
+)

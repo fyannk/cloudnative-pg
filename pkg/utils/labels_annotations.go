@@ -420,6 +420,30 @@ type InheritanceController interface {
 	IsLabelInherited(name string) bool
 }
 
+// IsOperatorMetadataKey tells whether a label or annotation key is one the
+// operator sets itself: the cnpg.io namespace and its subdomains, and the
+// Kubernetes recommended labels the operator fills
+func IsOperatorMetadataKey(key string) bool {
+	prefix, _, found := strings.Cut(key, "/")
+	if !found {
+		return false
+	}
+	if prefix == MetadataNamespace || strings.HasSuffix(prefix, "."+MetadataNamespace) {
+		return true
+	}
+
+	switch key {
+	case KubernetesAppManagedByLabelName,
+		KubernetesAppLabelName,
+		KubernetesAppInstanceLabelName,
+		KubernetesAppVersionLabelName,
+		KubernetesAppComponentLabelName:
+		return true
+	}
+
+	return false
+}
+
 // InheritAnnotations puts into the object metadata the passed annotations if
 // the annotations are supposed to be inherited. The passed configuration is
 // used to determine whenever a certain annotation is inherited or not
