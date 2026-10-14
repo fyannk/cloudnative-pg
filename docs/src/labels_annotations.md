@@ -363,6 +363,109 @@ were correctly set in the pods:
 kubectl get pods --show-labels
 ```
 
+## Default and mandatory labels and annotations
+
+Two settings of the [operator configuration](operator_conf.md) put labels and
+annotations on the objects of every `Cluster`, `Pooler`, `ScheduledBackup`,
+and `Backup`, or of the kinds of resources a rule names:
+
+- `DEFAULT_METADATA`: applied when the resource does not set the key, a value
+  the resource can replace.
+- `MANDATORY_METADATA`: always applied, replacing the value set by the
+  resource. The webhook warns when a value set by the resource is replaced.
+
+Each setting is a YAML list of rules. A rule names the kinds of objects it
+targets, and the labels and annotations to put on them:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cnpg-controller-manager-config
+  namespace: cnpg-system
+data:
+  MANDATORY_METADATA: |
+    - targets: [all]
+      labels:
+        cost-centre: dbaas
+  DEFAULT_METADATA: |
+    - targets: [allPods]
+      labels:
+        team: unassigned
+    - targets: [pgPods]
+      annotations:
+        karpenter.sh/do-not-disrupt: "true"
+```
+
+The targets are:
+
+| Target | Objects |
+|---|---|
+| `all` | every object the operator creates for a `Cluster`, a `Pooler`, a `ScheduledBackup`, or a `Backup` |
+| `allPods` | `pgPods`, `poolerPods`, and `majorUpgradePods` |
+| `pgPods` | the PostgreSQL instance pods |
+| `majorUpgradePods` | the pods of the major upgrade jobs |
+| `poolerPods` | the pods of the poolers |
+| `poolerDeployments` | the deployments of the poolers |
+| `services` | the services of the clusters and of the poolers |
+| `persistentVolumeClaims` | the data, WAL, and tablespace PVCs |
+| `secrets` | the secrets the operator creates: credentials, CA and certificates, pull secrets |
+| `podDisruptionBudgets` | the pod disruption budgets of the clusters |
+| `backups` | the backups created by the scheduled backups |
+| `volumeSnapshots` | the volume snapshots of the backups |
+
+A rule applies to the objects of every resource, unless it names the kinds of
+resources it applies to in `resources`: `Cluster`, `Pooler`,
+`ScheduledBackup`, or `Backup`. For example, to give the services of the
+clusters and those of the poolers different values, and a label to every
+object of the poolers:
+
+```yaml
+  MANDATORY_METADATA: |
+    - resources: [Cluster]
+      targets: [services]
+      labels:
+        lb-pool: databases
+    - resources: [Pooler]
+      targets: [services]
+      labels:
+        lb-pool: poolers
+    - resources: [Pooler]
+      targets: [all]
+      labels:
+        component: pooler
+```
+
+Each target of a rule naming resources must reach the objects of each of
+them:
+
+| Resource | Targets |
+|---|---|
+| `Cluster` | `all`, `allPods`, `pgPods`, `majorUpgradePods`, `services`, `persistentVolumeClaims`, `secrets`, `podDisruptionBudgets` |
+| `Pooler` | `all`, `allPods`, `poolerPods`, `poolerDeployments`, `services`, `secrets` |
+| `ScheduledBackup` | `all`, `backups` |
+| `Backup` | `all`, `volumeSnapshots` |
+
+The backups are objects of the `ScheduledBackup` creating them, and the volume
+snapshots objects of their `Backup`.
+
+When several rules give the same key to an object, the most specific target
+wins, whatever the order of the rules: a kind of pod over `allPods`, `allPods`
+or any other kind over `all`. Two rules giving the same key two values on the
+same target of the same resource are an error.
+
+On a given object, by increasing precedence:
+
+1. `DEFAULT_METADATA`
+2. the metadata set by the resource
+3. `MANDATORY_METADATA`
+
+The rules cannot target the labels and annotations the operator sets itself
+(the `cnpg.io` domain and its subdomains, and the `app.kubernetes.io` labels it
+fills), nor be used in selectors. The operator does not start when a setting is
+not valid, and names the rule in its log. As for the inherited metadata,
+removing a rule does not remove its keys from the existing objects.
+
 ## Current limitations
 
 Currently, CloudNativePG doesn't automatically propagate labels or
