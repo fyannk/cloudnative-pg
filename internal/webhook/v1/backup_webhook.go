@@ -32,6 +32,7 @@ import (
 
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
 	"github.com/cloudnative-pg/cloudnative-pg/internal/webhook/guard"
+	"github.com/cloudnative-pg/cloudnative-pg/pkg/metadatarules"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/utils"
 )
 
@@ -85,6 +86,7 @@ func (v *BackupCustomValidator) ValidateCreate(_ context.Context, backup *apiv1.
 	backupLog.Info("Validation for Backup upon creation", "name", backup.GetName(), "namespace", backup.GetNamespace())
 
 	warnings := getInTreeBarmanMethodWarnings(backup.Spec.Method)
+	warnings = append(warnings, v.getAdmissionWarnings(backup)...)
 
 	allErrs := v.validate(backup)
 	if len(allErrs) == 0 {
@@ -104,6 +106,7 @@ func (v *BackupCustomValidator) ValidateUpdate(
 	backupLog.Info("Validation for Backup upon update", "name", backup.GetName(), "namespace", backup.GetNamespace())
 
 	warnings := getInTreeBarmanMethodWarnings(backup.Spec.Method)
+	warnings = append(warnings, v.getAdmissionWarnings(backup)...)
 
 	allErrs := v.validate(backup)
 	if len(allErrs) == 0 {
@@ -188,5 +191,14 @@ func (v *BackupCustomValidator) validate(r *apiv1.Backup) field.ErrorList {
 		}
 	}
 
+	metadataErrs, _ := validateMetadataPropagation(r.Spec.MetadataPropagation, apiv1.BackupMetadataTargets)
+	result = append(result, metadataErrs...)
+
 	return result
+}
+
+func (v *BackupCustomValidator) getAdmissionWarnings(r *apiv1.Backup) admission.Warnings {
+	_, warnings := validateMetadataPropagation(r.Spec.MetadataPropagation, apiv1.BackupMetadataTargets)
+	return append(warnings, getReplacedByMandatoryWarnings(metadatarules.BackupResource, apiv1.BackupMetadataTargets,
+		r.GetBackupLabelsFor, r.GetBackupAnnotationsFor)...)
 }
