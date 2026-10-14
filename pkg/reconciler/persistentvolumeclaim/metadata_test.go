@@ -26,6 +26,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
+	"github.com/cloudnative-pg/cloudnative-pg/internal/configuration"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/utils"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -190,5 +191,93 @@ var _ = Describe("metadataReconciler", func() {
 				Expect(pvc.Labels).To(HaveKeyWithValue(utils.KubernetesAppManagedByLabelName, utils.ManagerName))
 			})
 		})
+	})
+})
+
+// The PVCs are updated in place with the metadata of their kind:
+// objectMetadata.persistentVolumeClaims and the DEFAULT_* and MANDATORY_* settings for
+// `persistentVolumeClaims`, next to the labels the operator manages itself.
+var _ = Describe("metadata of the PVCs, reconciled in place", func() {
+	var (
+		previous *configuration.Data
+		cluster  *apiv1.Cluster
+		pvc      *corev1.PersistentVolumeClaim
+	)
+
+	reconcile := func() {
+		for _, reconciler := range []metadataReconciler{newAnnotationReconciler(cluster), newLabelReconciler(cluster)} {
+			if !reconciler.isUpToDate(pvc) {
+				reconciler.update(pvc)
+			}
+			Expect(reconciler.isUpToDate(pvc)).To(BeTrue(), reconciler.name)
+		}
+	}
+
+	BeforeEach(func() {
+		previous = configuration.Current
+		configuration.Current = configuration.NewConfiguration()
+		DeferCleanup(func() { configuration.Current = previous })
+
+		cluster = &apiv1.Cluster{
+			ObjectMeta: metav1.ObjectMeta{Name: "payments"},
+			Spec: apiv1.ClusterSpec{
+				InheritedMetadata: &apiv1.EmbeddedObjectMetadata{Labels: map[string]string{"team": "payments"}},
+				MetadataPropagation: []apiv1.MetadataPropagationRule{
+					{
+						Targets:     []apiv1.MetadataPropagationTarget{"pgPods"},
+						Annotations: map[string]string{"vault.hashicorp.com/agent-inject": "true"},
+					},
+					{
+						Targets:     []apiv1.MetadataPropagationTarget{"persistentVolumeClaims"},
+						Labels:      map[string]string{"velero.io/exclude-from-backup": "true"},
+						Annotations: map[string]string{"resize.topolvm.io/storage_limit": "200Gi"},
+					},
+				},
+			},
+			Status: apiv1.ClusterStatus{InstanceNames: []string{"payments-1"}},
+		}
+		pvc = &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{
+			Name: "payments-1",
+			Labels: map[string]string{
+				utils.PvcRoleLabelName: string(utils.PVCRolePgData),
+				"third-party":          "kept",
+			},
+			Annotations: map[string]string{"pv.kubernetes.io/bind-completed": "yes"},
+		}}
+	})
+
+	It("adds the PVCs' metadata and the operator's labels, nothing of the Pods", func() {
+		reconcile()
+		Expect(pvc.Labels).To(HaveKeyWithValue("team", "payments"))
+		Expect(pvc.Labels).To(HaveKeyWithValue("velero.io/exclude-from-backup", "true"))
+		Expect(pvc.Labels).To(HaveKeyWithValue("third-party", "kept"))
+		Expect(pvc.Labels).To(HaveKeyWithValue(utils.PvcRoleLabelName, string(utils.PVCRolePgData)))
+		Expect(pvc.Labels).To(HaveKeyWithValue(utils.KubernetesAppManagedByLabelName, utils.ManagerName))
+		Expect(pvc.Annotations).To(HaveKeyWithValue("resize.topolvm.io/storage_limit", "200Gi"))
+		Expect(pvc.Annotations).To(HaveKeyWithValue("pv.kubernetes.io/bind-completed", "yes"))
+		Expect(pvc.Annotations).NotTo(HaveKey("vault.hashicorp.com/agent-inject"))
+	})
+
+	It("follows the settings, defaults below the Cluster's metadata and mandatory values above", func() {
+		configuration.Current.DefaultMetadata = `[` +
+			`{"targets": ["persistentVolumeClaims"], "labels": {"velero.io/exclude-from-backup": "false"}},` +
+			`{"targets": ["all"], "labels": {"env": "prod"}}` +
+			`]`
+		configuration.Current.MandatoryMetadata = `[` +
+			`{"targets": ["persistentVolumeClaims"], "labels": {"team": "storage"}}` +
+			`]`
+		Expect(configuration.Current.ParseDefaultAndMandatoryMetadata()).To(Succeed())
+		reconcile()
+		Expect(pvc.Labels).To(HaveKeyWithValue("velero.io/exclude-from-backup", "true"))
+		Expect(pvc.Labels).To(HaveKeyWithValue("env", "prod"))
+		Expect(pvc.Labels).To(HaveKeyWithValue("team", "storage"))
+	})
+
+	It("cannot take away the labels the operator manages on a PVC", func() {
+		cluster.Spec.MetadataPropagation[1].Labels[utils.PvcRoleLabelName] = "fake"
+		cluster.Spec.MetadataPropagation[1].Labels[utils.KubernetesAppManagedByLabelName] = "fake"
+		reconcile()
+		Expect(pvc.Labels).To(HaveKeyWithValue(utils.PvcRoleLabelName, string(utils.PVCRolePgData)))
+		Expect(pvc.Labels).To(HaveKeyWithValue(utils.KubernetesAppManagedByLabelName, utils.ManagerName))
 	})
 })

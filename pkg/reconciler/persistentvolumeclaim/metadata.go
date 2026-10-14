@@ -29,7 +29,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
-	"github.com/cloudnative-pg/cloudnative-pg/internal/configuration"
+	"github.com/cloudnative-pg/cloudnative-pg/pkg/metadatarules"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/specs"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/utils"
 )
@@ -186,14 +186,12 @@ func newAnnotationReconciler(cluster *apiv1.Cluster) metadataReconciler {
 	return metadataReconciler{
 		name: "annotations",
 		isUpToDate: func(pvc *corev1.PersistentVolumeClaim) bool {
-			return utils.IsAnnotationSubset(pvc.Annotations,
-				cluster.Annotations,
-				cluster.GetFixedInheritedAnnotations(),
-				configuration.Current)
+			return utils.IsMapSubset(pvc.Annotations,
+				cluster.GetInheritedAnnotationsFor(metadatarules.PersistentVolumeClaims))
 		},
 		update: func(pvc *corev1.PersistentVolumeClaim) {
-			utils.InheritAnnotations(&pvc.ObjectMeta, cluster.Annotations,
-				cluster.GetFixedInheritedAnnotations(), configuration.Current)
+			utils.SetAnnotations(&pvc.ObjectMeta,
+				cluster.GetInheritedAnnotationsFor(metadatarules.PersistentVolumeClaims))
 		},
 	}
 }
@@ -202,10 +200,8 @@ func newLabelReconciler(cluster *apiv1.Cluster) metadataReconciler { //nolint: g
 	return metadataReconciler{
 		name: "labels",
 		isUpToDate: func(pvc *corev1.PersistentVolumeClaim) bool {
-			if !utils.IsLabelSubset(pvc.Labels,
-				cluster.Labels,
-				cluster.GetFixedInheritedLabels(),
-				configuration.Current) {
+			if !utils.IsMapSubset(pvc.Labels,
+				cluster.GetInheritedLabelsFor(metadatarules.PersistentVolumeClaims)) {
 				return false
 			}
 
@@ -304,7 +300,7 @@ func newLabelReconciler(cluster *apiv1.Cluster) metadataReconciler { //nolint: g
 				}
 			}
 
-			utils.InheritLabels(&pvc.ObjectMeta, cluster.Labels, cluster.GetFixedInheritedLabels(), configuration.Current)
+			utils.SetLabels(&pvc.ObjectMeta, cluster.GetInheritedLabelsFor(metadatarules.PersistentVolumeClaims))
 		},
 	}
 }

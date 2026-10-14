@@ -175,6 +175,117 @@ var _ = Describe("cluster_create unit tests", func() {
 			})
 		})
 
+	// The default Services get the metadata of their kind, objectMetadata
+	// and the DEFAULT_* and MANDATORY_* settings for `services`, and nothing of the
+	// other kinds; a change reaches the existing Services
+	It("puts the Services' metadata on the default Services, and updates them in place", func(ctx SpecContext) {
+		previous := configuration.Current
+		configuration.Current = configuration.NewConfiguration()
+		DeferCleanup(func() { configuration.Current = previous })
+		configuration.Current.CreateAnyService = true
+		configuration.Current.DefaultMetadata = `[{"targets": ["pgPods"], "labels": {"tier": "pods"}}]`
+		configuration.Current.MandatoryMetadata = `[` +
+			`{"targets": ["services"], "annotations": {"example.com/lb": "internal"}}` +
+			`]`
+		Expect(configuration.Current.ParseDefaultAndMandatoryMetadata()).To(Succeed())
+
+		namespace := newFakeNamespace(env.client)
+		cluster := newFakeCNPGCluster(env.client, namespace)
+		cluster.Spec.MetadataPropagation = []apiv1.MetadataPropagationRule{
+			{
+				Targets:     []apiv1.MetadataPropagationTarget{"services"},
+				Annotations: map[string]string{"external-dns.kubernetes.io/hostname": "db.example.com"},
+			},
+			{
+				Targets:     []apiv1.MetadataPropagationTarget{"pgPods"},
+				Annotations: map[string]string{"vault.hashicorp.com/agent-inject": "true"},
+			},
+		}
+
+		Expect(env.clusterReconciler.reconcilePostgresServices(ctx, cluster)).To(Succeed())
+
+		names := []string{
+			cluster.GetServiceAnyName(), cluster.GetServiceReadName(),
+			cluster.GetServiceReadOnlyName(), cluster.GetServiceReadWriteName(),
+		}
+		for _, name := range names {
+			var service corev1.Service
+			Expect(env.client.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, &service)).To(Succeed())
+			Expect(service.Annotations).To(HaveKeyWithValue("external-dns.kubernetes.io/hostname", "db.example.com"), name)
+			Expect(service.Annotations).To(HaveKeyWithValue("example.com/lb", "internal"), name)
+			Expect(service.Annotations).NotTo(HaveKey("vault.hashicorp.com/agent-inject"), name)
+			Expect(service.Labels).NotTo(HaveKey("tier"), name)
+			Expect(service.Labels).To(HaveKeyWithValue(utils.ClusterLabelName, cluster.Name), name)
+		}
+
+		// A new value reaches the existing Services
+		cluster.Spec.MetadataPropagation[0].Annotations["external-dns.kubernetes.io/hostname"] = "new.example.com"
+		Expect(env.clusterReconciler.reconcilePostgresServices(ctx, cluster)).To(Succeed())
+		for _, name := range names {
+			var service corev1.Service
+			Expect(env.client.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, &service)).To(Succeed())
+			Expect(service.Annotations).To(HaveKeyWithValue("external-dns.kubernetes.io/hostname", "new.example.com"), name)
+		}
+	})
+
+	// The credential Secrets and the pull Secret get the metadata of the
+	// Secrets, and keep following it
+	It("puts the Secrets' metadata on the credential and pull Secrets, and updates them", func(ctx SpecContext) {
+		previous := configuration.Current
+		configuration.Current = configuration.NewConfiguration()
+		DeferCleanup(func() { configuration.Current = previous })
+
+		namespace := newFakeNamespace(env.client)
+		configuration.Current.OperatorNamespace = namespace
+		configuration.Current.OperatorPullSecretName = "operator-pull"
+		Expect(env.client.Create(ctx, &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: "operator-pull", Namespace: namespace},
+			Data:       map[string][]byte{".dockerconfigjson": []byte("{}")},
+			Type:       corev1.SecretTypeDockerConfigJson,
+		})).To(Succeed())
+
+		cluster := newFakeCNPGCluster(env.client, namespace)
+		cluster.Spec.EnableSuperuserAccess = ptr.To(true)
+		cluster.Spec.MetadataPropagation = []apiv1.MetadataPropagationRule{
+			{
+				Targets:     []apiv1.MetadataPropagationTarget{"secrets"},
+				Annotations: map[string]string{"replicator.v1.mittwald.de/replicate-to": "apps"},
+			},
+			{
+				Targets:     []apiv1.MetadataPropagationTarget{"pgPods"},
+				Annotations: map[string]string{"vault.hashicorp.com/agent-inject": "true"},
+			},
+		}
+
+		reconcile := func() []corev1.Secret {
+			Expect(env.clusterReconciler.reconcilePostgresSecrets(ctx, cluster)).To(Succeed())
+			pullSecretName, err := env.clusterReconciler.copyPullSecretFromOperator(ctx, cluster)
+			Expect(err).ToNot(HaveOccurred())
+			result := make([]corev1.Secret, 0, 3)
+			for _, name := range []string{
+				cluster.GetApplicationSecretName(), cluster.GetSuperuserSecretName(), pullSecretName,
+			} {
+				var secret corev1.Secret
+				Expect(env.client.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, &secret)).
+					To(Succeed())
+				result = append(result, secret)
+			}
+			return result
+		}
+
+		for _, secret := range reconcile() {
+			Expect(secret.Annotations).To(HaveKeyWithValue("replicator.v1.mittwald.de/replicate-to", "apps"),
+				secret.Name)
+			Expect(secret.Annotations).NotTo(HaveKey("vault.hashicorp.com/agent-inject"), secret.Name)
+		}
+
+		cluster.Spec.MetadataPropagation[0].Annotations["replicator.v1.mittwald.de/replicate-to"] = "apps,batch"
+		for _, secret := range reconcile() {
+			Expect(secret.Annotations).To(HaveKeyWithValue("replicator.v1.mittwald.de/replicate-to", "apps,batch"),
+				secret.Name)
+		}
+	})
+
 	It("should make sure that reconcilePostgresServices can update the selectors on existing services",
 		func(ctx SpecContext) {
 			namespace := newFakeNamespace(env.client)

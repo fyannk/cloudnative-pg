@@ -26,6 +26,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
+	"github.com/cloudnative-pg/cloudnative-pg/pkg/metadatarules"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/resources"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/specs"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/utils"
@@ -57,7 +58,7 @@ func Build(
 			utils.PVCStatusAnnotationName:     configuration.Status,
 		}).
 		WithLabels(calculator.GetLabels(instanceName)).
-		WithClusterInheritance(cluster).
+		WithClusterInheritance(cluster, metadatarules.PersistentVolumeClaims).
 		EndMetadata().
 		WithSpec(configuration.Storage.PersistentVolumeClaimTemplate).
 		WithSource(configuration.Source).
