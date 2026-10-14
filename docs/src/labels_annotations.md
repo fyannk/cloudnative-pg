@@ -363,6 +363,67 @@ were correctly set in the pods:
 kubectl get pods --show-labels
 ```
 
+## Labels and annotations per kind of object
+
+`inheritedMetadata` and the inherited labels and annotations reach every
+object of the cluster. When a label or an annotation is meant for some kinds
+of objects only, set it in `metadataPropagation`: a list of rules, each naming
+the kinds of objects it targets, and the labels and annotations to put on
+them.
+
+```yaml
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: cluster-example
+spec:
+  metadataPropagation:
+    - targets: [pgPods]
+      annotations:
+        vault.hashicorp.com/agent-inject: "true"
+    - targets: [services]
+      annotations:
+        external-dns.kubernetes.io/hostname: cluster-example.example.com
+    - targets: [persistentVolumeClaims]
+      annotations:
+        resize.topolvm.io/storage_limit: 200Gi
+    - targets: [secrets]
+      annotations:
+        replicator.v1.mittwald.de/replicate-to: "app,batch"
+     # ... <snip>
+```
+
+A cluster accepts the following targets:
+
+- `pgPods`: the PostgreSQL instance pods, from their creation: the
+  initialization, join, or recovery of an instance runs in an init container
+  of its pod.
+- `majorUpgradePods`: the pods of the major upgrade job.
+- `allPods`: both kinds of pods.
+- `services`: the default services (`-rw`, `-ro`, `-r`, and `-any`). The
+  additional managed services have their own `serviceTemplate`.
+- `persistentVolumeClaims`: the data, WAL, and tablespace PVCs.
+- `secrets`: the secrets the operator creates for the cluster: credentials,
+  CA and certificates, and pull secret.
+- `podDisruptionBudgets`: the pod disruption budgets.
+- `all`: every object the operator creates for the cluster.
+
+When several rules give the same key to an object, the most specific target
+wins, whatever the order of the rules: a kind of pod over `allPods`, any kind
+over `all`. Two rules giving the same key two values on the same target are
+refused by the webhook.
+
+On a given object, the rules apply on top of `inheritedMetadata` and of the
+cluster's own labels and annotations selected by `INHERITED_LABELS` and
+`INHERITED_ANNOTATIONS`. The labels and annotations the operator sets itself
+(the `cnpg.io` domain and its subdomains, and the `app.kubernetes.io` labels it
+fills) are never taken from a rule: the webhook warns about them. Instance
+pods, services, PVCs, secrets, and pod disruption budgets are updated in
+place, without a restart; the major upgrade pods get their metadata when the
+job is created. The CA and certificate secrets the operator generates get the
+cluster's metadata like the other objects; the secrets provided in the
+cluster spec are left untouched.
+
 ## Default and mandatory labels and annotations
 
 Two settings of the [operator configuration](operator_conf.md) put labels and
@@ -457,7 +518,9 @@ same target of the same resource are an error.
 On a given object, by increasing precedence:
 
 1. `DEFAULT_METADATA`
-2. the metadata set by the resource
+2. the metadata set by the resource: `inheritedMetadata`, the cluster's own
+   labels and annotations selected by `INHERITED_LABELS` and
+   `INHERITED_ANNOTATIONS`, then its `metadataPropagation` rules
 3. `MANDATORY_METADATA`
 
 The rules cannot target the labels and annotations the operator sets itself

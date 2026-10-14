@@ -389,6 +389,23 @@ const (
 	UserTypeApp UserType = "app"
 )
 
+// SetLabels sets the passed labels on an object, keeping its other labels
+func SetLabels(object *metav1.ObjectMeta, labels map[string]string) {
+	if object.Labels == nil {
+		object.Labels = make(map[string]string, len(labels))
+	}
+	maps.Copy(object.Labels, labels)
+}
+
+// SetAnnotations sets the passed annotations on an object, keeping its other
+// annotations
+func SetAnnotations(object *metav1.ObjectMeta, annotations map[string]string) {
+	if object.Annotations == nil {
+		object.Annotations = make(map[string]string, len(annotations))
+	}
+	maps.Copy(object.Annotations, annotations)
+}
+
 // LabelClusterName labels the object with the cluster name
 func LabelClusterName(object *metav1.ObjectMeta, name string) {
 	if object.Labels == nil {

@@ -624,6 +624,7 @@ _Appears in:_
 | --- | --- | --- | --- | --- |
 | `description` _string_ | Description of this PostgreSQL cluster |  |  |  |
 | `inheritedMetadata` _[EmbeddedObjectMetadata](#embeddedobjectmetadata)_ | Metadata that will be inherited by all objects related to the Cluster |  |  |  |
+| `metadataPropagation` _[MetadataPropagationRule](#metadatapropagationrule) array_ | Labels and annotations to put on the objects of the Cluster, per kind<br />of object, on top of inheritedMetadata |  |  | MaxItems: 64 <br /> |
 | `imageName` _string_ | Name of the container image, supporting both tags (`<image>:<tag>`)<br />and digests for deterministic and repeatable deployments<br />(`<image>:<tag>@sha256:<digestValue>`) |  |  |  |
 | `imageCatalogRef` _[ImageCatalogRef](#imagecatalogref)_ | Defines the major PostgreSQL version we want to use within an ImageCatalog |  |  |  |
 | `imagePullPolicy` _[PullPolicy](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.34/#pullpolicy-v1-core)_ | Image pull policy.<br />One of `Always`, `Never` or `IfNotPresent`.<br />If not defined, it defaults to `IfNotPresent`.<br />Cannot be updated.<br />More info: https://kubernetes.io/docs/concepts/containers/images#updating-images |  |  |  |
@@ -1714,6 +1715,44 @@ _Appears in:_
 | `name` _string_ | The name of the resource. Only supported for certain types |  |  |  |
 | `labels` _object (keys:string, values:string)_ | Map of string keys and values that can be used to organize and categorize<br />(scope and select) objects. May match selectors of replication controllers<br />and services.<br />More info: http://kubernetes.io/docs/user-guide/labels |  |  |  |
 | `annotations` _object (keys:string, values:string)_ | Annotations is an unstructured key value map stored with a resource that may be<br />set by external tools to store and retrieve arbitrary metadata. They are not<br />queryable and should be preserved when modifying objects.<br />More info: http://kubernetes.io/docs/user-guide/annotations |  |  |  |
+
+
+#### MetadataPropagationRule
+
+
+
+MetadataPropagationRule puts labels and annotations on the objects of the
+targeted kinds. When several rules give the same key to an object, the
+most specific target wins: a kind of Pod over allPods, any kind over all
+
+
+
+_Appears in:_
+
+- [ClusterSpec](#clusterspec)
+
+| Field | Description | Required | Default | Validation |
+| --- | --- | --- | --- | --- |
+| `targets` _[MetadataPropagationTarget](#metadatapropagationtarget) array_ | The kinds of objects the rule applies to | True |  | Enum: [all allPods pgPods majorUpgradePods poolerPods poolerDeployments services persistentVolumeClaims secrets podDisruptionBudgets backups volumeSnapshots] <br />MaxItems: 12 <br />MinItems: 1 <br /> |
+| `labels` _object (keys:string, values:string)_ | Labels to put on the objects. The labels the operator sets itself are<br />never taken from here |  |  |  |
+| `annotations` _object (keys:string, values:string)_ | Annotations to put on the objects. The annotations the operator sets<br />itself are never taken from here |  |  |  |
+
+
+#### MetadataPropagationTarget
+
+_Underlying type:_ _string_
+
+MetadataPropagationTarget is a kind of object a metadata propagation rule
+applies to
+
+_Validation:_
+
+- Enum: [all allPods pgPods majorUpgradePods poolerPods poolerDeployments services persistentVolumeClaims secrets podDisruptionBudgets backups volumeSnapshots]
+
+_Appears in:_
+
+- [MetadataPropagationRule](#metadatapropagationrule)
+
 
 
 #### MonitoringConfiguration

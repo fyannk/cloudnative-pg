@@ -235,3 +235,41 @@ var _ = DescribeTable("Recognizing the keys the operator sets itself",
 	Entry("the legacy EDB domain", "k8s.enterprisedb.io/cluster", false),
 	Entry("an empty key", "", false),
 )
+
+var _ = Describe("Setting labels and annotations on an object", func() {
+	It("adds and replaces keys, keeping the other ones", func() {
+		meta := metav1.ObjectMeta{
+			Labels:      map[string]string{"kept": "1", "replaced": "old"},
+			Annotations: map[string]string{"kept": "1", "replaced": "old"},
+		}
+		SetLabels(&meta, map[string]string{"replaced": "new", "added": "2"})
+		SetAnnotations(&meta, map[string]string{"replaced": "new", "added": "2"})
+		expected := map[string]string{"kept": "1", "replaced": "new", "added": "2"}
+		Expect(meta.Labels).To(Equal(expected))
+		Expect(meta.Annotations).To(Equal(expected))
+	})
+
+	It("creates the maps of an object that has none", func() {
+		var meta metav1.ObjectMeta
+		SetLabels(&meta, map[string]string{"a": "1"})
+		SetAnnotations(&meta, map[string]string{"b": "2"})
+		Expect(meta.Labels).To(Equal(map[string]string{"a": "1"}))
+		Expect(meta.Annotations).To(Equal(map[string]string{"b": "2"}))
+	})
+
+	It("accepts nothing to set", func() {
+		var meta metav1.ObjectMeta
+		SetLabels(&meta, nil)
+		SetAnnotations(&meta, map[string]string{})
+		Expect(meta.Labels).To(BeEmpty())
+		Expect(meta.Annotations).To(BeEmpty())
+	})
+
+	It("does not keep a reference to the passed map", func() {
+		source := map[string]string{"a": "1"}
+		var meta metav1.ObjectMeta
+		SetLabels(&meta, source)
+		source["a"] = "changed"
+		Expect(meta.Labels).To(HaveKeyWithValue("a", "1"))
+	})
+})
