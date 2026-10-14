@@ -27,6 +27,7 @@ import (
 
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/certs"
+	"github.com/cloudnative-pg/cloudnative-pg/pkg/metadatarules"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/utils"
 )
 
@@ -63,6 +64,7 @@ func (c PoolerPodMonitorManager) BuildPodMonitor() *monitoringv1.PodMonitor {
 	}
 
 	utils.SetAsOwnedBy(&meta, c.pooler.ObjectMeta, c.pooler.TypeMeta)
+	c.pooler.ApplyMetadataTo(&meta, metadatarules.All)
 
 	metricsPort := "metrics"
 	endpoint := monitoringv1.PodMetricsEndpoint{
