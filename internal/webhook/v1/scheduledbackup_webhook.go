@@ -33,6 +33,7 @@ import (
 
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
 	"github.com/cloudnative-pg/cloudnative-pg/internal/webhook/guard"
+	"github.com/cloudnative-pg/cloudnative-pg/pkg/metadatarules"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/utils"
 )
 
@@ -174,6 +175,14 @@ func (v *ScheduledBackupCustomValidator) validate(r *apiv1.ScheduledBackup) (adm
 			"OnlineConfiguration parameter can be specified only if the method is volumeSnapshot",
 		))
 	}
+
+	metadataErrs, metadataWarnings := validateMetadataPropagation(r.Spec.MetadataPropagation,
+		apiv1.ScheduledBackupMetadataTargets)
+	result = append(result, metadataErrs...)
+	warnings = append(warnings, metadataWarnings...)
+	warnings = append(warnings, getReplacedByMandatoryWarnings(metadatarules.ScheduledBackupResource,
+		apiv1.ScheduledBackupMetadataTargets,
+		r.GetScheduledBackupLabelsFor, r.GetScheduledBackupAnnotationsFor)...)
 
 	return warnings, result
 }

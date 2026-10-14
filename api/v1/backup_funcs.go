@@ -33,6 +33,7 @@ import (
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/cloudnative-pg/cloudnative-pg/pkg/metadatarules"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/utils"
 )
 
@@ -348,4 +349,35 @@ func (backup *Backup) GetAdmissionError() string {
 		return backup.Status.Error
 	}
 	return ""
+}
+
+// BackupMetadataTargets are the kinds of objects the metadataPropagation
+// rules of a Backup can target: the objects it creates
+var BackupMetadataTargets = metadatarules.BackupResource.Targets()
+
+// GetMetadataRules compiles the metadataPropagation rules of the Backup.
+// The webhook reports their problems; the valid part of the rules applies
+func (backup *Backup) GetMetadataRules() metadatarules.Set {
+	set, _ := metadatarules.Compile(ToMetadataRules(backup.Spec.MetadataPropagation), BackupMetadataTargets)
+	return set
+}
+
+// ApplyMetadataTo stacks, on the metadata of an object of the Backup of a
+// kind, the default metadata of the operator below the labels and
+// annotations the object already has, and the rules of the Backup and the
+// mandatory metadata of the operator above them
+func (backup *Backup) ApplyMetadataTo(meta *metav1.ObjectMeta, target metadatarules.Target) {
+	applyMetadataRules(meta, metadatarules.BackupResource, backup.GetMetadataRules(), target)
+}
+
+// GetBackupLabelsFor gets the labels the rules of the Backup set on a kind
+// of object
+func (backup *Backup) GetBackupLabelsFor(target metadatarules.Target) map[string]string {
+	return backup.GetMetadataRules().Labels(target)
+}
+
+// GetBackupAnnotationsFor gets the annotations the rules of the Backup set
+// on a kind of object
+func (backup *Backup) GetBackupAnnotationsFor(target metadatarules.Target) map[string]string {
+	return backup.GetMetadataRules().Annotations(target)
 }

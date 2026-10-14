@@ -79,6 +79,62 @@ spec:
                 description: If the first backup has to be immediately start after
                   creation or not
                 type: boolean
+              metadataPropagation:
+                description: |-
+                  Labels and annotations to put on the Backups the ScheduledBackup
+                  creates
+                items:
+                  description: |-
+                    MetadataPropagationRule puts labels and annotations on the objects of the
+                    targeted kinds. When several rules give the same key to an object, the
+                    most specific target wins: a kind of Pod over allPods, any kind over all
+                  properties:
+                    annotations:
+                      additionalProperties:
+                        type: string
+                      description: |-
+                        Annotations to put on the objects. The annotations the operator sets
+                        itself are never taken from here
+                      type: object
+                    labels:
+                      additionalProperties:
+                        type: string
+                      description: |-
+                        Labels to put on the objects. The labels the operator sets itself are
+                        never taken from here
+                      type: object
+                    targets:
+                      description: The kinds of objects the rule applies to
+                      items:
+                        description: |-
+                          MetadataPropagationTarget is a kind of object a metadata propagation rule
+                          applies to
+                        enum:
+                        - all
+                        - allPods
+                        - pgPods
+                        - majorUpgradePods
+                        - poolerPods
+                        - poolerDeployments
+                        - services
+                        - persistentVolumeClaims
+                        - secrets
+                        - podDisruptionBudgets
+                        - backups
+                        - volumeSnapshots
+                        type: string
+                      maxItems: 12
+                      minItems: 1
+                      type: array
+                      x-kubernetes-list-type: set
+                  required:
+                  - targets
+                  type: object
+                maxItems: 64
+                type: array
+                x-kubernetes-validations:
+                - message: a ScheduledBackup accepts the target backups
+                  rule: self.all(r, r.targets.all(t, t in ['backups']))
               method:
                 default: barmanObjectStore
                 description: |-

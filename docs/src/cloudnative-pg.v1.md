@@ -249,6 +249,7 @@ _Appears in:_
 | `pluginConfiguration` _[BackupPluginConfiguration](#backuppluginconfiguration)_ | Configuration parameters passed to the plugin managing this backup |  |  |  |
 | `online` _boolean_ | Whether the default type of backup with volume snapshots is<br />online/hot (`true`, default) or offline/cold (`false`)<br />Overrides the default setting specified in the cluster field '.spec.backup.volumeSnapshot.online' |  |  |  |
 | `onlineConfiguration` _[OnlineConfiguration](#onlineconfiguration)_ | Configuration parameters to control the online/hot backup with volume snapshots<br />Overrides the default settings specified in the cluster '.backup.volumeSnapshot.onlineConfiguration' stanza |  |  |  |
+| `metadataPropagation` _[MetadataPropagationRule](#metadatapropagationrule) array_ | Labels and annotations to put on the VolumeSnapshots of the Backup,<br />on top of those of their PVC and of the volume snapshot settings of<br />the Cluster |  |  | MaxItems: 64 <br /> |
 
 
 #### BackupStatus
@@ -1729,8 +1730,10 @@ most specific target wins: a kind of Pod over allPods, any kind over all
 
 _Appears in:_
 
+- [BackupSpec](#backupspec)
 - [ClusterSpec](#clusterspec)
 - [PoolerSpec](#poolerspec)
+- [ScheduledBackupSpec](#scheduledbackupspec)
 
 | Field | Description | Required | Default | Validation |
 | --- | --- | --- | --- | --- |
@@ -2811,6 +2814,7 @@ _Appears in:_
 | `pluginConfiguration` _[BackupPluginConfiguration](#backuppluginconfiguration)_ | Configuration parameters passed to the plugin managing this backup |  |  |  |
 | `online` _boolean_ | Whether the default type of backup with volume snapshots is<br />online/hot (`true`, default) or offline/cold (`false`)<br />Overrides the default setting specified in the cluster field '.spec.backup.volumeSnapshot.online' |  |  |  |
 | `onlineConfiguration` _[OnlineConfiguration](#onlineconfiguration)_ | Configuration parameters to control the online/hot backup with volume snapshots<br />Overrides the default settings specified in the cluster '.backup.volumeSnapshot.onlineConfiguration' stanza |  |  |  |
+| `metadataPropagation` _[MetadataPropagationRule](#metadatapropagationrule) array_ | Labels and annotations to put on the Backups the ScheduledBackup<br />creates |  |  | MaxItems: 64 <br /> |
 
 
 #### ScheduledBackupStatus

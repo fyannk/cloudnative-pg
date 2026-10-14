@@ -32,6 +32,7 @@ import (
 
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
 	"github.com/cloudnative-pg/cloudnative-pg/internal/webhook/guard"
+	"github.com/cloudnative-pg/cloudnative-pg/pkg/metadatarules"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/utils"
 )
 
@@ -84,12 +85,13 @@ type BackupCustomValidator struct{}
 func (v *BackupCustomValidator) ValidateCreate(_ context.Context, backup *apiv1.Backup) (admission.Warnings, error) {
 	backupLog.Info("Validation for Backup upon creation", "name", backup.GetName(), "namespace", backup.GetNamespace())
 
+	warnings := v.getAdmissionWarnings(backup)
 	allErrs := v.validate(backup)
 	if len(allErrs) == 0 {
-		return nil, nil
+		return warnings, nil
 	}
 
-	return nil, apierrors.NewInvalid(
+	return warnings, apierrors.NewInvalid(
 		schema.GroupKind{Group: apiv1.SchemeGroupVersion.Group, Kind: "Backup"},
 		backup.Name, allErrs)
 }
@@ -101,12 +103,13 @@ func (v *BackupCustomValidator) ValidateUpdate(
 ) (admission.Warnings, error) {
 	backupLog.Info("Validation for Backup upon update", "name", backup.GetName(), "namespace", backup.GetNamespace())
 
+	warnings := v.getAdmissionWarnings(backup)
 	allErrs := v.validate(backup)
 	if len(allErrs) == 0 {
-		return nil, nil
+		return warnings, nil
 	}
 
-	return nil, apierrors.NewInvalid(
+	return warnings, apierrors.NewInvalid(
 		schema.GroupKind{Group: apiv1.SchemeGroupVersion.Group, Kind: "Backup"},
 		backup.Name, allErrs)
 }
@@ -169,5 +172,14 @@ func (v *BackupCustomValidator) validate(r *apiv1.Backup) field.ErrorList {
 		}
 	}
 
+	metadataErrs, _ := validateMetadataPropagation(r.Spec.MetadataPropagation, apiv1.BackupMetadataTargets)
+	result = append(result, metadataErrs...)
+
 	return result
+}
+
+func (v *BackupCustomValidator) getAdmissionWarnings(r *apiv1.Backup) admission.Warnings {
+	_, warnings := validateMetadataPropagation(r.Spec.MetadataPropagation, apiv1.BackupMetadataTargets)
+	return append(warnings, getReplacedByMandatoryWarnings(metadatarules.BackupResource, apiv1.BackupMetadataTargets,
+		r.GetBackupLabelsFor, r.GetBackupAnnotationsFor)...)
 }

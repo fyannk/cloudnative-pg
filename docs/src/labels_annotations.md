@@ -460,6 +460,33 @@ role binding get their metadata when they are created. A change of the
 metadata of the pods rolls them out, as any change of the pod template does.
 A service account named in `serviceAccountName` is left untouched.
 
+A scheduled backup takes rules for the `backups` target, put on the backups
+it creates, on top of its annotations selected by `INHERITED_ANNOTATIONS`. A
+backup takes rules for the `volumeSnapshots` target, put on its volume
+snapshots, on top of the metadata they get from their PVC, from the
+`backup.volumeSnapshot` labels and annotations of the cluster, and, when the
+cluster owns them, from the cluster:
+
+```yaml
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: backup-example
+spec:
+  schedule: "0 0 0 * * *"
+  method: volumeSnapshot
+  cluster:
+    name: cluster-example
+  metadataPropagation:
+    - targets: [backups]
+      labels:
+        retention: daily
+```
+
+Backups and volume snapshots get their metadata when they are created. The
+backups created by a scheduled backup carry no rule of their own: their
+volume snapshots get the default and mandatory metadata only.
+
 ## Default and mandatory labels and annotations
 
 Two settings of the [operator configuration](operator_conf.md) put labels and
@@ -557,7 +584,8 @@ On a given object, by increasing precedence:
 2. the metadata set by the resource: `inheritedMetadata` and the cluster's own
    labels and annotations selected by `INHERITED_LABELS` and
    `INHERITED_ANNOTATIONS` for a cluster, the pod and service templates for a
-   pooler, then its `metadataPropagation` rules
+   pooler, the PVC and the volume snapshot settings of the cluster for a
+   volume snapshot, then the `metadataPropagation` rules of the resource
 3. `MANDATORY_METADATA`
 
 The rules cannot target the labels and annotations the operator sets itself

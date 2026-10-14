@@ -23,6 +23,7 @@ import (
 	"fmt"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
 	"github.com/cloudnative-pg/cloudnative-pg/internal/configuration"
@@ -335,6 +336,141 @@ var _ = Describe("The metadataPropagation rules of a Pooler", func() {
 			v := &PoolerCustomValidator{}
 			Expect(v.getAdmissionWarnings(pooler(map[string]string{"team": "mine"}))).To(
 				ContainElement(replaced("label", "team", "mine", "platform", "poolerPods")))
+		})
+	})
+})
+
+var _ = Describe("The metadataPropagation rules of a ScheduledBackup and of a Backup", func() {
+	rule := func(labels, annotations map[string]string, targets ...apiv1.MetadataPropagationTarget,
+	) apiv1.MetadataPropagationRule {
+		return apiv1.MetadataPropagationRule{Targets: targets, Labels: labels, Annotations: annotations}
+	}
+	mandatory := func(yaml string) {
+		configuration.Current.MandatoryMetadata = yaml
+		Expect(configuration.Current.ParseDefaultAndMandatoryMetadata()).To(Succeed())
+	}
+	replaced := func(resource, kind, key, value, imposed, target string) string {
+		return fmt.Sprintf("%s %q: %q set on this %s is replaced with %q by MANDATORY_METADATA on %s",
+			kind, key, value, resource, imposed, target)
+	}
+	scheduledBackup := func(rules ...apiv1.MetadataPropagationRule) *apiv1.ScheduledBackup {
+		return &apiv1.ScheduledBackup{
+			ObjectMeta: metav1.ObjectMeta{Name: "nightly"},
+			Spec: apiv1.ScheduledBackupSpec{
+				Schedule:            "0 0 0 * * *",
+				Cluster:             apiv1.LocalObjectReference{Name: "payments"},
+				MetadataPropagation: rules,
+			},
+		}
+	}
+	backup := func(rules ...apiv1.MetadataPropagationRule) *apiv1.Backup {
+		return &apiv1.Backup{
+			ObjectMeta: metav1.ObjectMeta{Name: "nightly"},
+			Spec: apiv1.BackupSpec{
+				Cluster:             apiv1.LocalObjectReference{Name: "payments"},
+				Method:              apiv1.BackupMethodBarmanObjectStore,
+				MetadataPropagation: rules,
+			},
+		}
+	}
+
+	BeforeEach(func() {
+		previous := configuration.Current
+		configuration.Current = configuration.NewConfiguration()
+		DeferCleanup(func() { configuration.Current = previous })
+	})
+
+	Context("a ScheduledBackup", func() {
+		It("accepts the target backups only", func(ctx SpecContext) {
+			v := &ScheduledBackupCustomValidator{}
+			warnings, err := v.ValidateCreate(ctx, scheduledBackup(rule(map[string]string{"a": "1"}, nil, "backups")))
+			Expect(err).ToNot(HaveOccurred())
+			Expect(warnings).To(BeEmpty())
+
+			_, err = v.ValidateCreate(ctx, scheduledBackup(rule(map[string]string{"a": "1"}, nil, "backups", "all")))
+			Expect(err).To(MatchError(ContainSubstring("spec.metadataPropagation[0].targets[1]")))
+		})
+
+		It("warns about the keys of the operator and the values replaced by the mandatory metadata",
+			func(ctx SpecContext) {
+				mandatory(`[{"targets": ["all"], "labels": {"team": "platform"}}]`)
+				warnings, err := (&ScheduledBackupCustomValidator{}).ValidateCreate(ctx, scheduledBackup(
+					rule(map[string]string{"team": "mine", "cnpg.io/cluster": "x"}, nil, "backups")))
+				Expect(err).ToNot(HaveOccurred())
+				Expect(warnings).To(ContainElements(
+					ContainSubstring(`spec.metadataPropagation[0].labels[cnpg.io/cluster]`),
+					replaced("ScheduledBackup", "label", "team", "mine", "platform", "backups"),
+				))
+			})
+
+		It("only sees the mandatory rules reaching its Backups", func(ctx SpecContext) {
+			mandatory(`[{"resources": ["Backup"], "targets": ["all"], "labels": {"team": "snapshots"}},
+				{"resources": ["ScheduledBackup"], "targets": ["all"], "labels": {"team": "platform"}}]`)
+			warnings, err := (&ScheduledBackupCustomValidator{}).ValidateCreate(ctx, scheduledBackup(
+				rule(map[string]string{"team": "mine"}, nil, "backups")))
+			Expect(err).ToNot(HaveOccurred())
+			Expect(warnings).To(Equal(admission.Warnings{
+				replaced("ScheduledBackup", "label", "team", "mine", "platform", "backups"),
+			}))
+		})
+
+		It("sees the annotations selected by INHERITED_ANNOTATIONS", func(ctx SpecContext) {
+			configuration.Current.InheritedAnnotations = []string{"note"}
+			mandatory(`[{"targets": ["backups"], "annotations": {"note": "platform"}}]`)
+			sb := scheduledBackup()
+			sb.Annotations = map[string]string{"note": "mine"}
+			warnings, err := (&ScheduledBackupCustomValidator{}).ValidateCreate(ctx, sb)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(warnings).To(ContainElement(
+				replaced("ScheduledBackup", "annotation", "note", "mine", "platform", "backups")))
+		})
+	})
+
+	Context("a Backup", func() {
+		It("accepts the target volumeSnapshots only", func(ctx SpecContext) {
+			v := &BackupCustomValidator{}
+			warnings, err := v.ValidateCreate(ctx, backup(rule(map[string]string{"a": "1"}, nil, "volumeSnapshots")))
+			Expect(err).ToNot(HaveOccurred())
+			Expect(warnings).To(BeEmpty())
+
+			_, err = v.ValidateCreate(ctx, backup(rule(map[string]string{"a": "1"}, nil, "backups")))
+			Expect(err).To(MatchError(ContainSubstring("spec.metadataPropagation[0].targets[0]")))
+		})
+
+		It("only sees the mandatory rules reaching its VolumeSnapshots", func(ctx SpecContext) {
+			mandatory(`[{"resources": ["Cluster", "ScheduledBackup"], "targets": ["all"], "labels": {"team": "x"}},
+				{"resources": ["Backup"], "targets": ["volumeSnapshots"], "labels": {"team": "platform"}}]`)
+			warnings, err := (&BackupCustomValidator{}).ValidateCreate(ctx, backup(
+				rule(map[string]string{"team": "mine"}, nil, "volumeSnapshots")))
+			Expect(err).ToNot(HaveOccurred())
+			Expect(warnings).To(Equal(admission.Warnings{
+				replaced("Backup", "label", "team", "mine", "platform", "volumeSnapshots"),
+			}))
+		})
+
+		It("warns, on creation and on update, about the keys of the operator and the replaced values",
+			func(ctx SpecContext) {
+				mandatory(`[{"targets": ["volumeSnapshots"], "annotations": {"owner": "platform"}}]`)
+				b := backup(rule(map[string]string{"cnpg.io/backupName": "x"},
+					map[string]string{"owner": "mine"}, "volumeSnapshots"))
+				expected := []any{
+					ContainSubstring(`spec.metadataPropagation[0].labels[cnpg.io/backupName]`),
+					Equal(replaced("Backup", "annotation", "owner", "mine", "platform", "volumeSnapshots")),
+				}
+				v := &BackupCustomValidator{}
+				warnings, err := v.ValidateCreate(ctx, b)
+				Expect(err).ToNot(HaveOccurred())
+				Expect(warnings).To(ContainElements(expected...))
+				warnings, err = v.ValidateUpdate(ctx, b, b)
+				Expect(err).ToNot(HaveOccurred())
+				Expect(warnings).To(ContainElements(expected...))
+			})
+
+		It("returns the warnings with the errors", func(ctx SpecContext) {
+			b := backup(rule(map[string]string{"cnpg.io/backupName": "x", "bad key": "x"}, nil, "volumeSnapshots"))
+			warnings, err := (&BackupCustomValidator{}).ValidateCreate(ctx, b)
+			Expect(err).To(MatchError(ContainSubstring("spec.metadataPropagation[0].labels[bad key]")))
+			Expect(warnings).To(ContainElement(ContainSubstring("cnpg.io/backupName")))
 		})
 	})
 })
