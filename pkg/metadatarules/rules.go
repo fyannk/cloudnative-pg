@@ -135,7 +135,8 @@ type Problem struct {
 	// Field is "targets", "labels" or "annotations"
 	Field string
 
-	// Target is the index of the target in the targets of the rule, or -1
+	// Target is the index of the target in the targets of the rule, or of
+	// the resource in its resources, or -1
 	Target int
 
 	// Key is the label or annotation key, if any
@@ -178,6 +179,18 @@ type Set struct {
 // sets itself is ignored. The Set holds every valid key, so that the valid
 // part of the rules still applies
 func Compile(rules []Rule, allowed []Target) (Set, []Problem) {
+	return compile(rules, func(_ int, target Target) (bool, string) {
+		if slices.Contains(allowed, target) {
+			return true, ""
+		}
+		return false, fmt.Sprintf("target %q not available here, expected one of %v", target, allowed)
+	})
+}
+
+// compile checks and resolves a list of rules. For each known target of a
+// rule, accept tells whether the rule applies to it, and why not when that
+// is a problem: a target skipped without a reason is left out silently
+func compile(rules []Rule, accept func(rule int, target Target) (bool, string)) (Set, []Problem) {
 	var problems []Problem
 	set := Set{labels: map[Target]map[string]string{}, annotations: map[Target]map[string]string{}}
 	labelSources := map[Target]map[string]int{}
@@ -193,19 +206,21 @@ func Compile(rules []Rule, allowed []Target) (Set, []Problem) {
 
 		var targets []Target
 		for j, target := range rule.Targets {
-			switch {
-			case !slices.Contains(Targets, target):
+			if !slices.Contains(Targets, target) {
 				problems = append(problems, Problem{
 					Rule: i, Field: "targets", Target: j, Severity: Invalid,
 					Message: fmt.Sprintf("unknown target %q, expected one of %v", target, Targets),
 				})
-			case !slices.Contains(allowed, target):
-				problems = append(problems, Problem{
-					Rule: i, Field: "targets", Target: j, Severity: Invalid,
-					Message: fmt.Sprintf("target %q not available here, expected one of %v", target, allowed),
-				})
-			default:
+				continue
+			}
+			accepted, refusal := accept(i, target)
+			switch {
+			case accepted:
 				targets = append(targets, target)
+			case refusal != "":
+				problems = append(problems, Problem{
+					Rule: i, Field: "targets", Target: j, Severity: Invalid, Message: refusal,
+				})
 			}
 		}
 
