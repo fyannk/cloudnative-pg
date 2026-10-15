@@ -183,6 +183,113 @@ spec:
     the `serverName` value should be in the format `<cluster-name>-rw`.
 :::
 
+### Collecting metrics and logs without the Prometheus Operator
+
+The operator can annotate the instance pods and the pooler pods with what a
+monitoring agent needs to collect their metrics, and their logs: the metrics
+port, path and scheme, and the container writing the JSON logs. The
+[operator configuration](operator_conf.md) setting
+`MONITORING_DISCOVERY_ANNOTATIONS`, empty by default, is a comma-separated
+list of the families of annotations to set:
+
+- `prometheus`: the `prometheus.io/*` annotations, read by the
+  `kubernetes-pods` scrape jobs of Prometheus and of many agents
+- `opentelemetry`: the `io.opentelemetry.discovery.*` hints, read by the
+  `receiver_creator` of the OpenTelemetry Collector
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cnpg-controller-manager-config
+  namespace: cnpg-system
+data:
+  MONITORING_DISCOVERY_ANNOTATIONS: "opentelemetry"
+```
+
+With `prometheus`, an instance pod gets:
+
+```yaml
+prometheus.io/scrape: "true"
+prometheus.io/port: "9187"
+prometheus.io/path: /metrics
+prometheus.io/scheme: http   # https with .spec.monitoring.tls.enabled
+```
+
+With `opentelemetry`, an instance pod gets the metrics of port 9187, scraped
+by the `prometheus` receiver, and the logs of the `postgres` container,
+parsed as JSON:
+
+```yaml
+io.opentelemetry.discovery.metrics.9187/enabled: "true"
+io.opentelemetry.discovery.metrics.9187/scraper: prometheus
+io.opentelemetry.discovery.metrics.9187/config: |
+  config:
+    scrape_configs:
+      - job_name: cloudnative-pg
+        metrics_path: /metrics
+        scheme: http
+        static_configs:
+          - targets: ["`endpoint`"]
+io.opentelemetry.discovery.logs.postgres/enabled: "true"
+io.opentelemetry.discovery.logs.postgres/config: |
+  operators:
+    - type: container
+      id: container-parser
+    - type: json_parser
+```
+
+With `.spec.monitoring.tls.enabled`, the scheme is `https` and the scrape
+configuration skips the verification of the certificate, which does not
+cover the pod IP, as the `PodMonitor` of the operator did:
+
+```yaml
+        scheme: https
+        tls_config:
+          insecure_skip_verify: true
+```
+
+A pooler pod gets the same annotations with the PgBouncer metrics port, 9127,
+the job name `cloudnative-pg-pooler`, the `pgbouncer` container, and the
+`.spec.monitoring.tls.enabled` setting of the pooler.
+
+These annotations describe what the pods serve: they win over the annotations
+set by the `Cluster` or the `Pooler`, and over `MANDATORY_METADATA`, and
+the webhook warns when a value set by the resource is replaced. They follow
+the metrics TLS setting of each `Cluster` and `Pooler`. Services never get
+them, so that no agent scrapes a pod again through a service. The instance
+pods are updated in place; the pooler pods get them through the pod template
+of their deployment, so each pooler rolls out once when the setting changes.
+As for the inherited metadata, removing a family does not remove its
+annotations from the existing instance pods.
+
+:::warning[Status of the OpenTelemetry hints]
+    The `io.opentelemetry.discovery.*` hints are defined by the
+    [`receiver_creator`](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/receiver/receivercreator),
+    beta for metrics and alpha for logs, which needs the
+    [`k8s_observer`](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/extension/observer/k8sobserver),
+    alpha. Their names could still change; the operator follows them.
+:::
+
+The annotations do nothing alone. The collecting side needs:
+
+- for `prometheus`: a scrape job reading the `prometheus.io/*` annotations of
+  the pods and, with TLS, `insecure_skip_verify` or the cluster CA in that
+  job, since `prometheus.io/scheme` carries no TLS setting
+- for `opentelemetry`: a collector with the `receiver_creator`, with
+  `discovery.enabled: true`, and the `k8s_observer`, with read access to the
+  pods; for the logs, a DaemonSet with the observer limited to its node and
+  `/var/log/pods` mounted read-only. The `presets.annotationDiscovery` of the
+  `opentelemetry-collector` Helm chart, in `daemonset` mode, sets all of
+  these. The metrics hints need the collector v0.115.0 or later, the logs
+  hints v0.117.0, the nested configuration of the `prometheus` receiver
+  v0.139.0; v0.161.0 or later is recommended, as it stops a logs
+  configuration from reaching other pods.
+
+Enable one family per agent, and do not combine them with a `PodMonitor` on
+the same pods: an agent reading both, or a `PodMonitor` next to them, scrapes
+each pod twice.
+
 ### Predefined set of metrics
 
 Every PostgreSQL instance exporter automatically exposes a set of predefined
