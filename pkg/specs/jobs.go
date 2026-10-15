@@ -444,6 +444,7 @@ func CreatePrimaryJob(
 					Labels: map[string]string{
 						utils.InstanceNameLabelName:           instanceName,
 						utils.ClusterLabelName:                cluster.Name,
+						utils.ReconcileLabelName:              "true",
 						utils.JobRoleLabelName:                string(role),
 						utils.KubernetesAppLabelName:          utils.AppName,
 						utils.KubernetesAppInstanceLabelName:  cluster.Name,

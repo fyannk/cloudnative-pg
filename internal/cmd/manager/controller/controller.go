@@ -50,6 +50,7 @@ import (
 	schemeBuilder "github.com/cloudnative-pg/cloudnative-pg/internal/scheme"
 	webhookv1 "github.com/cloudnative-pg/cloudnative-pg/internal/webhook/v1"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/certs"
+	"github.com/cloudnative-pg/cloudnative-pg/pkg/filteredcache"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/multicache"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/operatormetrics"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/utils"
@@ -93,6 +94,55 @@ type leaderElectionConfiguration struct {
 	enable        bool
 	leaseDuration time.Duration
 	renewDeadline time.Duration
+}
+
+// cacheOptions returns the options of the manager cache: which objects of
+// each kind are listed and watched, and what is stripped from them before
+// they are stored. They apply to the cluster-wide cache and to the
+// per-namespace caches alike.
+func cacheOptions(conf *configuration.Data) cache.Options {
+	cacheFilters := map[client.Object]cache.ByObject{
+		// Helm stores each release revision as a Secret containing the full
+		// (compressed, base64-encoded) manifest. These can be large, and
+		// CNPG has no use for them, but the default cache would otherwise
+		// list, watch, and store every one of them in every watched
+		// namespace. Excluding them at the informer level, rather than via
+		// a controller predicate, means they never get listed/watched/stored
+		// at all.
+		&corev1.Secret{}: {
+			Field: fields.OneTermNotEqualSelector("type", string(helmReleaseSecretType)),
+		},
+	}
+
+	// EndpointSlices are watched only to detect CNPG-i plugin rollouts, and
+	// plugins are deployed in the operator namespace. Restricting the informer
+	// to that namespace avoids listing and watching every EndpointSlice in the
+	// cluster (one or more per Service in every namespace), which would
+	// otherwise be cached just to be dropped by the controller predicate.
+	//
+	// The restriction is only applied when the operator namespace is known: an
+	// empty namespace key is interpreted by controller-runtime as "all
+	// namespaces", which would silently widen the cache instead of narrowing
+	// it. When the namespace is unknown (e.g. local development without
+	// OPERATOR_NAMESPACE set) we simply fall back to the default (unrestricted)
+	// EndpointSlice caching.
+	if conf.OperatorNamespace != "" {
+		cacheFilters[&discoveryv1.EndpointSlice{}] = cache.ByObject{
+			Namespaces: map[string]cache.Config{
+				conf.OperatorNamespace: {},
+			},
+		}
+	} else {
+		setupLog.Info("Plugin EndpointSlice watch disabled: OPERATOR_NAMESPACE not set")
+	}
+
+	return cache.Options{
+		ByObject: cacheFilters,
+		// The operator never reads metadata.managedFields, and they are often
+		// the largest part of a cached object's metadata: drop them before
+		// the object is stored.
+		DefaultTransform: cache.TransformStripManagedFields(),
+	}
 }
 
 // RunController is the main procedure of the operator, and is used as the
@@ -195,42 +245,24 @@ func RunController(
 		LeaderElectionReleaseOnCancel: true,
 	}
 
-	cacheFilters := map[client.Object]cache.ByObject{
-		// Helm stores each release revision as a Secret containing the full
-		// (compressed, base64-encoded) manifest. These can be large, and
-		// CNPG has no use for them, but the default cache would otherwise
-		// list, watch, and store every one of them in every watched
-		// namespace. Excluding them at the informer level, rather than via
-		// a controller predicate, means they never get listed/watched/stored
-		// at all.
-		&corev1.Secret{}: {
-			Field: fields.OneTermNotEqualSelector("type", string(helmReleaseSecretType)),
-		},
+	cacheMode, err := filteredcache.ParseMode(conf.FilteredCacheMode)
+	if err != nil {
+		setupLog.Error(err, "invalid operator configuration")
+		return err
 	}
 
-	// EndpointSlices are watched only to detect CNPG-i plugin rollouts, and
-	// plugins are deployed in the operator namespace. Restricting the informer
-	// to that namespace avoids listing and watching every EndpointSlice in the
-	// cluster (one or more per Service in every namespace), which would
-	// otherwise be cached just to be dropped by the controller predicate.
-	//
-	// The restriction is only applied when the operator namespace is known: an
-	// empty namespace key is interpreted by controller-runtime as "all
-	// namespaces", which would silently widen the cache instead of narrowing
-	// it. When the namespace is unknown (e.g. local development without
-	// OPERATOR_NAMESPACE set) we simply fall back to the default (unrestricted)
-	// EndpointSlice caching.
-	if conf.OperatorNamespace != "" {
-		cacheFilters[&discoveryv1.EndpointSlice{}] = cache.ByObject{
-			Namespaces: map[string]cache.Config{
-				conf.OperatorNamespace: {},
-			},
-		}
-	} else {
-		setupLog.Info("Plugin EndpointSlice watch disabled: OPERATOR_NAMESPACE not set")
+	// The optional kinds are cached only when their API passed the startup probe
+	cacheFilter := filteredcache.Options{
+		Mode:               cacheMode,
+		OperatorNamespace:  conf.OperatorNamespace,
+		HavePodMonitor:     conf.APIPodMonitorEnabled,
+		HaveVolumeSnapshot: conf.APIVolumeSnapshotEnabled,
 	}
-
-	managerOptions.Cache = cache.Options{ByObject: cacheFilters}
+	if conf.WatchNamespace != "" {
+		cacheFilter.WatchedNamespaces = conf.WatchedNamespaces()
+	}
+	setupLog.Info("Operator cache", "filteredCacheMode", cacheMode)
+	managerOptions.Cache = filteredcache.Apply(cacheOptions(conf), cacheFilter)
 
 	if conf.WatchNamespace != "" {
 		namespaces := conf.WatchedNamespaces()
@@ -291,9 +323,38 @@ func RunController(
 	}
 	defer pluginRepository.Close()
 
+	reloadWatch, err := filteredcache.NewReloadWatch(mgr.GetConfig(), filteredcache.ReloadWatchConfig{
+		HTTPClient: mgr.GetHTTPClient(),
+		Scheme:     mgr.GetScheme(),
+		Mapper:     mgr.GetRESTMapper(),
+	}, cacheFilter)
+	if err != nil {
+		setupLog.Error(err, "unable to create the reload metadata cache")
+		return err
+	}
+	if reloadWatch != nil {
+		if err := mgr.Add(reloadWatch); err != nil {
+			setupLog.Error(err, "unable to add the reload metadata cache to the manager")
+			return err
+		}
+	}
+
+	if err := registerCacheMetrics(mgr, cacheFilter, reloadWatch); err != nil {
+		setupLog.Error(err, "unable to register the operator cache metrics")
+		return err
+	}
+
+	reconcilerClient, err := filteredcache.NewClient(mgr.GetClient(), mgr.GetAPIReader(), mgr.GetScheme(), cacheFilter)
+	if err != nil {
+		setupLog.Error(err, "unable to create the operator client")
+		return err
+	}
+
 	if err = setupReconcilers(
 		ctx,
 		mgr,
+		reconcilerClient,
+		reloadWatch,
 		discoveryClient,
 		pluginRepository,
 		operatorClientCert,
@@ -322,25 +383,31 @@ func RunController(
 func setupReconcilers(
 	ctx context.Context,
 	mgr ctrl.Manager,
+	c client.Client,
+	reloadWatch *filteredcache.ReloadWatch,
 	discoveryClient discovery.DiscoveryInterface,
 	pluginRepository repository.Interface,
 	operatorClientCert *tls.Certificate,
 	conf *configuration.Data,
 	maxConcurrentReconciles int,
 ) error {
-	if err := controller.NewClusterReconciler(
+	clusterReconciler := controller.NewClusterReconciler(
 		mgr,
+		c,
 		pluginRepository,
 		conf.DrainTaints,
 		operatorClientCert,
 		webhookv1.NewClusterAdmissionGuard(),
-	).SetupWithManager(ctx, mgr, maxConcurrentReconciles); err != nil {
+	)
+	clusterReconciler.ReloadWatch = reloadWatch
+	if err := clusterReconciler.SetupWithManager(ctx, mgr, maxConcurrentReconciles); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Cluster")
 		return err
 	}
 
 	if err := controller.NewBackupReconciler(
 		mgr,
+		c,
 		discoveryClient,
 		pluginRepository,
 		operatorClientCert,
@@ -350,14 +417,14 @@ func setupReconcilers(
 		return err
 	}
 
-	if err := controller.NewPluginReconciler(mgr, conf.OperatorNamespace, pluginRepository).
+	if err := controller.NewPluginReconciler(mgr, c, conf.OperatorNamespace, pluginRepository).
 		SetupWithManager(mgr, maxConcurrentReconciles); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Plugin")
 		return err
 	}
 
 	if err := (&controller.ScheduledBackupReconciler{
-		Client:    mgr.GetClient(),
+		Client:    c,
 		Scheme:    mgr.GetScheme(),
 		Recorder:  mgr.GetEventRecorderFor("cloudnative-pg-scheduledbackup"), //nolint:staticcheck
 		Admission: webhookv1.NewScheduledBackupAdmissionGuard(),
@@ -367,18 +434,20 @@ func setupReconcilers(
 	}
 
 	if err := (&controller.PoolerReconciler{
-		Client:    mgr.GetClient(),
-		Scheme:    mgr.GetScheme(),
-		Recorder:  mgr.GetEventRecorderFor("cloudnative-pg-pooler"), //nolint:staticcheck
-		Admission: webhookv1.NewPoolerAdmissionGuard(),
+		ReloadWatch: reloadWatch,
+		Client:      c,
+		Scheme:      mgr.GetScheme(),
+		Recorder:    mgr.GetEventRecorderFor("cloudnative-pg-pooler"), //nolint:staticcheck
+		Admission:   webhookv1.NewPoolerAdmissionGuard(),
 	}).SetupWithManager(ctx, mgr, maxConcurrentReconciles); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Pooler")
 		return err
 	}
 
 	if err := (&controller.DatabaseRoleReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		ReloadWatch: reloadWatch,
+		Client:      c,
+		Scheme:      mgr.GetScheme(),
 	}).SetupWithManager(mgr, maxConcurrentReconciles); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "DatabaseRole")
 		return err
@@ -447,6 +516,21 @@ func buildMetricsOpts(metricsAddr string, conf *configuration.Data) server.Optio
 	setupLog.Info("Metrics server enabled with TLS", "certDir", conf.MetricsCertDir)
 
 	return metricsOptions
+}
+
+// registerCacheMetrics registers the metrics of the operator cache. They count
+// the manager cache itself, never the read-through client: a count must not
+// reach the API server.
+func registerCacheMetrics(
+	mgr ctrl.Manager, cacheFilter filteredcache.Options, reloadWatch *filteredcache.ReloadWatch,
+) error {
+	// a nil *ReloadWatch in the interface would not compare equal to nil
+	var metadataCounter operatormetrics.MetadataCounter
+	if reloadWatch != nil {
+		metadataCounter = reloadWatch
+	}
+	return operatormetrics.RegisterCache(
+		mgr.GetCache(), mgr.GetScheme(), filteredcache.FilteredObjects(cacheFilter), metadataCounter)
 }
 
 // probeOptionalAPIs resolves which optional APIs the operator uses, before

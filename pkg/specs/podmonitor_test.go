@@ -67,6 +67,7 @@ var _ = Describe("PodMonitor test", func() {
 			monitor := mgr.BuildPodMonitor()
 			Expect(monitor.Labels).To(BeEquivalentTo(map[string]string{
 				utils.ClusterLabelName:                cluster.Name,
+				utils.ReconcileLabelName:              "true",
 				utils.KubernetesAppLabelName:          utils.AppName,
 				utils.KubernetesAppInstanceLabelName:  cluster.Name,
 				utils.KubernetesAppVersionLabelName:   "18",

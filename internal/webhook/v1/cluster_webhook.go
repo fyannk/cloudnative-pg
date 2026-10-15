@@ -51,6 +51,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
+	"github.com/cloudnative-pg/cloudnative-pg/internal/configuration"
 	"github.com/cloudnative-pg/cloudnative-pg/internal/webhook/guard"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/postgres"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/postgres/hba"
@@ -2677,9 +2678,22 @@ func (v *ClusterCustomValidator) getAdmissionWarnings(r *apiv1.Cluster) admissio
 	list = append(list, getStorageWarnings(r)...)
 	list = append(list, getSharedBuffersWarnings(r)...)
 	list = append(list, getMonitoringFieldsWarnings(r)...)
+	list = append(list, getFilteredCacheWarnings(r)...)
 	list = append(list, getDeprecatedMonitoringFieldsWarnings(r)...)
 	list = append(list, getSynchronousReplicationWarnings(r)...)
 	return append(list, getFailureDomainTopologyWarnings(r)...)
+}
+
+// getFilteredCacheWarnings reminds that, with a filtered cache, the Pods
+// matched by podSelectorRefs must carry the cache label to be seen
+func getFilteredCacheWarnings(r *apiv1.Cluster) admission.Warnings {
+	if len(r.Spec.PodSelectorRefs) == 0 || !configuration.Current.GetFilteredCacheMode().Enabled() {
+		return nil
+	}
+	return admission.Warnings{
+		fmt.Sprintf("the operator cache is filtered (FILTERED_CACHE_MODE): the Pods matched by "+
+			"spec.podSelectorRefs must carry the %s=true label to be seen", utils.ReconcileLabelName),
+	}
 }
 
 func getMonitoringFieldsWarnings(r *apiv1.Cluster) admission.Warnings {

@@ -545,6 +545,7 @@ func buildInstance(
 		ObjectMeta: metav1.ObjectMeta{
 			Labels: map[string]string{
 				utils.ClusterLabelName:                cluster.Name,
+				utils.ReconcileLabelName:              "true",
 				utils.InstanceNameLabelName:           podName,
 				utils.PodRoleLabelName:                string(utils.PodRoleInstance),
 				utils.KubernetesAppLabelName:          utils.AppName,
