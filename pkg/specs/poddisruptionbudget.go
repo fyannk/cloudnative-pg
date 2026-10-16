@@ -27,6 +27,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
+	"github.com/cloudnative-pg/cloudnative-pg/pkg/metadatarules"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/utils"
 )
 
@@ -65,7 +66,7 @@ func BuildReplicasPodDisruptionBudget(cluster *apiv1.Cluster) *policyv1.PodDisru
 		},
 	}
 
-	cluster.SetInheritedDataAndOwnership(&pdb.ObjectMeta)
+	cluster.SetInheritedDataAndOwnershipFor(&pdb.ObjectMeta, metadatarules.PodDisruptionBudgets)
 
 	return pdb
 }
@@ -103,7 +104,7 @@ func BuildPrimaryPodDisruptionBudget(cluster *apiv1.Cluster) *policyv1.PodDisrup
 		},
 	}
 
-	cluster.SetInheritedDataAndOwnership(&pdb.ObjectMeta)
+	cluster.SetInheritedDataAndOwnershipFor(&pdb.ObjectMeta, metadatarules.PodDisruptionBudgets)
 
 	return pdb
 }

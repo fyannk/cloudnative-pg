@@ -220,6 +220,10 @@ func RunController(
 	if err != nil {
 		return err
 	}
+	if err := conf.ParseDefaultAndMandatoryMetadata(); err != nil {
+		setupLog.Error(err, "invalid default or mandatory metadata in the operator configuration")
+		return err
+	}
 
 	setupLog.Info("Operator configuration loaded", "configuration", conf)
 

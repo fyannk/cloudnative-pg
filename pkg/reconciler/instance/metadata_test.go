@@ -24,9 +24,11 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
+	"github.com/cloudnative-pg/cloudnative-pg/internal/configuration"
 	"github.com/cloudnative-pg/cloudnative-pg/internal/scheme"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/specs"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/utils"
@@ -631,5 +633,143 @@ var _ = Describe("updateRoleLabels during a pending failover", func() {
 		//nolint:staticcheck
 		Expect(oldPrimary.Labels[utils.ClusterRoleLabelName]).To(Equal(specs.ClusterRoleLabelUnhealthy))
 		Expect(oldPrimary.Labels[utils.ClusterInstanceRoleLabelName]).To(Equal(specs.ClusterRoleLabelUnhealthy))
+	})
+})
+
+// The instance Pods are updated in place with the metadata of their kind:
+// objectMetadata.pgPods and the DEFAULT_* and MANDATORY_* settings for `pgPods`,
+// `allPods` and `all`. A wrong
+// up-to-date check would patch the Pods at every reconciliation, or never.
+var _ = Describe("metadata of the instance Pods, reconciled in place", func() {
+	var (
+		previous *configuration.Data
+		cluster  *apiv1.Cluster
+		cli      ctrlclient.Client
+	)
+
+	reconcileAndGet := func() corev1.Pod {
+		var pods corev1.PodList
+		Expect(cli.List(context.Background(), &pods)).To(Succeed())
+		Expect(ReconcileMetadata(context.Background(), cli, cluster, pods.Items)).To(Succeed())
+		var pod corev1.Pod
+		Expect(cli.Get(context.Background(), ctrlclient.ObjectKey{Name: "payments-1"}, &pod)).To(Succeed())
+		return pod
+	}
+
+	BeforeEach(func() {
+		previous = configuration.Current
+		configuration.Current = configuration.NewConfiguration()
+		DeferCleanup(func() { configuration.Current = previous })
+
+		cluster = &apiv1.Cluster{
+			ObjectMeta: metav1.ObjectMeta{Name: "payments"},
+			Status:     apiv1.ClusterStatus{CurrentPrimary: "payments-1", TargetPrimary: "payments-1"},
+			Spec: apiv1.ClusterSpec{
+				InheritedMetadata: &apiv1.EmbeddedObjectMetadata{
+					Labels: map[string]string{"team": "payments"},
+				},
+				MetadataPropagation: []apiv1.MetadataPropagationRule{
+					{
+						Targets:     []apiv1.MetadataPropagationTarget{"pgPods"},
+						Annotations: map[string]string{"vault.hashicorp.com/agent-inject": "true"},
+					},
+					{
+						Targets:     []apiv1.MetadataPropagationTarget{"services"},
+						Annotations: map[string]string{"external-dns.kubernetes.io/hostname": "db.example.com"},
+					},
+					{
+						Targets: []apiv1.MetadataPropagationTarget{"persistentVolumeClaims"},
+						Labels:  map[string]string{"velero.io/exclude-from-backup": "true"},
+					},
+				},
+			},
+		}
+		cli = fake.NewClientBuilder().
+			WithScheme(scheme.BuildWithAllKnownScheme()).
+			WithObjects(&corev1.Pod{ObjectMeta: metav1.ObjectMeta{
+				Name:   "payments-1",
+				Labels: map[string]string{"third-party": "kept"},
+			}}).
+			Build()
+	})
+
+	It("adds the Pods' metadata, and nothing of the other kinds", func() {
+		pod := reconcileAndGet()
+		Expect(pod.Labels).To(HaveKeyWithValue("team", "payments"))
+		Expect(pod.Labels).To(HaveKeyWithValue("third-party", "kept"))
+		Expect(pod.Annotations).To(HaveKeyWithValue("vault.hashicorp.com/agent-inject", "true"))
+		Expect(pod.Annotations).NotTo(HaveKey("external-dns.kubernetes.io/hostname"))
+		Expect(pod.Labels).NotTo(HaveKey("velero.io/exclude-from-backup"))
+	})
+
+	It("does not patch the Pod again when it is up to date", func() {
+		configuration.Current.DefaultMetadata = `[{"targets": ["all"], "annotations": {"example.com/mesh": "off"}}]`
+		configuration.Current.MandatoryMetadata = `[{"targets": ["pgPods"], "labels": {"cost-centre": "dbaas"}}]`
+		Expect(configuration.Current.ParseDefaultAndMandatoryMetadata()).To(Succeed())
+
+		first := reconcileAndGet()
+		second := reconcileAndGet()
+		Expect(second.ResourceVersion).To(Equal(first.ResourceVersion))
+	})
+
+	It("follows a change of the default and mandatory settings", func() {
+		configuration.Current.DefaultMetadata = `[` +
+			`{"targets": ["pgPods"], "annotations": {"vault.hashicorp.com/agent-inject": "false"}}` +
+			`]`
+		configuration.Current.MandatoryMetadata = `[` +
+			`{"targets": ["pgPods"], "labels": {"cost-centre": "dbaas"}},` +
+			`{"targets": ["pgPods"], "labels": {"team": "platform"}}` +
+			`]`
+		Expect(configuration.Current.ParseDefaultAndMandatoryMetadata()).To(Succeed())
+		pod := reconcileAndGet()
+		Expect(pod.Labels).To(HaveKeyWithValue("cost-centre", "dbaas"))
+		Expect(pod.Labels).To(HaveKeyWithValue("team", "platform"))
+		// The Cluster's annotation wins over the default
+		Expect(pod.Annotations).To(HaveKeyWithValue("vault.hashicorp.com/agent-inject", "true"))
+		configuration.Current.MandatoryMetadata = `[{"targets": ["pgPods"], "labels": {"cost-centre": "finance"}}]`
+		Expect(configuration.Current.ParseDefaultAndMandatoryMetadata()).To(Succeed())
+		pod = reconcileAndGet()
+		Expect(pod.Labels).To(HaveKeyWithValue("cost-centre", "finance"))
+		// As for inheritedMetadata, a key no longer set is not removed, and
+		// the Cluster's value comes back where the mandatory one was
+		Expect(pod.Labels).To(HaveKeyWithValue("team", "payments"))
+	})
+
+	It("follows a change of the Pods' own metadata on a Pod already reconciled", func() {
+		reconcileAndGet()
+
+		// Only the Pods' metadata changes: the rest of the Pod is up to date
+		cluster.Spec.MetadataPropagation[0].Annotations["vault.hashicorp.com/agent-inject"] = "false"
+		cluster.Spec.MetadataPropagation[0].Labels = map[string]string{"tier": "database"}
+		pod := reconcileAndGet()
+		Expect(pod.Annotations).To(HaveKeyWithValue("vault.hashicorp.com/agent-inject", "false"))
+		Expect(pod.Labels).To(HaveKeyWithValue("tier", "database"))
+	})
+
+	It("ignores the settings for the other kinds of objects", func() {
+		configuration.Current.MandatoryMetadata = `[{` +
+			`"targets": ["services", "persistentVolumeClaims", "poolerPods", "majorUpgradePods"], ` +
+			`"labels": {"cost-centre": "dbaas"}}]`
+		Expect(configuration.Current.ParseDefaultAndMandatoryMetadata()).To(Succeed())
+		pod := reconcileAndGet()
+		Expect(pod.Labels).NotTo(HaveKey("cost-centre"))
+	})
+
+	It("adds the settings for every kind of Pod, below those of the PostgreSQL Pods", func() {
+		configuration.Current.MandatoryMetadata = `[` +
+			`{"targets": ["allPods"], "labels": {"bla": "pods"}},` +
+			`{"targets": ["pgPods"], "labels": {"bla": "1"}},` +
+			`{"targets": ["allPods"], "labels": {"mesh": "pods"}}` +
+			`]`
+		Expect(configuration.Current.ParseDefaultAndMandatoryMetadata()).To(Succeed())
+		pod := reconcileAndGet()
+		Expect(pod.Labels).To(HaveKeyWithValue("bla", "1"))
+		Expect(pod.Labels).To(HaveKeyWithValue("mesh", "pods"))
+
+		// Dropping the PostgreSQL Pods' entry brings the value of allPods
+		configuration.Current.MandatoryMetadata = `[{"targets": ["allPods"], "labels": {"bla": "pods"}}]`
+		Expect(configuration.Current.ParseDefaultAndMandatoryMetadata()).To(Succeed())
+		pod = reconcileAndGet()
+		Expect(pod.Labels).To(HaveKeyWithValue("bla", "pods"))
 	})
 })

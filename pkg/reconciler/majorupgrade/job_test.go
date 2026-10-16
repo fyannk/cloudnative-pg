@@ -21,8 +21,13 @@ package majorupgrade
 
 import (
 	batchv1 "k8s.io/api/batch/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
+	"github.com/cloudnative-pg/cloudnative-pg/internal/configuration"
+	schemeBuilder "github.com/cloudnative-pg/cloudnative-pg/internal/scheme"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/specs"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -99,5 +104,99 @@ var _ = Describe("Major upgrade Job generation", func() {
 				HaveField("MountPath", "/var/run/secrets/kubernetes.io/serviceaccount"),
 			), "container %s should mount the projected token", container.Name)
 		}
+	})
+})
+
+// The Pods of the major upgrade Job get the metadata of `majorUpgradePods`
+// and `allPods`, the Job that of every object only. Neither gets the metadata
+// of the PostgreSQL Pods
+var _ = Describe("The metadata of the major upgrade Job", func() {
+	var cluster *apiv1.Cluster
+
+	BeforeEach(func() {
+		previous := configuration.Current
+		configuration.Current = configuration.NewConfiguration()
+		DeferCleanup(func() { configuration.Current = previous })
+
+		cluster = &apiv1.Cluster{
+			TypeMeta:   metav1.TypeMeta{Kind: apiv1.ClusterKind, APIVersion: apiv1.SchemeGroupVersion.String()},
+			ObjectMeta: metav1.ObjectMeta{Name: "payments", Namespace: "payments", UID: "uid"},
+			Spec: apiv1.ClusterSpec{
+				ImageName:         "postgres:17",
+				Bootstrap:         &apiv1.BootstrapConfiguration{InitDB: &apiv1.BootstrapInitDB{}},
+				InheritedMetadata: &apiv1.EmbeddedObjectMetadata{Labels: map[string]string{"env": "prod"}},
+			},
+			Status: apiv1.ClusterStatus{
+				Image:           "postgres:17",
+				PGDataImageInfo: &apiv1.ImageInfo{Image: "postgres:16", MajorVersion: 16},
+			},
+		}
+	})
+
+	createJob := func(ctx SpecContext) batchv1.Job {
+		Expect(configuration.Current.ParseDefaultAndMandatoryMetadata()).To(Succeed())
+		cli := fake.NewClientBuilder().WithScheme(schemeBuilder.BuildWithAllKnownScheme()).Build()
+		_, err := createMajorUpgradeJob(ctx, cli, cluster, 1, nil)
+		Expect(err).ToNot(HaveOccurred())
+
+		var jobs batchv1.JobList
+		Expect(cli.List(ctx, &jobs, client.InNamespace("payments"))).To(Succeed())
+		Expect(jobs.Items).To(HaveLen(1))
+		return jobs.Items[0]
+	}
+
+	It("gives the Job and its Pods the Cluster's metadata, as in stock, with no settings", func(ctx SpecContext) {
+		job := createJob(ctx)
+		for _, meta := range []metav1.ObjectMeta{job.ObjectMeta, job.Spec.Template.ObjectMeta} {
+			Expect(meta.Labels).To(HaveKeyWithValue("env", "prod"))
+			Expect(meta.Labels).To(HaveKeyWithValue("cnpg.io/cluster", "payments"))
+		}
+		Expect(job.Spec.Template.Labels).To(HaveKeyWithValue("cnpg.io/instanceRole", "primary"))
+	})
+
+	It("gives its Pods the metadata of majorUpgradePods and allPods, not that of pgPods", func(ctx SpecContext) {
+		configuration.Current.DefaultMetadata = `[{"targets": ["pgPods"], "annotations": {"example.com/mesh": "off"}}]`
+		configuration.Current.MandatoryMetadata = `[` +
+			`{"targets": ["all"], "labels": {"bla": "0"}},` +
+			`{"targets": ["pgPods"], "labels": {"bla": "1"}},` +
+			`{"targets": ["poolerPods"], "labels": {"bla": "2"}},` +
+			`{"targets": ["majorUpgradePods"], "labels": {"bla": "3"}},` +
+			`{"targets": ["allPods"], "labels": {"cost-centre": "pods"}}` +
+			`]`
+		cluster.Spec.MetadataPropagation = []apiv1.MetadataPropagationRule{
+			{
+				Targets:     []apiv1.MetadataPropagationTarget{"pgPods"},
+				Annotations: map[string]string{"vault.hashicorp.com/agent-inject": "true"},
+			},
+			{
+				Targets:     []apiv1.MetadataPropagationTarget{"majorUpgradePods"},
+				Annotations: map[string]string{"sidecar.istio.io/inject": "false"},
+			},
+		}
+
+		job := createJob(ctx)
+		pod := job.Spec.Template.ObjectMeta
+		Expect(pod.Labels).To(HaveKeyWithValue("env", "prod"))
+		Expect(pod.Labels).To(HaveKeyWithValue("bla", "3"))
+		Expect(pod.Labels).To(HaveKeyWithValue("cost-centre", "pods"))
+		Expect(pod.Annotations).To(HaveKeyWithValue("sidecar.istio.io/inject", "false"))
+		Expect(pod.Annotations).NotTo(HaveKey("vault.hashicorp.com/agent-inject"))
+		Expect(pod.Annotations).NotTo(HaveKey("example.com/mesh"))
+
+		Expect(job.Labels).To(HaveKeyWithValue("bla", "0"))
+		Expect(job.Labels).NotTo(HaveKey("cost-centre"))
+		Expect(job.Annotations).NotTo(HaveKey("sidecar.istio.io/inject"))
+	})
+
+	It("keeps the labels the operator sets on its Pods over the settings", func(ctx SpecContext) {
+		cluster.Spec.MetadataPropagation = []apiv1.MetadataPropagationRule{
+			{
+				Targets: []apiv1.MetadataPropagationTarget{"majorUpgradePods"},
+				Labels:  map[string]string{"cnpg.io/instanceRole": "replica", "cnpg.io/cluster": "other"},
+			},
+		}
+		job := createJob(ctx)
+		Expect(job.Spec.Template.Labels).To(HaveKeyWithValue("cnpg.io/instanceRole", "primary"))
+		Expect(job.Spec.Template.Labels).To(HaveKeyWithValue("cnpg.io/cluster", "payments"))
 	})
 })

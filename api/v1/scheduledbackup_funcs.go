@@ -27,6 +27,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/cloudnative-pg/cloudnative-pg/internal/configuration"
+	"github.com/cloudnative-pg/cloudnative-pg/pkg/metadatarules"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/utils"
 )
 
@@ -101,8 +102,41 @@ func (scheduledBackup *ScheduledBackup) CreateBackup(name string) *Backup {
 	if v := scheduledBackup.Annotations[utils.BackupVolumeSnapshotDeadlineAnnotationName]; v != "" {
 		backup.Annotations[utils.BackupVolumeSnapshotDeadlineAnnotationName] = v
 	}
+	applyMetadataRules(&backup.ObjectMeta, metadatarules.ScheduledBackupResource, scheduledBackup.GetMetadataRules(),
+		metadatarules.Backups)
 
 	return &backup
+}
+
+// ScheduledBackupMetadataTargets are the kinds of objects the
+// metadataPropagation rules of a ScheduledBackup can target: the objects it
+// creates
+var ScheduledBackupMetadataTargets = metadatarules.ScheduledBackupResource.Targets()
+
+// GetMetadataRules compiles the metadataPropagation rules of the
+// ScheduledBackup. The webhook reports their problems; the valid part of
+// the rules applies
+func (scheduledBackup *ScheduledBackup) GetMetadataRules() metadatarules.Set {
+	set, _ := metadatarules.Compile(ToMetadataRules(scheduledBackup.Spec.MetadataPropagation),
+		ScheduledBackupMetadataTargets)
+	return set
+}
+
+// GetScheduledBackupLabelsFor gets the labels the ScheduledBackup sets on a
+// kind of object: those of its rules
+func (scheduledBackup *ScheduledBackup) GetScheduledBackupLabelsFor(target metadatarules.Target) map[string]string {
+	return scheduledBackup.GetMetadataRules().Labels(target)
+}
+
+// GetScheduledBackupAnnotationsFor gets the annotations the ScheduledBackup
+// sets on a kind of object: its own annotations selected by
+// INHERITED_ANNOTATIONS, with its rules on top
+func (scheduledBackup *ScheduledBackup) GetScheduledBackupAnnotationsFor(
+	target metadatarules.Target,
+) map[string]string {
+	var inherited metav1.ObjectMeta
+	utils.InheritAnnotations(&inherited, scheduledBackup.Annotations, nil, configuration.Current)
+	return metadatarules.Layers{Own: scheduledBackup.GetMetadataRules()}.Annotations(target, inherited.Annotations)
 }
 
 // SetAdmissionError sets the admission error status on the ScheduledBackup resource

@@ -44,6 +44,7 @@ import (
 
 	"github.com/cloudnative-pg/cloudnative-pg/internal/configuration"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/configfile"
+	"github.com/cloudnative-pg/cloudnative-pg/pkg/metadatarules"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/system"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/utils"
 	contextutils "github.com/cloudnative-pg/cloudnative-pg/pkg/utils/context"
@@ -1322,17 +1323,97 @@ func (cluster *Cluster) LogTimestampsWithMessage(ctx context.Context, logMessage
 	contextLogger.Info(logMessage)
 }
 
+// ClusterMetadataTargets are the kinds of objects the metadataPropagation
+// rules of a Cluster can target: the objects it creates
+var ClusterMetadataTargets = metadatarules.ClusterResource.Targets()
+
+// GetMetadataRules compiles the metadataPropagation rules of the Cluster.
+// The webhook reports their problems; the valid part of the rules applies
+func (cluster *Cluster) GetMetadataRules() metadatarules.Set {
+	set, _ := metadatarules.Compile(ToMetadataRules(cluster.Spec.MetadataPropagation), ClusterMetadataTargets)
+	return set
+}
+
+// getInheritedAnnotations returns the annotations the Cluster gives every
+// object: those of inheritedMetadata, and its own annotations selected by
+// INHERITED_ANNOTATIONS
+func (cluster *Cluster) getInheritedAnnotations() map[string]string {
+	annotations := cluster.GetFixedInheritedAnnotations()
+	for key, value := range cluster.Annotations {
+		if configuration.Current.IsAnnotationInherited(key) {
+			annotations[key] = value
+		}
+	}
+	return annotations
+}
+
+// getInheritedLabels returns the labels the Cluster gives every object, as
+// getInheritedAnnotations does for the annotations
+func (cluster *Cluster) getInheritedLabels() map[string]string {
+	labels := maps.Clone(cluster.GetFixedInheritedLabels())
+	if labels == nil {
+		labels = make(map[string]string)
+	}
+	for key, value := range cluster.Labels {
+		if configuration.Current.IsLabelInherited(key) {
+			labels[key] = value
+		}
+	}
+	return labels
+}
+
+// GetClusterAnnotationsFor gets the annotations the Cluster sets on a kind of
+// object: those it gives every object, with its metadataPropagation rules
+// for that kind on top
+func (cluster *Cluster) GetClusterAnnotationsFor(target metadatarules.Target) map[string]string {
+	return metadatarules.Layers{Own: cluster.GetMetadataRules()}.Annotations(target, cluster.getInheritedAnnotations())
+}
+
+// GetClusterLabelsFor gets the labels the Cluster sets on a kind of object,
+// as GetClusterAnnotationsFor does for the annotations
+func (cluster *Cluster) GetClusterLabelsFor(target metadatarules.Target) map[string]string {
+	return metadatarules.Layers{Own: cluster.GetMetadataRules()}.Labels(target, cluster.getInheritedLabels())
+}
+
+// GetInheritedAnnotationsFor gets the annotations the operator sets on a kind
+// of object of the Cluster: those of GetClusterAnnotationsFor, between the
+// default and the mandatory metadata of the operator
+func (cluster *Cluster) GetInheritedAnnotationsFor(target metadatarules.Target) map[string]string {
+	return configuration.Current.MetadataLayers(metadatarules.ClusterResource, cluster.GetMetadataRules()).Annotations(
+		target, cluster.getInheritedAnnotations())
+}
+
+// GetInheritedLabelsFor gets the labels the operator sets on a kind of
+// object, as GetInheritedAnnotationsFor does for the annotations
+func (cluster *Cluster) GetInheritedLabelsFor(target metadatarules.Target) map[string]string {
+	return configuration.Current.MetadataLayers(metadatarules.ClusterResource, cluster.GetMetadataRules()).Labels(
+		target, cluster.getInheritedLabels())
+}
+
 // SetInheritedDataAndOwnership sets the cluster as owner of the passed object and then
 // sets all the needed annotations and labels
 func (cluster *Cluster) SetInheritedDataAndOwnership(obj *metav1.ObjectMeta) {
-	cluster.SetInheritedData(obj)
+	cluster.SetInheritedDataAndOwnershipFor(obj, metadatarules.All)
+}
+
+// SetInheritedDataAndOwnershipFor sets the cluster as owner of the passed
+// object, of the given kind, and then sets all the needed annotations and
+// labels
+func (cluster *Cluster) SetInheritedDataAndOwnershipFor(obj *metav1.ObjectMeta, target metadatarules.Target) {
+	cluster.SetInheritedDataFor(obj, target)
 	utils.SetAsOwnedBy(obj, cluster.ObjectMeta, cluster.TypeMeta)
 }
 
 // SetInheritedData sets all the needed annotations and labels
 func (cluster *Cluster) SetInheritedData(obj *metav1.ObjectMeta) {
-	utils.InheritAnnotations(obj, cluster.Annotations, cluster.GetFixedInheritedAnnotations(), configuration.Current)
-	utils.InheritLabels(obj, cluster.Labels, cluster.GetFixedInheritedLabels(), configuration.Current)
+	cluster.SetInheritedDataFor(obj, metadatarules.All)
+}
+
+// SetInheritedDataFor sets all the needed annotations and labels on an
+// object of the given kind
+func (cluster *Cluster) SetInheritedDataFor(obj *metav1.ObjectMeta, target metadatarules.Target) {
+	utils.SetAnnotations(obj, cluster.GetInheritedAnnotationsFor(target))
+	utils.SetLabels(obj, cluster.GetInheritedLabelsFor(target))
 	utils.LabelClusterName(obj, cluster.GetName())
 }
 

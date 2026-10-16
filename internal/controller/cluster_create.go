@@ -44,6 +44,7 @@ import (
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
 	"github.com/cloudnative-pg/cloudnative-pg/internal/configuration"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/certs"
+	"github.com/cloudnative-pg/cloudnative-pg/pkg/metadatarules"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/postgres"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/reconciler/persistentvolumeclaim"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/servicespec"
@@ -191,7 +192,7 @@ func (r *ClusterReconciler) reconcileSuperuserSecret(ctx context.Context, cluste
 			"postgres",
 			postgresPassword,
 			utils.UserTypeSuperuser)
-		cluster.SetInheritedDataAndOwnership(&postgresSecret.ObjectMeta)
+		cluster.SetInheritedDataAndOwnershipFor(&postgresSecret.ObjectMeta, metadatarules.Secrets)
 
 		return createOrPatchClusterCredentialSecret(ctx, r.Client, postgresSecret)
 	}
@@ -233,7 +234,7 @@ func (r *ClusterReconciler) reconcileAppUserSecret(ctx context.Context, cluster 
 			appPassword,
 			utils.UserTypeApp)
 
-		cluster.SetInheritedDataAndOwnership(&appSecret.ObjectMeta)
+		cluster.SetInheritedDataAndOwnershipFor(&appSecret.ObjectMeta, metadatarules.Secrets)
 		return createOrPatchClusterCredentialSecret(ctx, r.Client, appSecret)
 	}
 	return nil
@@ -310,28 +311,28 @@ func (r *ClusterReconciler) reconcilePoolerSecrets(ctx context.Context, cluster 
 
 func (r *ClusterReconciler) reconcilePostgresServices(ctx context.Context, cluster *apiv1.Cluster) error {
 	anyService := specs.CreateClusterAnyService(*cluster)
-	cluster.SetInheritedDataAndOwnership(&anyService.ObjectMeta)
+	cluster.SetInheritedDataAndOwnershipFor(&anyService.ObjectMeta, metadatarules.Services)
 
 	if err := r.serviceReconciler(ctx, cluster, anyService, configuration.Current.CreateAnyService); err != nil {
 		return err
 	}
 
 	readService := specs.CreateClusterReadService(*cluster)
-	cluster.SetInheritedDataAndOwnership(&readService.ObjectMeta)
+	cluster.SetInheritedDataAndOwnershipFor(&readService.ObjectMeta, metadatarules.Services)
 
 	if err := r.serviceReconciler(ctx, cluster, readService, cluster.IsReadServiceEnabled()); err != nil {
 		return err
 	}
 
 	readOnlyService := specs.CreateClusterReadOnlyService(*cluster)
-	cluster.SetInheritedDataAndOwnership(&readOnlyService.ObjectMeta)
+	cluster.SetInheritedDataAndOwnershipFor(&readOnlyService.ObjectMeta, metadatarules.Services)
 
 	if err := r.serviceReconciler(ctx, cluster, readOnlyService, cluster.IsReadOnlyServiceEnabled()); err != nil {
 		return err
 	}
 
 	readWriteService := specs.CreateClusterReadWriteService(*cluster)
-	cluster.SetInheritedDataAndOwnership(&readWriteService.ObjectMeta)
+	cluster.SetInheritedDataAndOwnershipFor(&readWriteService.ObjectMeta, metadatarules.Services)
 
 	if err := r.serviceReconciler(ctx, cluster, readWriteService, cluster.IsReadWriteServiceEnabled()); err != nil {
 		return err
@@ -737,10 +738,18 @@ func (r *ClusterReconciler) copyPullSecretFromOperator(ctx context.Context, clus
 		Data: operatorSecret.Data,
 		Type: operatorSecret.Type,
 	}
-	cluster.SetInheritedDataAndOwnership(&secret.ObjectMeta)
+	cluster.SetInheritedDataAndOwnershipFor(&secret.ObjectMeta, metadatarules.Secrets)
 
 	// Another sync loop may have already created the service. Let's check that
-	if err := r.Create(ctx, &secret); err != nil && !apierrs.IsAlreadyExists(err) {
+	err := r.Create(ctx, &secret)
+	if apierrs.IsAlreadyExists(err) {
+		var existing corev1.Secret
+		if err := r.Get(ctx, client.ObjectKeyFromObject(&secret), &existing); err != nil {
+			return "", err
+		}
+		return clusterSecretName, r.ensureSecretMetadata(ctx, cluster, &existing)
+	}
+	if err != nil {
 		return "", err
 	}
 
@@ -1497,10 +1506,7 @@ func (r *ClusterReconciler) joinReplicaInstance(
 		return ctrl.Result{}, err
 	}
 
-	utils.InheritAnnotations(&pod.ObjectMeta, cluster.Annotations,
-		cluster.GetFixedInheritedAnnotations(), configuration.Current)
-	utils.InheritLabels(&pod.ObjectMeta, cluster.Labels,
-		cluster.GetFixedInheritedLabels(), configuration.Current)
+	cluster.SetInheritedDataFor(&pod.ObjectMeta, metadatarules.PgPods)
 
 	// Create the PVCs before the Pod, so the Pod is never observed by the
 	// scheduler while its PVCs don't exist yet (which would make it
@@ -1663,10 +1669,7 @@ func (r *ClusterReconciler) ensureInstancesAreCreated(
 		return ctrl.Result{}, fmt.Errorf("unable to set the owner reference for the Pod: %w", err)
 	}
 
-	utils.InheritAnnotations(&instanceToCreate.ObjectMeta, cluster.Annotations,
-		cluster.GetFixedInheritedAnnotations(), configuration.Current)
-	utils.InheritLabels(&instanceToCreate.ObjectMeta, cluster.Labels,
-		cluster.GetFixedInheritedLabels(), configuration.Current)
+	cluster.SetInheritedDataFor(&instanceToCreate.ObjectMeta, metadatarules.PgPods)
 
 	if err := r.Create(ctx, instanceToCreate); err != nil {
 		if apierrs.IsAlreadyExists(err) {

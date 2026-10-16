@@ -389,6 +389,23 @@ const (
 	UserTypeApp UserType = "app"
 )
 
+// SetLabels sets the passed labels on an object, keeping its other labels
+func SetLabels(object *metav1.ObjectMeta, labels map[string]string) {
+	if object.Labels == nil {
+		object.Labels = make(map[string]string, len(labels))
+	}
+	maps.Copy(object.Labels, labels)
+}
+
+// SetAnnotations sets the passed annotations on an object, keeping its other
+// annotations
+func SetAnnotations(object *metav1.ObjectMeta, annotations map[string]string) {
+	if object.Annotations == nil {
+		object.Annotations = make(map[string]string, len(annotations))
+	}
+	maps.Copy(object.Annotations, annotations)
+}
+
 // LabelClusterName labels the object with the cluster name
 func LabelClusterName(object *metav1.ObjectMeta, name string) {
 	if object.Labels == nil {
@@ -418,6 +435,30 @@ type InheritanceController interface {
 	// IsLabelInherited checks if a certain label should be
 	// inherited
 	IsLabelInherited(name string) bool
+}
+
+// IsOperatorMetadataKey tells whether a label or annotation key is one the
+// operator sets itself: the cnpg.io namespace and its subdomains, and the
+// Kubernetes recommended labels the operator fills
+func IsOperatorMetadataKey(key string) bool {
+	prefix, _, found := strings.Cut(key, "/")
+	if !found {
+		return false
+	}
+	if prefix == MetadataNamespace || strings.HasSuffix(prefix, "."+MetadataNamespace) {
+		return true
+	}
+
+	switch key {
+	case KubernetesAppManagedByLabelName,
+		KubernetesAppLabelName,
+		KubernetesAppInstanceLabelName,
+		KubernetesAppVersionLabelName,
+		KubernetesAppComponentLabelName:
+		return true
+	}
+
+	return false
 }
 
 // InheritAnnotations puts into the object metadata the passed annotations if

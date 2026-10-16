@@ -19,7 +19,13 @@ SPDX-License-Identifier: Apache-2.0
 
 package v1
 
-import corev1 "k8s.io/api/core/v1"
+import (
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"github.com/cloudnative-pg/cloudnative-pg/internal/configuration"
+	"github.com/cloudnative-pg/cloudnative-pg/pkg/metadatarules"
+)
 
 // IsPaused returns whether all database should be paused or not.
 func (in PgBouncerSpec) IsPaused() bool {
@@ -140,4 +146,56 @@ func (in *Pooler) SetAdmissionError(msg string) {
 // GetAdmissionError returns the admission error recorded on the Pooler status
 func (in *Pooler) GetAdmissionError() string {
 	return in.Status.Error
+}
+
+// PoolerMetadataTargets are the kinds of objects the metadataPropagation
+// rules of a Pooler can target: the objects it creates
+var PoolerMetadataTargets = metadatarules.PoolerResource.Targets()
+
+// GetMetadataRules compiles the metadataPropagation rules of the Pooler.
+// The webhook reports their problems; the valid part of the rules applies
+func (in *Pooler) GetMetadataRules() metadatarules.Set {
+	set, _ := metadatarules.Compile(ToMetadataRules(in.Spec.MetadataPropagation), PoolerMetadataTargets)
+	return set
+}
+
+// ApplyMetadataTo stacks, on the metadata of an object of the Pooler of a
+// kind, the default metadata of the operator below the labels and
+// annotations the object already has, and the rules of the Pooler and the
+// mandatory metadata of the operator above them
+func (in *Pooler) ApplyMetadataTo(meta *metav1.ObjectMeta, target metadatarules.Target) {
+	applyMetadataRules(meta, metadatarules.PoolerResource, in.GetMetadataRules(), target)
+}
+
+// MetadataReaches tells whether a rule of the Pooler or of the operator puts
+// a label or an annotation on the objects of a kind
+func (in *Pooler) MetadataReaches(target metadatarules.Target) bool {
+	return configuration.Current.MetadataLayers(metadatarules.PoolerResource, in.GetMetadataRules()).Reaches(target)
+}
+
+// GetPoolerLabelsFor gets the labels the Pooler sets on a kind of object:
+// those of its templates, with its rules on top
+func (in *Pooler) GetPoolerLabelsFor(target metadatarules.Target) map[string]string {
+	template := in.templateMetadataFor(target)
+	return metadatarules.Layers{Own: in.GetMetadataRules()}.Labels(target, template.Labels)
+}
+
+// GetPoolerAnnotationsFor gets the annotations the Pooler sets on a kind of
+// object, as GetPoolerLabelsFor does for the labels
+func (in *Pooler) GetPoolerAnnotationsFor(target metadatarules.Target) map[string]string {
+	template := in.templateMetadataFor(target)
+	return metadatarules.Layers{Own: in.GetMetadataRules()}.Annotations(target, template.Annotations)
+}
+
+// templateMetadataFor returns the metadata of the template of a kind of
+// object: the pod template for the Pods, the service template for the
+// Service, none for the others
+func (in *Pooler) templateMetadataFor(target metadatarules.Target) Metadata {
+	switch {
+	case target == metadatarules.PoolerPods && in.Spec.Template != nil:
+		return in.Spec.Template.ObjectMeta
+	case target == metadatarules.Services && in.Spec.ServiceTemplate != nil:
+		return in.Spec.ServiceTemplate.ObjectMeta
+	}
+	return Metadata{}
 }

@@ -210,3 +210,66 @@ var _ = Describe("Password passthrough annotation", func() {
 		Expect(IsPasswordPassthroughEnabled(objectMeta)).To(BeTrue())
 	})
 })
+
+// The keys the operator sets itself must never be overwritten by the rules
+// propagating labels and annotations
+var _ = DescribeTable("Recognizing the keys the operator sets itself",
+	func(key string, expected bool) {
+		Expect(IsOperatorMetadataKey(key)).To(Equal(expected))
+	},
+	Entry("the cnpg.io domain", "cnpg.io/cluster", true),
+	Entry("a cnpg.io key unknown to this version", "cnpg.io/somethingNew", true),
+	Entry("the alpha subdomain", "alpha.cnpg.io/unrecoverable", true),
+	Entry("any subdomain", "anything.cnpg.io/x", true),
+	Entry("app.kubernetes.io/name", "app.kubernetes.io/name", true),
+	Entry("app.kubernetes.io/instance", "app.kubernetes.io/instance", true),
+	Entry("app.kubernetes.io/version", "app.kubernetes.io/version", true),
+	Entry("app.kubernetes.io/component", "app.kubernetes.io/component", true),
+	Entry("app.kubernetes.io/managed-by", "app.kubernetes.io/managed-by", true),
+	Entry("a recommended label the operator does not set", "app.kubernetes.io/part-of", false),
+	Entry("another recommended label the operator does not set", "app.kubernetes.io/created-by", false),
+	Entry("a key without prefix", "cluster", false),
+	Entry("a key named like a domain, without prefix", "cnpg.io", false),
+	Entry("a domain ending like the operator's", "notcnpg.io/cluster", false),
+	Entry("a domain containing the operator's", "cnpg.io.example.com/cluster", false),
+	Entry("the legacy EDB domain", "k8s.enterprisedb.io/cluster", false),
+	Entry("an empty key", "", false),
+)
+
+var _ = Describe("Setting labels and annotations on an object", func() {
+	It("adds and replaces keys, keeping the other ones", func() {
+		meta := metav1.ObjectMeta{
+			Labels:      map[string]string{"kept": "1", "replaced": "old"},
+			Annotations: map[string]string{"kept": "1", "replaced": "old"},
+		}
+		SetLabels(&meta, map[string]string{"replaced": "new", "added": "2"})
+		SetAnnotations(&meta, map[string]string{"replaced": "new", "added": "2"})
+		expected := map[string]string{"kept": "1", "replaced": "new", "added": "2"}
+		Expect(meta.Labels).To(Equal(expected))
+		Expect(meta.Annotations).To(Equal(expected))
+	})
+
+	It("creates the maps of an object that has none", func() {
+		var meta metav1.ObjectMeta
+		SetLabels(&meta, map[string]string{"a": "1"})
+		SetAnnotations(&meta, map[string]string{"b": "2"})
+		Expect(meta.Labels).To(Equal(map[string]string{"a": "1"}))
+		Expect(meta.Annotations).To(Equal(map[string]string{"b": "2"}))
+	})
+
+	It("accepts nothing to set", func() {
+		var meta metav1.ObjectMeta
+		SetLabels(&meta, nil)
+		SetAnnotations(&meta, map[string]string{})
+		Expect(meta.Labels).To(BeEmpty())
+		Expect(meta.Annotations).To(BeEmpty())
+	})
+
+	It("does not keep a reference to the passed map", func() {
+		source := map[string]string{"a": "1"}
+		var meta metav1.ObjectMeta
+		SetLabels(&meta, source)
+		source["a"] = "changed"
+		Expect(meta.Labels).To(HaveKeyWithValue("a", "1"))
+	})
+})

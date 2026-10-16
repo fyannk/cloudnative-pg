@@ -249,6 +249,7 @@ _Appears in:_
 | `pluginConfiguration` _[BackupPluginConfiguration](#backuppluginconfiguration)_ | Configuration parameters passed to the plugin managing this backup |  |  |  |
 | `online` _boolean_ | Whether the default type of backup with volume snapshots is<br />online/hot (`true`, default) or offline/cold (`false`)<br />Overrides the default setting specified in the cluster field '.spec.backup.volumeSnapshot.online' |  |  |  |
 | `onlineConfiguration` _[OnlineConfiguration](#onlineconfiguration)_ | Configuration parameters to control the online/hot backup with volume snapshots<br />Overrides the default settings specified in the cluster '.backup.volumeSnapshot.onlineConfiguration' stanza |  |  |  |
+| `metadataPropagation` _[MetadataPropagationRule](#metadatapropagationrule) array_ | Labels and annotations to put on the VolumeSnapshots of the Backup,<br />on top of those of their PVC and of the volume snapshot settings of<br />the Cluster |  |  | MaxItems: 64 <br /> |
 
 
 #### BackupStatus
@@ -625,6 +626,7 @@ _Appears in:_
 | --- | --- | --- | --- | --- |
 | `description` _string_ | Description of this PostgreSQL cluster |  |  |  |
 | `inheritedMetadata` _[EmbeddedObjectMetadata](#embeddedobjectmetadata)_ | Metadata that will be inherited by all objects related to the Cluster |  |  |  |
+| `metadataPropagation` _[MetadataPropagationRule](#metadatapropagationrule) array_ | Labels and annotations to put on the objects of the Cluster, per kind<br />of object, on top of inheritedMetadata |  |  | MaxItems: 64 <br /> |
 | `imageName` _string_ | Name of the container image, supporting both tags (`<image>:<tag>`)<br />and digests for deterministic and repeatable deployments<br />(`<image>:<tag>@sha256:<digestValue>`) |  |  |  |
 | `imageCatalogRef` _[ImageCatalogRef](#imagecatalogref)_ | Defines the major PostgreSQL version we want to use within an ImageCatalog |  |  |  |
 | `imagePullPolicy` _[PullPolicy](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.34/#pullpolicy-v1-core)_ | Image pull policy.<br />One of `Always`, `Never` or `IfNotPresent`.<br />If not defined, it defaults to `IfNotPresent`.<br />Cannot be updated.<br />More info: https://kubernetes.io/docs/concepts/containers/images#updating-images |  |  |  |
@@ -1717,6 +1719,47 @@ _Appears in:_
 | `annotations` _object (keys:string, values:string)_ | Annotations is an unstructured key value map stored with a resource that may be<br />set by external tools to store and retrieve arbitrary metadata. They are not<br />queryable and should be preserved when modifying objects.<br />More info: http://kubernetes.io/docs/user-guide/annotations |  |  |  |
 
 
+#### MetadataPropagationRule
+
+
+
+MetadataPropagationRule puts labels and annotations on the objects of the
+targeted kinds. When several rules give the same key to an object, the
+most specific target wins: a kind of Pod over allPods, any kind over all
+
+
+
+_Appears in:_
+
+- [BackupSpec](#backupspec)
+- [ClusterSpec](#clusterspec)
+- [PoolerSpec](#poolerspec)
+- [ScheduledBackupSpec](#scheduledbackupspec)
+
+| Field | Description | Required | Default | Validation |
+| --- | --- | --- | --- | --- |
+| `targets` _[MetadataPropagationTarget](#metadatapropagationtarget) array_ | The kinds of objects the rule applies to | True |  | Enum: [all allPods pgPods majorUpgradePods poolerPods poolerDeployments services persistentVolumeClaims secrets podDisruptionBudgets backups volumeSnapshots] <br />MaxItems: 12 <br />MinItems: 1 <br /> |
+| `labels` _object (keys:string, values:string)_ | Labels to put on the objects. The labels the operator sets itself are<br />never taken from here |  |  |  |
+| `annotations` _object (keys:string, values:string)_ | Annotations to put on the objects. The annotations the operator sets<br />itself are never taken from here |  |  |  |
+
+
+#### MetadataPropagationTarget
+
+_Underlying type:_ _string_
+
+MetadataPropagationTarget is a kind of object a metadata propagation rule
+applies to
+
+_Validation:_
+
+- Enum: [all allPods pgPods majorUpgradePods poolerPods poolerDeployments services persistentVolumeClaims secrets podDisruptionBudgets backups volumeSnapshots]
+
+_Appears in:_
+
+- [MetadataPropagationRule](#metadatapropagationrule)
+
+
+
 #### MonitoringConfiguration
 
 
@@ -2201,6 +2244,7 @@ _Appears in:_
 | `deploymentStrategy` _[DeploymentStrategy](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.34/#deploymentstrategy-v1-apps)_ | The deployment strategy to use for pgbouncer to replace existing pods with new ones |  |  |  |
 | `monitoring` _[PoolerMonitoringConfiguration](#poolermonitoringconfiguration)_ | The configuration of the monitoring infrastructure of this pooler. |  |  |  |
 | `serviceTemplate` _[ServiceTemplateSpec](#servicetemplatespec)_ | Template for the Service to be created |  |  |  |
+| `metadataPropagation` _[MetadataPropagationRule](#metadatapropagationrule) array_ | Labels and annotations to put on the objects of the Pooler, per kind<br />of object, on top of the template and the service template |  |  | MaxItems: 64 <br /> |
 | `serviceAccountName` _string_ | Name of an existing ServiceAccount in the same namespace to use for the pooler.<br />When specified, the operator will not create a new ServiceAccount<br />but will use the provided one. This is useful for sharing a single<br />ServiceAccount across multiple poolers (e.g., for cloud IAM configurations).<br />If not specified, a ServiceAccount will be created with the pooler name. |  |  | MaxLength: 253 <br />Pattern: `^[a-z0-9]([-a-z0-9]*[a-z0-9])?$` <br /> |
 
 
@@ -2771,6 +2815,7 @@ _Appears in:_
 | `pluginConfiguration` _[BackupPluginConfiguration](#backuppluginconfiguration)_ | Configuration parameters passed to the plugin managing this backup |  |  |  |
 | `online` _boolean_ | Whether the default type of backup with volume snapshots is<br />online/hot (`true`, default) or offline/cold (`false`)<br />Overrides the default setting specified in the cluster field '.spec.backup.volumeSnapshot.online' |  |  |  |
 | `onlineConfiguration` _[OnlineConfiguration](#onlineconfiguration)_ | Configuration parameters to control the online/hot backup with volume snapshots<br />Overrides the default settings specified in the cluster '.backup.volumeSnapshot.onlineConfiguration' stanza |  |  |  |
+| `metadataPropagation` _[MetadataPropagationRule](#metadatapropagationrule) array_ | Labels and annotations to put on the Backups the ScheduledBackup<br />creates |  |  | MaxItems: 64 <br /> |
 
 
 #### ScheduledBackupStatus

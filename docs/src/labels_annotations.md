@@ -363,6 +363,237 @@ were correctly set in the pods:
 kubectl get pods --show-labels
 ```
 
+## Labels and annotations per kind of object
+
+`inheritedMetadata` and the inherited labels and annotations reach every
+object of the cluster. When a label or an annotation is meant for some kinds
+of objects only, set it in `metadataPropagation`: a list of rules, each naming
+the kinds of objects it targets, and the labels and annotations to put on
+them.
+
+```yaml
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: cluster-example
+spec:
+  metadataPropagation:
+    - targets: [pgPods]
+      annotations:
+        vault.hashicorp.com/agent-inject: "true"
+    - targets: [services]
+      annotations:
+        external-dns.kubernetes.io/hostname: cluster-example.example.com
+    - targets: [persistentVolumeClaims]
+      annotations:
+        resize.topolvm.io/storage_limit: 200Gi
+    - targets: [secrets]
+      annotations:
+        replicator.v1.mittwald.de/replicate-to: "app,batch"
+     # ... <snip>
+```
+
+A cluster accepts the following targets:
+
+- `pgPods`: the PostgreSQL instance pods, from their creation: the
+  initialization, join, or recovery of an instance runs in an init container
+  of its pod.
+- `majorUpgradePods`: the pods of the major upgrade job.
+- `allPods`: both kinds of pods.
+- `services`: the default services (`-rw`, `-ro`, `-r`, and `-any`). The
+  additional managed services have their own `serviceTemplate`.
+- `persistentVolumeClaims`: the data, WAL, and tablespace PVCs.
+- `secrets`: the secrets the operator creates for the cluster: credentials,
+  CA and certificates, and pull secret.
+- `podDisruptionBudgets`: the pod disruption budgets.
+- `all`: every object the operator creates for the cluster.
+
+When several rules give the same key to an object, the most specific target
+wins, whatever the order of the rules: a kind of pod over `allPods`, any kind
+over `all`. Two rules giving the same key two values on the same target are
+refused by the webhook.
+
+On a given object, the rules apply on top of `inheritedMetadata` and of the
+cluster's own labels and annotations selected by `INHERITED_LABELS` and
+`INHERITED_ANNOTATIONS`. The labels and annotations the operator sets itself
+(the `cnpg.io` domain and its subdomains, and the `app.kubernetes.io` labels it
+fills) are never taken from a rule: the webhook warns about them. Instance
+pods, services, PVCs, secrets, and pod disruption budgets are updated in
+place, without a restart; the major upgrade pods get their metadata when the
+job is created. The CA and certificate secrets the operator generates get the
+cluster's metadata like the other objects; the secrets provided in the
+cluster spec are left untouched.
+
+A pooler takes the same rules, for its own objects:
+
+```yaml
+apiVersion: postgresql.cnpg.io/v1
+kind: Pooler
+metadata:
+  name: pooler-example-rw
+spec:
+  cluster:
+    name: cluster-example
+  metadataPropagation:
+    - targets: [poolerDeployments]
+      annotations:
+        reloader.stakater.com/auto: "true"
+    - targets: [poolerPods]
+      labels:
+        sidecar.istio.io/inject: "false"
+     # ... <snip>
+```
+
+A pooler accepts the following targets:
+
+- `poolerPods`: the pods of the pooler.
+- `poolerDeployments`: the deployment of the pooler.
+- `services`: the service of the pooler.
+- `secrets`: the pull secret the operator creates for the pooler.
+- `all`: every object the operator creates for the pooler, including its
+  service account, role, role binding, and pod monitor.
+
+The rules apply on top of the metadata of the pod template for `poolerPods`,
+and of the service template for `services`. The deployment, the service, the
+pull secret, the service account, and the pod monitor are updated in place; the role and the
+role binding get their metadata when they are created. A change of the
+metadata of the pods rolls them out, as any change of the pod template does.
+A service account named in `serviceAccountName` is left untouched.
+
+A scheduled backup takes rules for the `backups` target, put on the backups
+it creates, on top of its annotations selected by `INHERITED_ANNOTATIONS`. A
+backup takes rules for the `volumeSnapshots` target, put on its volume
+snapshots, on top of the metadata they get from their PVC, from the
+`backup.volumeSnapshot` labels and annotations of the cluster, and, when the
+cluster owns them, from the cluster:
+
+```yaml
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: backup-example
+spec:
+  schedule: "0 0 0 * * *"
+  method: volumeSnapshot
+  cluster:
+    name: cluster-example
+  metadataPropagation:
+    - targets: [backups]
+      labels:
+        retention: daily
+```
+
+Backups and volume snapshots get their metadata when they are created. The
+backups created by a scheduled backup carry no rule of their own: their
+volume snapshots get the default and mandatory metadata only.
+
+## Default and mandatory labels and annotations
+
+Two settings of the [operator configuration](operator_conf.md) put labels and
+annotations on the objects of every `Cluster`, `Pooler`, `ScheduledBackup`,
+and `Backup`, or of the kinds of resources a rule names:
+
+- `DEFAULT_METADATA`: applied when the resource does not set the key, a value
+  the resource can replace.
+- `MANDATORY_METADATA`: always applied, replacing the value set by the
+  resource. The webhook warns when a value set by the resource is replaced.
+
+Each setting is a YAML list of rules. A rule names the kinds of objects it
+targets, and the labels and annotations to put on them:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cnpg-controller-manager-config
+  namespace: cnpg-system
+data:
+  MANDATORY_METADATA: |
+    - targets: [all]
+      labels:
+        cost-centre: dbaas
+  DEFAULT_METADATA: |
+    - targets: [allPods]
+      labels:
+        team: unassigned
+    - targets: [pgPods]
+      annotations:
+        karpenter.sh/do-not-disrupt: "true"
+```
+
+The targets are:
+
+| Target | Objects |
+|---|---|
+| `all` | every object the operator creates for a `Cluster`, a `Pooler`, a `ScheduledBackup`, or a `Backup` |
+| `allPods` | `pgPods`, `poolerPods`, and `majorUpgradePods` |
+| `pgPods` | the PostgreSQL instance pods |
+| `majorUpgradePods` | the pods of the major upgrade jobs |
+| `poolerPods` | the pods of the poolers |
+| `poolerDeployments` | the deployments of the poolers |
+| `services` | the services of the clusters and of the poolers |
+| `persistentVolumeClaims` | the data, WAL, and tablespace PVCs |
+| `secrets` | the secrets the operator creates: credentials, CA and certificates, pull secrets |
+| `podDisruptionBudgets` | the pod disruption budgets of the clusters |
+| `backups` | the backups created by the scheduled backups |
+| `volumeSnapshots` | the volume snapshots of the backups |
+
+A rule applies to the objects of every resource, unless it names the kinds of
+resources it applies to in `resources`: `Cluster`, `Pooler`,
+`ScheduledBackup`, or `Backup`. For example, to give the services of the
+clusters and those of the poolers different values, and a label to every
+object of the poolers:
+
+```yaml
+  MANDATORY_METADATA: |
+    - resources: [Cluster]
+      targets: [services]
+      labels:
+        lb-pool: databases
+    - resources: [Pooler]
+      targets: [services]
+      labels:
+        lb-pool: poolers
+    - resources: [Pooler]
+      targets: [all]
+      labels:
+        component: pooler
+```
+
+Each target of a rule naming resources must reach the objects of each of
+them:
+
+| Resource | Targets |
+|---|---|
+| `Cluster` | `all`, `allPods`, `pgPods`, `majorUpgradePods`, `services`, `persistentVolumeClaims`, `secrets`, `podDisruptionBudgets` |
+| `Pooler` | `all`, `allPods`, `poolerPods`, `poolerDeployments`, `services`, `secrets` |
+| `ScheduledBackup` | `all`, `backups` |
+| `Backup` | `all`, `volumeSnapshots` |
+
+The backups are objects of the `ScheduledBackup` creating them, and the volume
+snapshots objects of their `Backup`.
+
+When several rules give the same key to an object, the most specific target
+wins, whatever the order of the rules: a kind of pod over `allPods`, `allPods`
+or any other kind over `all`. Two rules giving the same key two values on the
+same target of the same resource are an error.
+
+On a given object, by increasing precedence:
+
+1. `DEFAULT_METADATA`
+2. the metadata set by the resource: `inheritedMetadata` and the cluster's own
+   labels and annotations selected by `INHERITED_LABELS` and
+   `INHERITED_ANNOTATIONS` for a cluster, the pod and service templates for a
+   pooler, the PVC and the volume snapshot settings of the cluster for a
+   volume snapshot, then the `metadataPropagation` rules of the resource
+3. `MANDATORY_METADATA`
+
+The rules cannot target the labels and annotations the operator sets itself
+(the `cnpg.io` domain and its subdomains, and the `app.kubernetes.io` labels it
+fills), nor be used in selectors. The operator does not start when a setting is
+not valid, and names the rule in its log. As for the inherited metadata,
+removing a rule does not remove its keys from the existing objects.
+
 ## Current limitations
 
 Currently, CloudNativePG doesn't automatically propagate labels or

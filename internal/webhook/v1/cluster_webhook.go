@@ -53,6 +53,7 @@ import (
 
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
 	"github.com/cloudnative-pg/cloudnative-pg/internal/webhook/guard"
+	"github.com/cloudnative-pg/cloudnative-pg/pkg/metadatarules"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/postgres"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/postgres/hba"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/specs"
@@ -214,6 +215,7 @@ func (v *ClusterCustomValidator) validate(r *apiv1.Cluster) (allErrs field.Error
 		v.validatePluginConfiguration,
 		v.validateLivenessPingerProbe,
 		v.validatePodSelectorRefs,
+		v.validateMetadataPropagation,
 		v.validateExtensions,
 		v.validateServiceAccountConfig,
 		v.validatePrimaryLease,
@@ -2807,7 +2809,24 @@ func (v *ClusterCustomValidator) getAdmissionWarnings(r *apiv1.Cluster) admissio
 	list = append(list, getMonitoringFieldsWarnings(r)...)
 	list = append(list, getDeprecatedMonitoringFieldsWarnings(r)...)
 	list = append(list, getSynchronousReplicationWarnings(r)...)
+	list = append(list, getMetadataPropagationWarnings(r)...)
 	return append(list, getFailureDomainTopologyWarnings(r)...)
+}
+
+// validateMetadataPropagation refuses the invalid metadataPropagation rules
+// of a Cluster
+func (v *ClusterCustomValidator) validateMetadataPropagation(r *apiv1.Cluster) field.ErrorList {
+	errs, _ := validateMetadataPropagation(r.Spec.MetadataPropagation, apiv1.ClusterMetadataTargets)
+	return errs
+}
+
+// getMetadataPropagationWarnings warns about the keys of the
+// metadataPropagation rules the operator sets itself, and about the values
+// of the Cluster MANDATORY_METADATA replaces
+func getMetadataPropagationWarnings(r *apiv1.Cluster) admission.Warnings {
+	_, warnings := validateMetadataPropagation(r.Spec.MetadataPropagation, apiv1.ClusterMetadataTargets)
+	return append(warnings, getReplacedByMandatoryWarnings(metadatarules.ClusterResource,
+		apiv1.ClusterMetadataTargets, r.GetClusterLabelsFor, r.GetClusterAnnotationsFor)...)
 }
 
 func getMonitoringFieldsWarnings(r *apiv1.Cluster) admission.Warnings {

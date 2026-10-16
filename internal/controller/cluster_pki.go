@@ -26,12 +26,13 @@ import (
 
 	"github.com/cloudnative-pg/machinery/pkg/log"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/certs"
-	"github.com/cloudnative-pg/cloudnative-pg/pkg/utils"
+	"github.com/cloudnative-pg/cloudnative-pg/pkg/metadatarules"
 )
 
 // setupPostgresPKI create all the PKI infrastructure that PostgreSQL need to work
@@ -186,7 +187,7 @@ func (r *ClusterReconciler) ensureCASecret(ctx context.Context, cluster *apiv1.C
 			return nil, err
 		}
 
-		return &secret, nil
+		return &secret, r.ensureSecretMetadata(ctx, cluster, &secret)
 	} else if !apierrors.IsNotFound(err) {
 		return nil, err
 	}
@@ -197,7 +198,7 @@ func (r *ClusterReconciler) ensureCASecret(ctx context.Context, cluster *apiv1.C
 	}
 
 	derivedCaSecret := caPair.GenerateCASecret(cluster.Namespace, secretName)
-	utils.SetAsOwnedBy(&derivedCaSecret.ObjectMeta, cluster.ObjectMeta, cluster.TypeMeta)
+	cluster.SetInheritedDataAndOwnershipFor(&derivedCaSecret.ObjectMeta, metadatarules.Secrets)
 	err = r.Create(ctx, derivedCaSecret)
 
 	return derivedCaSecret, err
@@ -337,14 +338,17 @@ func (r *ClusterReconciler) ensureLeafCertificate(
 	err := r.Get(ctx, secretName, &secret)
 	switch {
 	case err == nil:
-		return r.renewAndUpdateCertificate(ctx, caSecret, &secret, altDNSNames)
+		if err := r.renewAndUpdateCertificate(ctx, caSecret, &secret, altDNSNames); err != nil {
+			return err
+		}
+		return r.ensureSecretMetadata(ctx, cluster, &secret)
 	case apierrors.IsNotFound(err):
 		serverSecret, err := generateCertificateFromCA(caSecret, commonName, usage, altDNSNames, secretName)
 		if err != nil {
 			return err
 		}
 
-		utils.SetAsOwnedBy(&serverSecret.ObjectMeta, cluster.ObjectMeta, cluster.TypeMeta)
+		cluster.SetInheritedDataAndOwnershipFor(&serverSecret.ObjectMeta, metadatarules.Secrets)
 		for k, v := range additionalLabels {
 			if serverSecret.Labels == nil {
 				serverSecret.Labels = make(map[string]string)
@@ -355,6 +359,28 @@ func (r *ClusterReconciler) ensureLeafCertificate(
 	default:
 		return err
 	}
+}
+
+// ensureSecretMetadata sets the Cluster's inherited metadata of the Secrets
+// on a Secret the Cluster owns, created only once and possibly before the
+// operator set this metadata there. The Secrets the Cluster does not own,
+// such as those referenced in spec.certificates, are left alone
+func (r *ClusterReconciler) ensureSecretMetadata(
+	ctx context.Context,
+	cluster *apiv1.Cluster,
+	secret *corev1.Secret,
+) error {
+	if owner, owned := IsOwnedByCluster(secret); !owned || owner != cluster.Name {
+		return nil
+	}
+
+	updated := secret.DeepCopy()
+	cluster.SetInheritedDataFor(&updated.ObjectMeta, metadatarules.Secrets)
+	if equality.Semantic.DeepEqual(updated.ObjectMeta, secret.ObjectMeta) {
+		return nil
+	}
+
+	return r.Patch(ctx, updated, client.MergeFrom(secret))
 }
 
 // generateCertificateFromCA create a certificate secret using the provided CA secret

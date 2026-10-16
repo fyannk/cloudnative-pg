@@ -29,6 +29,7 @@ import (
 	"github.com/cloudnative-pg/machinery/pkg/log"
 
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/configparser"
+	"github.com/cloudnative-pg/cloudnative-pg/pkg/metadatarules"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/versions"
 )
 
@@ -125,6 +126,23 @@ type Data struct {
 	// InheritedLabels is a list of labels that every resource could inherit from
 	// the owning Cluster
 	InheritedLabels []string `json:"inheritedLabels" env:"INHERITED_LABELS"`
+
+	// DefaultMetadata is a YAML list of rules putting labels and annotations
+	// on the objects of every Cluster, Pooler, ScheduledBackup and Backup, or
+	// of the kinds of resources a rule names, when the resource does not set
+	// the key
+	DefaultMetadata string `json:"defaultMetadata" env:"DEFAULT_METADATA"`
+
+	// MandatoryMetadata is a YAML list of rules putting labels and
+	// annotations on the objects of every Cluster, Pooler, ScheduledBackup
+	// and Backup, or of the kinds of resources a rule names, replacing the
+	// value set by the resource
+	MandatoryMetadata string `json:"mandatoryMetadata" env:"MANDATORY_METADATA"`
+
+	// defaultMetadata and mandatoryMetadata are the compiled forms of the
+	// two settings above
+	defaultMetadata   metadatarules.Sets
+	mandatoryMetadata metadatarules.Sets
 
 	// MonitoringQueriesConfigmap is the name of the configmap in the operator namespace which contain
 	// the monitoring queries. The queries will be read from the data key: "queries".

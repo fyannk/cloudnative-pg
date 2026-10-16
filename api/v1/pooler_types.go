@@ -120,6 +120,13 @@ type PoolerSpec struct {
 	// +optional
 	ServiceTemplate *ServiceTemplateSpec `json:"serviceTemplate,omitempty"`
 
+	// Labels and annotations to put on the objects of the Pooler, per kind
+	// of object, on top of the template and the service template
+	// +kubebuilder:validation:MaxItems=64
+	// +kubebuilder:validation:XValidation:rule="self.all(r, r.targets.all(t, t in ['all', 'poolerPods', 'poolerDeployments', 'services', 'secrets']))",message="a Pooler accepts the targets all, poolerPods, poolerDeployments, services and secrets"
+	// +optional
+	MetadataPropagation []MetadataPropagationRule `json:"metadataPropagation,omitempty"`
+
 	// Name of an existing ServiceAccount in the same namespace to use for the pooler.
 	// When specified, the operator will not create a new ServiceAccount
 	// but will use the provided one. This is useful for sharing a single
