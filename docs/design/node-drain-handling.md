@@ -2,6 +2,8 @@
 
 Status: design notes, not implemented. Written against the `claude/trusting-curie-c12px8`
 branch (based on upstream commit `71b37de`). File and line references point at that tree.
+NodeEcho references point at https://github.com/fyannk/NodeEcho, commit `172fa80`
+(contract v1, `docs/contract.md`, `docs/design.md`, `docs/cloudnative-pg.md`).
 
 This document records everything discussed about making node drains work
 automatically for every CloudNativePG cluster, in every installation mode of the
@@ -209,7 +211,17 @@ third party (NodeEcho, a webhook, a human) survive reconciliation.
 - The node watch cannot be registered without `nodes` RBAC. A
   controller-runtime informer without permission never syncs and blocks
   manager start-up, so the restricted build must register that watch
-  conditionally (the fork is assumed to do this already).
+  conditionally. According to NodeEcho's `docs/cloudnative-pg.md`, the fork
+  carries an `API_NODE_ENABLED` setting (default `true`, probed at start-up
+  like the other optional APIs) that disables both the watch and every Node
+  read, counts `status.topology.nodesUsed` from pod `spec.nodeName`, and sets
+  a `TopologyUnavailable` condition when node labels would be needed. Upstream
+  has the equivalent, unmerged proposal `WATCH_NODES` (PR #10135, issue
+  #9346). Neither recovers drain detection; both document the loss.
+- Upstream issue #7799 ("cordon causes a switchover") shows that some users
+  consider the cordon-triggered switchover itself undesirable. Whatever signal
+  source is used, the reaction to a plain cordon should stay a policy the
+  operator owns, and may deserve its own switch.
 - `isNodeUnschedulableOrBeingDrained` returns a 403 error, which is logged and
   ignored. A cordon therefore never triggers a switchover.
 - PDBs are namespaced and still work. Net effect: **a drain of a node hosting
@@ -223,10 +235,10 @@ third party (NodeEcho, a webhook, a human) survive reconciliation.
 The plan as proposed:
 
 1. Tag node, operator watches nodes, switchover. (Stock.)
-2. NodeEcho (https://github.com/fyannk/NodeEcho; the page was not reachable
-   from the analysis environment, so it is described from the author's one-line
-   summary) transposes node taints and labels onto pods; the operator can,
-   configurably, move affected primaries.
+2. NodeEcho (https://github.com/fyannk/NodeEcho) reflects node facts onto
+   pods; the operator can, configurably, move affected primaries. The code was
+   inspected after the first draft of this document; section 6.3 describes
+   what it actually does.
 3. Evict pods; if the operator has webhooks, intercept `pods/eviction` and
    switch over.
 4. If the operator has neither the node API nor webhooks, default PDBs to off.
@@ -235,9 +247,13 @@ Assessment:
 
 - Step 1 is complete and works. Only cordon and the configured taint keys
   count; labels do not.
-- Step 2, taken literally (operator consumes NodeEcho's labels), only adds
-  value where the operator lacks node RBAC. It should be reframed as a generic,
-  CNPG-defined pod annotation contract with NodeEcho as one producer (section 6).
+- Step 2 only adds value where the operator lacks node RBAC, which is exactly
+  the fork's case. NodeEcho publishes **facts** (cordon state, selected
+  taints) and explicitly interprets nothing, so the first-draft idea of a
+  single CNPG-defined "drain requested" annotation written by NodeEcho does not
+  fit its contract. Section 6 therefore defines two inputs: the fact keys
+  NodeEcho already writes, evaluated with CNPG's own `DRAIN_TAINTS` policy, and
+  a separate CNPG-owned request key for eviction-driven producers.
 - Step 3 is the most valuable addition for cluster-wide installs. It should be
   built as "annotate and allow", not "deny" (section 7). In restricted installs
   the webhook cannot be the operator's own unless certificates and the
@@ -334,10 +350,11 @@ the PDB unconditionally; a switch set to `on` keeps today's behaviour.
   event on the `Cluster` at reconcile time (rate-limited) saying that primaries
   may be evicted and describing the resulting behaviour (switchover on eviction
   if section 8 is implemented, failover otherwise).
-- When the node watch is unavailable (restricted mode) and no annotation
-  producer is configured, surface a `Cluster` condition such as
-  `DrainDetectionDegraded` so administrators know drains will stall (PDB on)
-  or be handled reactively (PDB off).
+- When the node watch is unavailable (`API_NODE_ENABLED=false` in the fork)
+  and no fact-key or request-key producer is configured, surface a `Cluster`
+  condition such as `DrainDetectionDegraded`, next to the fork's existing
+  `TopologyUnavailable`, so administrators know drains will stall (PDB on) or
+  be handled reactively (PDB off).
 
 ---
 
@@ -353,8 +370,11 @@ Replace the two direct node lookups (`replicas.go:74` for the current primary,
    `isNodeUnschedulableOrBeingDrained`. Skipped when the operator has no node
    RBAC (detected once at start-up with a `SelfSubjectAccessReview`, or by
    configuration).
-2. **Pod annotation** (section 6.2): present and not stale.
-3. **DisruptionTarget condition** on the pod (section 8), for the current
+2. **NodeEcho fact keys** on the pod (section 6.2a): the unschedulable key
+   present, or the taints annotation containing a key listed in
+   `DRAIN_TAINTS`. Same policy as the node path, different source.
+3. **CNPG request key** on the pod (section 6.2b): present and not stale.
+4. **DisruptionTarget condition** on the pod (section 8), for the current
    primary only. Candidates carrying it are being evicted and must be skipped.
 
 Both call sites must use the same function; otherwise a switchover can target a
@@ -367,46 +387,161 @@ moved off the drained node first") should be relaxed when no node information
 is available, otherwise a co-located replica with node-local storage stalls the
 switchover.
 
-### 6.2 The pod annotation contract
+### 6.2 Two pod-metadata contracts
 
-Defined by CloudNativePG, consumed by the operator, written by any producer.
+Both survive the instance metadata reconciler (section 2.6), and both wake the
+operator without a new watch or new RBAC because it already declares
+`Owns(&corev1.Pod{})` with no predicate: any metadata change on an instance
+pod enqueues its `Cluster` (NodeEcho's `docs/cloudnative-pg.md` makes the
+same observation).
 
-- Key: a `cnpg.io/` annotation, for example `cnpg.io/drainRequested`.
+#### 6.2a Fact keys, written by NodeEcho (contract v1)
+
+NodeEcho echoes Node data as it is and never decides that a node is draining.
+What a consumer can rely on, from `docs/contract.md`:
+
+| Key on the pod | Form | Value | Present when |
+|---|---|---|---|
+| `nodeecho.fyannk.dev/unschedulable` (rule `unschedulable.key`) | label by default | `"true"` | the Node has `spec.unschedulable: true` |
+| `nodeecho.fyannk.dev/taints` (rule `taints.key`) | annotation | compact JSON array of `corev1.Taint` objects (`key`, `value`, `effect`, `timeAdded`), Node order, only the keys listed in the rule's `taints.copy` | at least one listed taint is on the Node |
+| `<prefix><node label>` / `<prefix><node annotation>` | label or annotation | the Node value, unchanged | the Node has it and the rule copies it |
+
+Rules that matter for the operator:
+
+- When the condition stops holding the key is **removed**. NodeEcho never
+  writes `"false"` or an empty array. No timestamp, version or heartbeat key
+  exists on pods. The operator therefore needs no staleness window for these
+  keys; presence is the signal.
+- Updates are eventually consistent with no ordering guarantee relative to an
+  eviction. An absent key means "not set on the Node" **or** "not projected
+  yet / NodeEcho down". A stopped NodeEcho leaves the last values in place and
+  cannot announce that it stopped. The operator must keep working with reduced
+  behaviour when NodeEcho is absent.
+- Key names are per rule, so the operator must take them from configuration
+  (NodeEcho's own placeholder is `NODE_INFO_PREFIX`; two explicit settings
+  such as `DRAIN_UNSCHEDULABLE_KEY` and `DRAIN_TAINTS_KEY` are clearer).
+- The operator keeps its `DRAIN_TAINTS` policy and applies it to the JSON
+  array exactly as it applies it to `Node.spec.taints` (key match only, no
+  value or effect filtering). The NodeEcho rule must therefore echo at least
+  the keys in `DRAIN_TAINTS`; NodeEcho has no default taint list and no
+  wildcard. Document that the two lists must agree.
+- NodeEcho writes with server-side apply, field manager `nodeecho/<rule>`,
+  owns only the keys it wrote, never overwrites a key owned by another writer,
+  and patches with the pod UID as precondition, so a recreated pod never
+  inherits its predecessor's values. A rescheduled pod is a new object that
+  starts without the keys.
+- Protection: NodeEcho ships two optional `ValidatingAdmissionPolicy` objects,
+  `nodeecho-reserved-keys` (nobody but NodeEcho's ServiceAccount may write
+  `nodeecho.fyannk.dev/*`) and `nodeecho-writer-scope` (NodeEcho may only
+  change listed labels and annotations, never spec, owner references or
+  finalizers). CNPG components must never write NodeEcho keys; the policy
+  would reject them.
+
+Effect of stale fact keys (NodeEcho down mid-drain): a stale `unschedulable`
+on the old primary (now replica) only keeps it out of candidate selection; a
+stale key on every pod could block any switchover. Both are visible with
+`kubectl get pods -l nodeecho.fyannk.dev/unschedulable`; document it, do not
+try to solve it in the operator.
+
+Bonus the same rule gives for free: copying `topology.kubernetes.io/zone` and
+custom topology labels onto instance pods lets clusters use
+`podFailureDomainKeys` instead of `nodeFailureDomainKeys`, which removes the
+other Node read of the operator (`getNodes` in `cluster_status.go`). On
+Kubernetes 1.35+ zone and region are copied natively at binding
+(`PodTopologyLabelsAdmission`), once, not continuously.
+
+#### 6.2b Request key, owned by CloudNativePG
+
+A separate contract for producers that know an eviction is happening, which is
+a *request* to move the primary, not a node fact. NodeEcho's projection must
+not write it (its design keeps interpretation out of scope), but a separate
+eviction component may (section 7.4).
+
+- Key: a `cnpg.io/` annotation, for example `cnpg.io/evictionRequested`.
 - Value: an RFC 3339 timestamp of the latest signal. Producers overwrite it on
   every new signal; drain tools retry evictions every few seconds, so the
   timestamp keeps refreshing while the drain is active.
 - Consumer semantics: the operator treats the annotation as valid for a bounded
   time (for example 10 minutes) after its timestamp. A stale annotation is
-  ignored, which covers aborted drains and uncordoned nodes without needing a
-  "clear" path. The operator may additionally remove the annotation once it has
-  acted (after the role label flips).
+  ignored, which covers aborted drains without needing a "clear" path. The
+  operator may additionally remove the annotation once it has acted (after the
+  role label flips).
+- Producers: the `pods/eviction` webhook (section 7), the instance manager on
+  SIGTERM (section 8), a human with `kubectl annotate` as an escape hatch.
 - Producers must be idempotent and must not write on dry-run requests.
-- The annotation survives the instance metadata reconciler (section 2.6).
-- Because the operator already owns and watches instance pods
-  (`Owns(&corev1.Pod{})`), an annotation change enqueues the `Cluster` with no
-  new watch and no new RBAC.
-- A human can set it with `kubectl annotate` to force a switchover away from a
-  pod, which is a useful debugging and escape hatch on its own.
+- Trust boundary: anyone who can patch pods in the namespace can forge it. The
+  worst outcome is an unnecessary switchover, which such an identity could
+  usually cause anyway. If that matters, ship a `ValidatingAdmissionPolicy`
+  modelled on `nodeecho-reserved-keys` restricting the key to the operator's,
+  the instance managers' and the eviction webhook's ServiceAccounts.
 
-### 6.3 Producer: NodeEcho
+### 6.3 Producer: NodeEcho (as it exists)
 
-NodeEcho runs as a platform component with its own `nodes` read permission. It
-mirrors node state (cordon, configured drain taints) onto the pods scheduled on
-that node. For CloudNativePG it should write the annotation above onto instance
-pods when the node becomes unschedulable or tainted, and refresh it while the
-condition holds.
+A Go / controller-runtime controller (`cmd/nodeecho`, `internal/controller`,
+`internal/projection`) configured by a ConfigMap (`rules.yaml`, `version: 1`,
+a list of rules). Each rule has a required `podSelector`, optional
+`namespaceSelector` and `nodeSelector`, and up to four blocks:
+`unschedulable`, `taints`, `labels`, `annotations`. The README reports the
+contract implemented and tested with envtest and end to end on k3d
+(Kubernetes 1.34, 1.36, and 1.36 with `PodTopologyLabelsAdmission` off); the
+header of `docs/contract.md` still says "no implementation exists yet" and is
+stale.
 
-Properties:
+Suggested rule for CloudNativePG, from NodeEcho's own documentation:
+
+```yaml
+version: 1
+rules:
+- name: cnpg-instances
+  podSelector:
+    matchLabels: {cnpg.io/podRole: instance}
+  unschedulable: {}                       # nodeecho.fyannk.dev/unschedulable label
+  taints:
+    copy: [node.kubernetes.io/unschedulable, ToBeDeletedByClusterAutoscaler,
+           karpenter.sh/disrupted, karpenter.sh/disruption]   # must equal DRAIN_TAINTS
+  labels:
+    copy: [topology.kubernetes.io/zone]   # optional, for podFailureDomainKeys
+```
+
+Runtime permissions (`config/rbac/cluster_role.yaml`): `nodes` and
+`namespaces` list/watch, `pods` list/watch/patch (narrowable to selected
+namespaces with RoleBindings), events create/patch, leader-election leases.
+
+Reconciliation: Nodes and selected pods are watched, pods are indexed by
+`spec.nodeName`, a relevant Node change enqueues only that node's selected
+pods, predicates ignore heartbeats, and only semantic changes are patched. A
+full resync runs at start-up.
+
+Properties relevant to this design:
 
 - Installed once per Kubernetes cluster by the platform team, alongside the
   CRDs. Tenants need nothing.
-- Proactive: the signal arrives **before** any eviction, exactly like the stock
-  node watch, so the primary PDB can stay `on` and the drain behaves as in a
-  cluster-wide install.
-- It shifts the node-read privilege from the tenant operator to one shared
-  component, which is the right place for it in a multi-tenant cluster.
-- Natural home for the eviction webhook producer too (section 7.4), giving one
-  component, two signal sources, one contract.
+- Proactive: the signal arrives **before** any eviction, like the stock node
+  watch, so the primary PDB can stay `on` and the drain behaves as in a
+  cluster-wide install. NodeEcho's `docs/cloudnative-pg.md` notes this is
+  precisely what a pure eviction webhook cannot reproduce (a cordon alone,
+  issue #7799).
+- It centralises the node-read privilege in one shared component rather than
+  eliminating it from the cluster.
+- One extra asynchronous hop: equivalent decisions after convergence, not
+  identical reaction time. A projection that arrives after a reconciliation can
+  cause one wasted cycle. NodeEcho publishes no freshness signal.
+- It never evicts, never touches readiness, never controls PostgreSQL, and
+  must not be read as proof that the old primary has stopped (fencing, lease
+  and quorum stay in CNPG).
+- Eviction integration is listed in NodeEcho's design under "Optional future
+  eviction integration" and is explicitly **outside its first release**. The
+  webhook producer of section 7 is therefore a proposal to NodeEcho or a
+  sibling component, not a current feature. If hosted in NodeEcho's binary,
+  the CNPG request key has to be added to the `nodeecho-writer-scope` allowed
+  list, and the component conceptually remains a second producer with its own
+  contract.
+- NodeEcho's validation checklist (`docs/design.md`, "Validation before
+  claiming CNPG parity") lists the end-to-end scenarios the fork must run
+  with a direct-Node deployment as reference: cordon/uncordon, each taint,
+  multiple cordoned nodes, drain with PDB, local PV with `reusePVC`, topology,
+  NodeEcho start/stop/restart, same-name pod recreation, patch conflicts,
+  propagation latency.
 
 ### 6.4 Producer: the eviction webhook
 
@@ -441,8 +576,8 @@ On each eviction request the webhook:
    with `sideEffects: NoneOnDryRun`.
 2. Looks up the pod (the Eviction object does not carry labels).
 3. If the pod is a CloudNativePG instance that is the current primary of a
-   multi-instance cluster, patches the drain annotation (section 6.2) onto the
-   pod with the current timestamp.
+   multi-instance cluster, patches the request key (section 6.2b) onto the
+   pod with the current timestamp. Never a NodeEcho key.
 4. Returns **allowed**.
 
 The primary PDB then rejects the eviction with 429 as it does today, the drain
@@ -491,9 +626,11 @@ Two deployments of the same handler:
   (`internal/cmd/manager/controller/controller.go:490`, `ensurePKI`, and the
   `certs` package inject the CA bundle); adding the `pods/eviction` rule is a
   small change.
-- **As a platform component** for restricted installs, ideally inside
-  NodeEcho, installed once per Kubernetes cluster. It needs cluster-wide
-  `pods` get/patch. It never denies, so it is operator-agnostic and needs no
+- **As a platform component** for restricted installs, installed once per
+  Kubernetes cluster: either a small sibling of NodeEcho or a later NodeEcho
+  feature (its design lists eviction integration as a possible future
+  addition, outside the first release). It needs cluster-wide `pods`
+  get/patch. It never denies, so it is operator-agnostic and needs no
   per-tenant routing.
 
 ### 7.5 Per-tenant webhook configurations in restricted installs (with cert-manager)
@@ -563,9 +700,11 @@ On `SIGTERM`, before shutting down, the instance manager:
 2. Computes the hard deadline from `metadata.deletionTimestamp` plus
    `metadata.deletionGracePeriodSeconds` (the **effective** grace period chosen
    by the evictor, which may be shorter than `stopDelay`).
-3. Requests a switchover by writing the drain annotation (section 6.2) on its
+3. Requests a switchover by writing the request key (section 6.2b) on its
    own pod, or an equivalent marker on the `Cluster`. The instance manager
-   already patches its pod and the cluster status, so no new RBAC.
+   already patches its pod and the cluster status, so no new RBAC. It must
+   never write a NodeEcho key; the `nodeecho-reserved-keys` policy would
+   reject it and it would be a forged fact.
 4. Arms a hold timer instead of calling `TryShuttingDownSmartFast`:
    `hold = min(configured hold, deadline - reserve)`, where `reserve` covers
    the fast shutdown and its checkpoint (at least `smartShutdownTimeout`, or a
@@ -675,8 +814,9 @@ section 5.5.
 | Install mode | Proactive signal | Primary PDB | Drain of a node with a primary |
 |---|---|---|---|
 | Cluster-wide | node watch (+ eviction webhook in the operator) | on | switchover before eviction; eviction retries pass once the role flips |
-| Restricted + NodeEcho (taints and/or eviction webhook) | pod annotation | on | same as cluster-wide; the signal comes from the platform component |
-| Restricted + cert-manager + per-tenant webhook config | pod annotation written by the tenant operator's own webhook | on | same as cluster-wide |
+| Restricted + NodeEcho | NodeEcho fact keys (cordon, drain taints) | on | same as cluster-wide; the signal comes from the platform component |
+| Restricted + platform eviction webhook (sibling of NodeEcho or later NodeEcho feature) | CNPG request key | on | switchover starts at the first eviction attempt; a plain cordon triggers nothing |
+| Restricted + cert-manager + per-tenant webhook config | CNPG request key written by the tenant operator's own webhook | on | same as the row above |
 | Restricted, nothing else, mode not enabled | none | on | drain stalls on the primary until a human promotes; condition `DrainDetectionDegraded` |
 | Restricted, nothing else, "allow evictions of primaries" | `DisruptionTarget` (reactive) | off | eviction succeeds; instance manager holds; operator switches over; failover if the operator does not answer in time |
 | Any, `instances == 1` | n/a | per `singleInstance` switch, default off | eviction succeeds; downtime until rescheduled; PVCs never deleted for the last instance |
@@ -690,14 +830,18 @@ Replica PDB: on in every row for `instances >= 3`.
 1. PDB policy with operator-level defaults and per-`Cluster` overrides, plus
    the last-instance PVC guard. Smallest change, immediate relief for
    single-instance clusters, prerequisite for everything else.
-2. Unified drain-signal function in the operator with the pod annotation
-   contract, used at both call sites, with node-free candidate selection.
+2. Unified drain-signal function in the operator consuming the NodeEcho fact
+   keys (configurable key names, `DRAIN_TAINTS` applied to the JSON array)
+   and the CNPG request key, used at both call sites, with node-free candidate
+   selection. This is the "smallest consumer change" NodeEcho's documentation
+   asks for, and it unlocks the NodeEcho path on its own.
 3. Eviction-aware SIGTERM handling driven by `DisruptionTarget`. This makes the
    "allow evictions of primaries" mode acceptable.
 4. Producers for the annotation:
    - `pods/eviction` handler in the operator's own webhook server (cluster-wide
      installs; also usable per tenant with cert-manager, section 7.5);
-   - the same handler and the taint mirror in NodeEcho (restricted installs
+   - the same handler as a platform component next to NodeEcho, or proposed
+     to NodeEcho as its future eviction integration (restricted installs
      without cert-manager).
 5. Documentation: the decision matrix, the knobs, and the explicit statement
    that `-rw` connections fail during an eviction-triggered switchover.
@@ -726,6 +870,15 @@ Stock node watching stays untouched throughout.
 - EndpointSlice behaviour for terminating pods on the CNI / kube-proxy in use
   (terminating endpoints are excluded from new connections by default; some
   data planes differ).
+- NodeEcho propagation latency from cordon to pod key under a maintenance
+  burst (NodeEcho's own design asks for this to be measured), compared with
+  the drain tool's eviction retry period.
+- Behaviour of the operator when NodeEcho is down mid-drain and the fact keys
+  are stale, in both directions (stale present, stale absent).
+- That the fork's `API_NODE_ENABLED=false` path leaves `Owns(&corev1.Pod{})`
+  without a predicate, so metadata-only pod patches still enqueue the Cluster.
+- Whether the fork wants the plain-cordon trigger to be its own switch (issue
+  #7799).
 - cert-manager `cainjector` presence and the exact secret key names
   (`tls.crt`/`tls.key` from cert-manager versus `apiserver.crt`/`apiserver.key`
   expected when `WEBHOOK_CERT_DIR` is set; a projected volume with `items` can
@@ -761,3 +914,10 @@ Stock node watching stays untouched throughout.
 | External webhook certs | `internal/cmd/manager/controller/controller.go:187`, `:490` |
 | Node maintenance window type | `api/v1/cluster_types.go:1424` |
 | User documentation on drains | `docs/src/kubernetes_upgrade.md` |
+| NodeEcho contract (keys, ownership, timing, configuration, protection) | NodeEcho `docs/contract.md` |
+| NodeEcho reasoning, reconciliation, permissions, validation checklist | NodeEcho `docs/design.md` |
+| NodeEcho analysis of CNPG's Node reads and the smallest consumer change | NodeEcho `docs/cloudnative-pg.md` |
+| NodeEcho rule defaults and key names | NodeEcho `internal/config/config.go:37` |
+| NodeEcho projection and pod patching | NodeEcho `internal/projection/projection.go`, `internal/controller/pod.go` |
+| NodeEcho admission policies | NodeEcho `config/policy/reserved_keys.yaml`, `config/policy/writer_scope.yaml` |
+| NodeEcho RBAC | NodeEcho `config/rbac/cluster_role.yaml` |
