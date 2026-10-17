@@ -898,6 +898,12 @@ func (r *ClusterReconciler) createOrPatchDefaultMetricsConfigmap(ctx context.Con
 		return nil
 	}
 
+	// A copy created before the cache label existed must get it, or a filtered
+	// cache never holds it and every reconciliation reads it from the API server
+	if err := ensureReconcileLabel(ctx, r.Client, &targetConfigMap); err != nil {
+		return fmt.Errorf("while labelling default monitoring queries configmap: %w", err)
+	}
+
 	if reflect.DeepEqual(sourceConfigmap.Data, targetConfigMap.Data) {
 		// Everything fine, the two secrets are exactly the same
 		return nil
@@ -985,6 +991,12 @@ func (r *ClusterReconciler) createOrPatchDefaultMetricsSecret(ctx context.Contex
 			"default metrics already exists, without the required annotation",
 			"secret", targetSecret.Name, "annotation", utils.OperatorVersionAnnotationName)
 		return nil
+	}
+
+	// A copy created before the cache label existed must get it, or a filtered
+	// cache never holds it and every reconciliation reads it from the API server
+	if err := ensureReconcileLabel(ctx, r.Client, &targetSecret); err != nil {
+		return fmt.Errorf("while labelling default monitoring queries secret: %w", err)
 	}
 
 	if reflect.DeepEqual(sourceSecret.Data, targetSecret.Data) {
