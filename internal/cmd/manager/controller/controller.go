@@ -112,6 +112,11 @@ func RunController(
 		"version", versions.Version,
 		"build", versions.Info)
 
+	webhookOptions, err := buildWebhookOptions(port, conf)
+	if err != nil {
+		return err
+	}
+
 	managerOptions := ctrl.Options{
 		Scheme:           scheme,
 		Metrics:          buildMetricsOpts(metricsAddr, conf),
@@ -119,10 +124,7 @@ func RunController(
 		LeaseDuration:    &leaderConfig.leaseDuration,
 		RenewDeadline:    &leaderConfig.renewDeadline,
 		LeaderElectionID: LeaderElectionID,
-		WebhookServer: webhook.NewServer(webhook.Options{
-			Port:    port,
-			CertDir: defaultWebhookCertDir,
-		}),
+		WebhookServer:    webhook.NewServer(webhookOptions),
 		PprofBindAddress: getPprofServerAddress(pprofDebug),
 		// LeaderElectionReleaseOnCancel defines if the leader should step down voluntarily
 		// when the Manager ends. This requires the binary to immediately end when the
@@ -184,12 +186,6 @@ func RunController(
 		setupLog.Info("Listening for changes on all namespaces")
 	}
 
-	if conf.WebhookCertDir != "" {
-		// If OLM will generate certificates for us, let's just
-		// use those
-		managerOptions.WebhookServer.(*webhook.DefaultServer).Options.CertDir = conf.WebhookCertDir
-	}
-
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), managerOptions)
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")
@@ -197,14 +193,6 @@ func RunController(
 	}
 
 	webhookServer := mgr.GetWebhookServer().(*webhook.DefaultServer)
-	if conf.WebhookCertDir != "" {
-		// Use certificate names compatible with OLM
-		webhookServer.Options.CertName = "apiserver.crt"
-		webhookServer.Options.KeyName = "apiserver.key"
-	} else {
-		webhookServer.Options.CertName = "tls.crt"
-		webhookServer.Options.KeyName = "tls.key"
-	}
 
 	// kubeClient is the kubernetes client set with
 	// support for the apiextensions that is used
@@ -226,6 +214,13 @@ func RunController(
 	if conf.EnableWebhookNamespaceSuffix && conf.OperatorNamespace == "" {
 		return fmt.Errorf("ENABLE_WEBHOOK_NAMESPACE_SUFFIX requires OPERATOR_NAMESPACE to be set " +
 			"as a pod environment variable (typically via the Downward API fieldRef.fieldPath = metadata.namespace)")
+	}
+	if conf.EnableWebhookNamespaceSuffix &&
+		(conf.MutatingWebhookConfigurationName != "" || conf.ValidatingWebhookConfigurationName != "") {
+		setupLog.Info("Explicit webhook configuration names are used as given, "+
+			"ENABLE_WEBHOOK_NAMESPACE_SUFFIX does not apply to them",
+			"mutatingWebhookConfigurationName", conf.GetMutatingWebhookConfigurationName(),
+			"validatingWebhookConfigurationName", conf.GetValidatingWebhookConfigurationName())
 	}
 
 	discoveryClient, err := utils.GetDiscoveryClient()
@@ -433,6 +428,35 @@ func buildMetricsOpts(metricsAddr string, conf *configuration.Data) server.Optio
 	setupLog.Info("Metrics server enabled with TLS", "certDir", conf.MetricsCertDir)
 
 	return metricsOptions
+}
+
+// buildWebhookOptions returns the options of the webhook server. With an
+// externally provided certificate (WEBHOOK_CERT_DIR), the certificate files
+// are looked up under the known conventions before the manager is built, so
+// that a missing or incomplete certificate stops the start right away.
+func buildWebhookOptions(port int, conf *configuration.Data) (webhook.Options, error) {
+	options := webhook.Options{
+		Port:     port,
+		CertDir:  defaultWebhookCertDir,
+		CertName: certs.TLSCertKey,
+		KeyName:  certs.TLSPrivateKeyKey,
+	}
+	if conf.WebhookCertDir == "" {
+		return options, nil
+	}
+
+	files, err := certs.FindServingCertificate(conf.WebhookCertDir)
+	if err != nil {
+		setupLog.Error(err, "unable to use the webhook certificate directory", "certDir", conf.WebhookCertDir)
+		return options, err
+	}
+	setupLog.Info("Serving the webhooks with an externally provided certificate",
+		"certDir", conf.WebhookCertDir, "certName", files.CertName, "keyName", files.KeyName)
+
+	options.CertDir = conf.WebhookCertDir
+	options.CertName = files.CertName
+	options.KeyName = files.KeyName
+	return options, nil
 }
 
 // loadConfiguration reads the configuration from the provided configmap and secret

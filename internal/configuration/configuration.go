@@ -184,6 +184,16 @@ type Data struct {
 	// on the same cluster. The operator will fail to start if this is enabled without OperatorNamespace.
 	EnableWebhookNamespaceSuffix bool `json:"enableWebhookNamespaceSuffix" env:"ENABLE_WEBHOOK_NAMESPACE_SUFFIX"`
 
+	// MutatingWebhookConfigurationName is the name of the MutatingWebhookConfiguration
+	// the operator injects its CA bundle into, used as given when set. When empty, the
+	// default name applies, with the namespace suffix when EnableWebhookNamespaceSuffix is true.
+	MutatingWebhookConfigurationName string `json:"mutatingWebhookConfigurationName" env:"MUTATING_WEBHOOK_CONFIGURATION_NAME"` //nolint:lll
+
+	// ValidatingWebhookConfigurationName is the name of the ValidatingWebhookConfiguration
+	// the operator injects its CA bundle into, used as given when set. When empty, the
+	// default name applies, with the namespace suffix when EnableWebhookNamespaceSuffix is true.
+	ValidatingWebhookConfigurationName string `json:"validatingWebhookConfigurationName" env:"VALIDATING_WEBHOOK_CONFIGURATION_NAME"` //nolint:lll
+
 	// DrainTaints is a list of taints the operator will watch and treat as Unschedule
 	DrainTaints []string `json:"drainTaints" env:"DRAIN_TAINTS"`
 
@@ -258,20 +268,28 @@ func (config *Data) WatchedNamespaces() []string {
 	return cleanNamespaceList(config.WatchNamespace)
 }
 
-// GetMutatingWebhookConfigurationName returns the name of the MutatingWebhookConfiguration.
-// When EnableWebhookNamespaceSuffix is true and OperatorNamespace is set, it appends
-// the operator namespace to avoid collisions between multiple operator instances.
+// GetMutatingWebhookConfigurationName returns the name of the MutatingWebhookConfiguration:
+// the explicit name when set, otherwise the default name, with the operator namespace
+// appended when EnableWebhookNamespaceSuffix is true and OperatorNamespace is set, to avoid
+// collisions between multiple operator instances.
 func (config *Data) GetMutatingWebhookConfigurationName() string {
+	if config.MutatingWebhookConfigurationName != "" {
+		return config.MutatingWebhookConfigurationName
+	}
 	if config.EnableWebhookNamespaceSuffix && config.OperatorNamespace != "" {
 		return DefaultMutatingWebhookConfigurationName + "-" + config.OperatorNamespace
 	}
 	return DefaultMutatingWebhookConfigurationName
 }
 
-// GetValidatingWebhookConfigurationName returns the name of the ValidatingWebhookConfiguration.
-// When EnableWebhookNamespaceSuffix is true and OperatorNamespace is set, it appends
-// the operator namespace to avoid collisions between multiple operator instances.
+// GetValidatingWebhookConfigurationName returns the name of the ValidatingWebhookConfiguration:
+// the explicit name when set, otherwise the default name, with the operator namespace
+// appended when EnableWebhookNamespaceSuffix is true and OperatorNamespace is set, to avoid
+// collisions between multiple operator instances.
 func (config *Data) GetValidatingWebhookConfigurationName() string {
+	if config.ValidatingWebhookConfigurationName != "" {
+		return config.ValidatingWebhookConfigurationName
+	}
 	if config.EnableWebhookNamespaceSuffix && config.OperatorNamespace != "" {
 		return DefaultValidatingWebhookConfigurationName + "-" + config.OperatorNamespace
 	}
