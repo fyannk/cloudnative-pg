@@ -28,6 +28,7 @@ import (
 	"k8s.io/utils/ptr"
 
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
+	"github.com/cloudnative-pg/cloudnative-pg/internal/configuration"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/utils"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -339,5 +340,33 @@ var _ = Describe("Job service account token", func() {
 				ReadOnly:  true,
 			}), "container %s should mount the projected token", container.Name)
 		}
+	})
+})
+
+// Goal: the jobs run with the environment of the instance (the major upgrade
+// job today), so they get the same proxy settings as the instance pods
+var _ = Describe("Job environment with the proxy settings of the operator", func() {
+	It("carries the settings of the operator", func() {
+		previous := configuration.Current.PropagateProxyEnv
+		DeferCleanup(func() { configuration.Current.PropagateProxyEnv = previous })
+		configuration.Current.PropagateProxyEnv = true
+		GinkgoT().Setenv("HTTPS_PROXY", "http://proxy:3129")
+
+		cluster := apiv1.Cluster{
+			ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "test-ns"},
+			Spec: apiv1.ClusterSpec{
+				Instances: 1,
+				ImageName: "postgres:18.0",
+				Bootstrap: &apiv1.BootstrapConfiguration{InitDB: &apiv1.BootstrapInitDB{}},
+			},
+		}
+		cmd := BuildPrimaryBootstrapCommandViaInitdb(cluster)
+		job := CreatePrimaryJob(cluster, 1, cmd.Role, cmd.Command, getExtensions(&cluster))
+
+		Expect(job.Spec.Template.Spec.Containers).To(HaveLen(1))
+		Expect(job.Spec.Template.Spec.Containers[0].Env).To(ContainElements(
+			corev1.EnvVar{Name: "HTTPS_PROXY", Value: "http://proxy:3129"},
+			corev1.EnvVar{Name: "https_proxy", Value: "http://proxy:3129"},
+		))
 	})
 })

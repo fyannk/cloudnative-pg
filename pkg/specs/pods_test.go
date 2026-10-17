@@ -29,6 +29,7 @@ import (
 	"k8s.io/utils/ptr"
 
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
+	"github.com/cloudnative-pg/cloudnative-pg/internal/configuration"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/postgres"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/utils"
 
@@ -1117,5 +1118,90 @@ var _ = Describe("instance probes", func() {
 		} {
 			Expect(probe.HTTPGet.Scheme).To(Equal(corev1.URISchemeHTTPS))
 		}
+	})
+})
+
+// Goal: enabling the propagation changes nothing for a Cluster until the
+// operator has proxy settings, and then the settings land at the end of the
+// instance environment, in the hash, unless the Cluster sets its own
+var _ = Describe("CreatePodEnvConfig with the proxy settings of the operator", func() {
+	cluster := apiv1.Cluster{
+		ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "test-ns"},
+		Spec:       apiv1.ClusterSpec{Env: []corev1.EnvVar{{Name: "TZ", Value: "UTC"}}},
+	}
+	clusterWithOwnProxy := cluster.DeepCopy()
+	clusterWithOwnProxy.Spec.Env = append(clusterWithOwnProxy.Spec.Env, corev1.EnvVar{Name: "no_proxy", Value: "*"})
+
+	noProxyEnvironment := func() {
+		for _, name := range []string{"HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy", "NO_PROXY", "no_proxy"} {
+			GinkgoT().Setenv(name, "")
+		}
+	}
+	proxyNames := func(config EnvConfig) []string {
+		var names []string
+		for _, env := range config.EnvVars {
+			if IsProxyEnvironmentName(env.Name) {
+				names = append(names, env.Name)
+			}
+		}
+		return names
+	}
+
+	var stock EnvConfig
+
+	BeforeEach(func() {
+		// Step 1: the reference is the stock behaviour, propagation off and no proxy around
+		noProxyEnvironment()
+		previous := configuration.Current.PropagateProxyEnv
+		DeferCleanup(func() { configuration.Current.PropagateProxyEnv = previous })
+		configuration.Current.PropagateProxyEnv = false
+		stock = CreatePodEnvConfig(cluster, "test-1")
+		Expect(proxyNames(stock)).To(BeEmpty())
+	})
+
+	It("ignores the proxy settings of the operator when propagation is off", func() {
+		GinkgoT().Setenv("HTTPS_PROXY", "http://proxy:3129")
+
+		config := CreatePodEnvConfig(cluster, "test-1")
+		Expect(config).To(Equal(stock))
+	})
+
+	It("changes nothing when propagation is on but the operator has no proxy setting", func() {
+		configuration.Current.PropagateProxyEnv = true
+
+		config := CreatePodEnvConfig(cluster, "test-1")
+		Expect(config).To(Equal(stock), "the setting alone must not roll the Clusters")
+	})
+
+	It("appends the settings in both spellings after the Cluster environment, and hashes them", func() {
+		configuration.Current.PropagateProxyEnv = true
+		GinkgoT().Setenv("HTTPS_PROXY", "http://proxy:3129")
+		GinkgoT().Setenv("no_proxy", ".svc")
+
+		config := CreatePodEnvConfig(cluster, "test-1")
+		Expect(config.EnvVars[:len(stock.EnvVars)]).To(Equal(stock.EnvVars))
+		Expect(config.EnvVars[len(stock.EnvVars):]).To(Equal([]corev1.EnvVar{
+			{Name: "HTTPS_PROXY", Value: "http://proxy:3129"},
+			{Name: "https_proxy", Value: "http://proxy:3129"},
+			{Name: "NO_PROXY", Value: ".svc"},
+			{Name: "no_proxy", Value: ".svc"},
+		}))
+		Expect(config.EnvFrom).To(Equal(stock.EnvFrom))
+		Expect(config.Hash).ToNot(Equal(stock.Hash))
+
+		// Step 2: a change of the operator proxy is a change of the environment
+		GinkgoT().Setenv("HTTPS_PROXY", "http://other-proxy:3129")
+		Expect(CreatePodEnvConfig(cluster, "test-1").Hash).ToNot(Equal(config.Hash))
+	})
+
+	It("leaves a Cluster with its own proxy settings untouched", func() {
+		configuration.Current.PropagateProxyEnv = false
+		ownStock := CreatePodEnvConfig(*clusterWithOwnProxy, "test-1")
+		Expect(proxyNames(ownStock)).To(Equal([]string{"no_proxy"}))
+
+		configuration.Current.PropagateProxyEnv = true
+		GinkgoT().Setenv("HTTPS_PROXY", "http://proxy:3129")
+
+		Expect(CreatePodEnvConfig(*clusterWithOwnProxy, "test-1")).To(Equal(ownStock))
 	})
 })

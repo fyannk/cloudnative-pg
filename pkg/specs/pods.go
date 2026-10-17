@@ -129,7 +129,8 @@ func (c EnvConfig) IsEnvEqual(container corev1.Container) bool {
 // CreatePodEnvConfig returns the hash of pod env configuration
 func CreatePodEnvConfig(cluster apiv1.Cluster, podName string) EnvConfig {
 	// When adding an environment variable here, remember to change the `IsReservedEnvironmentVariable`
-	// function in `pkg/postgres/environment.go` too.
+	// function in `pkg/postgres/environment.go` too. The proxy settings are the exception: the
+	// Cluster must be able to override them.
 	config := EnvConfig{
 		EnvVars: []corev1.EnvVar{
 			{
@@ -178,6 +179,9 @@ func CreatePodEnvConfig(cluster apiv1.Cluster, podName string) EnvConfig {
 			},
 		)
 	}
+
+	// The proxy settings of the operator, unless the Cluster sets its own
+	config.EnvVars = append(config.EnvVars, ProxyEnvironment(cluster.Spec.Env)...)
 
 	hashValue, _ := hash.ComputeHash(config)
 	config.Hash = hashValue

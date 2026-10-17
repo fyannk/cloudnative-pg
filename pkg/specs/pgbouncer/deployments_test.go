@@ -84,7 +84,7 @@ var _ = Describe("Deployment", func() {
 		Expect(err).ShouldNot(HaveOccurred())
 		Expect(deployment).ToNot(BeNil())
 
-		expectedHash, err := computeTemplateHash(pooler, config.Current.OperatorImageName)
+		expectedHash, err := computeTemplateHash(pooler, config.Current.OperatorImageName, nil)
 		Expect(err).ShouldNot(HaveOccurred())
 
 		// Check the computed hash
@@ -250,5 +250,156 @@ var _ = Describe("Deployment", func() {
 		Expect(found.Resources.Requests.Memory().String()).To(Equal("30Mi"))
 		Expect(found.Resources.Limits.Cpu().String()).To(Equal("1"))
 		Expect(found.Resources.Limits.Memory().String()).To(Equal("100Mi"))
+	})
+})
+
+// Goal: the pgbouncer container gets the proxy settings of the operator, in
+// both spellings and in the Deployment hash, unless the Pooler template sets
+// its own; the propagation alone changes nothing for a Pooler
+var _ = Describe("Deployment with the proxy settings of the operator", func() {
+	var (
+		pooler  *apiv1.Pooler
+		cluster *apiv1.Cluster
+		stock   *appsv1.Deployment
+	)
+
+	noProxyEnvironment := func() {
+		for _, name := range []string{"HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy", "NO_PROXY", "no_proxy"} {
+			GinkgoT().Setenv(name, "")
+		}
+	}
+	containerEnv := func(deployment *appsv1.Deployment, name string) []corev1.EnvVar {
+		for _, container := range deployment.Spec.Template.Spec.Containers {
+			if container.Name == name {
+				return container.Env
+			}
+		}
+		for _, container := range deployment.Spec.Template.Spec.InitContainers {
+			if container.Name == name {
+				return container.Env
+			}
+		}
+		return nil
+	}
+	proxyEnvOf := func(deployment *appsv1.Deployment, name string) []corev1.EnvVar {
+		var result []corev1.EnvVar
+		for _, env := range containerEnv(deployment, name) {
+			if specs.IsProxyEnvironmentName(env.Name) {
+				result = append(result, env)
+			}
+		}
+		return result
+	}
+	hashOf := func(deployment *appsv1.Deployment) string {
+		return deployment.Annotations[utils.PoolerSpecHashAnnotationName]
+	}
+
+	BeforeEach(func() {
+		pooler = &apiv1.Pooler{
+			ObjectMeta: metav1.ObjectMeta{Name: "test-pooler", Namespace: "test-namespace"},
+			Spec: apiv1.PoolerSpec{
+				Cluster:   apiv1.LocalObjectReference{Name: "test-cluster"},
+				Type:      apiv1.PoolerTypeRW,
+				Instances: ptr.To(int32(1)),
+				PgBouncer: &apiv1.PgBouncerSpec{PoolMode: apiv1.PgBouncerPoolModeSession},
+			},
+			Status: apiv1.PoolerStatus{Image: config.Current.PgbouncerImageName},
+		}
+		cluster = &apiv1.Cluster{
+			ObjectMeta: metav1.ObjectMeta{Name: "test-cluster", Namespace: "test-namespace"},
+		}
+
+		// Step 1: the reference is the stock behaviour, propagation off and no proxy around
+		noProxyEnvironment()
+		previous := config.Current.PropagateProxyEnv
+		DeferCleanup(func() { config.Current.PropagateProxyEnv = previous })
+		config.Current.PropagateProxyEnv = false
+
+		var err error
+		stock, err = Deployment(pooler, cluster)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(proxyEnvOf(stock, "pgbouncer")).To(BeEmpty())
+	})
+
+	It("ignores the proxy settings of the operator when propagation is off", func() {
+		GinkgoT().Setenv("HTTPS_PROXY", "http://proxy:3129")
+
+		deployment, err := Deployment(pooler, cluster)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(deployment).To(Equal(stock))
+	})
+
+	It("changes nothing when propagation is on but the operator has no proxy setting", func() {
+		config.Current.PropagateProxyEnv = true
+
+		deployment, err := Deployment(pooler, cluster)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(deployment).To(Equal(stock), "the setting alone must not roll the Poolers")
+	})
+
+	It("sets the settings in both spellings on the pgbouncer container only, and hashes them", func() {
+		config.Current.PropagateProxyEnv = true
+		GinkgoT().Setenv("HTTPS_PROXY", "http://proxy:3129")
+		GinkgoT().Setenv("no_proxy", ".svc")
+
+		deployment, err := Deployment(pooler, cluster)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(proxyEnvOf(deployment, "pgbouncer")).To(Equal([]corev1.EnvVar{
+			{Name: "HTTPS_PROXY", Value: "http://proxy:3129"},
+			{Name: "https_proxy", Value: "http://proxy:3129"},
+			{Name: "NO_PROXY", Value: ".svc"},
+			{Name: "no_proxy", Value: ".svc"},
+		}))
+		Expect(proxyEnvOf(deployment, specs.BootstrapControllerContainerName)).To(BeEmpty())
+		Expect(containerEnv(deployment, "pgbouncer")[:len(containerEnv(stock, "pgbouncer"))]).
+			To(Equal(containerEnv(stock, "pgbouncer")), "the stock environment comes first, unchanged")
+		Expect(hashOf(deployment)).ToNot(Equal(hashOf(stock)))
+
+		// Step 2: a change of the operator proxy is a change of the Deployment
+		GinkgoT().Setenv("HTTPS_PROXY", "http://other-proxy:3129")
+		changed, err := Deployment(pooler, cluster)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(hashOf(changed)).ToNot(Equal(hashOf(deployment)))
+	})
+
+	It("leaves a Pooler whose template sets its own proxy settings untouched", func() {
+		pooler.Spec.Template = &apiv1.PodTemplateSpec{
+			Spec: corev1.PodSpec{
+				Containers: []corev1.Container{{
+					Name: "pgbouncer",
+					Env:  []corev1.EnvVar{{Name: "no_proxy", Value: "*"}},
+				}},
+			},
+		}
+		// The builder works on the template itself, so each call gets its own copy
+		ownStock, err := Deployment(pooler.DeepCopy(), cluster)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(proxyEnvOf(ownStock, "pgbouncer")).To(Equal([]corev1.EnvVar{{Name: "no_proxy", Value: "*"}}))
+
+		config.Current.PropagateProxyEnv = true
+		GinkgoT().Setenv("HTTPS_PROXY", "http://proxy:3129")
+
+		deployment, err := Deployment(pooler.DeepCopy(), cluster)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(deployment).To(Equal(ownStock))
+	})
+
+	It("still injects when the template sets a proxy variable on another container", func() {
+		pooler.Spec.Template = &apiv1.PodTemplateSpec{
+			Spec: corev1.PodSpec{
+				Containers: []corev1.Container{{
+					Name: "sidecar",
+					Env:  []corev1.EnvVar{{Name: "HTTPS_PROXY", Value: "http://other:3129"}},
+				}},
+			},
+		}
+		config.Current.PropagateProxyEnv = true
+		GinkgoT().Setenv("HTTPS_PROXY", "http://proxy:3129")
+
+		deployment, err := Deployment(pooler, cluster)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(proxyEnvOf(deployment, "pgbouncer")).To(HaveLen(2))
+		Expect(proxyEnvOf(deployment, "sidecar")).
+			To(Equal([]corev1.EnvVar{{Name: "HTTPS_PROXY", Value: "http://other:3129"}}))
 	})
 })
