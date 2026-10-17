@@ -165,6 +165,11 @@ The operator doesn't allow setting the following environment variables:
 Any change in the `env` or in the `envFrom` section triggers a rolling
 update of the PostgreSQL pods.
 
+The operator also sets the standard proxy variables (`HTTP_PROXY`,
+`HTTPS_PROXY` and `NO_PROXY`) on the instances from its own environment,
+unless the `env` section defines them. See
+["Proxy settings"](operator_conf.md#proxy-settings).
+
 If the `env` or the `envFrom` section refers to a secret or a ConfigMap, the
 operator doesn't detect any changes in them and doesn't trigger a rollout. The
 kubelet uses the same behavior with pods, and you must trigger the pod rollout

@@ -196,3 +196,26 @@ var _ = Describe("Webhook configuration names", func() {
 		Expect(config.GetValidatingWebhookConfigurationName()).To(Equal(DefaultValidatingWebhookConfigurationName))
 	})
 })
+
+var _ = Describe("Proxy propagation setting", func() {
+	It("is on by default", func() {
+		Expect(newDefaultConfig().PropagateProxyEnv).To(BeTrue())
+	})
+
+	It("is switched off from the operator configuration", func() {
+		config := newDefaultConfig()
+		config.ReadConfigMap(map[string]string{"PROPAGATE_PROXY_ENV": "false"})
+		Expect(config.PropagateProxyEnv).To(BeFalse())
+	})
+
+	It("is switched off from the environment", func() {
+		GinkgoT().Setenv("PROPAGATE_PROXY_ENV", "false")
+		Expect(NewConfiguration().PropagateProxyEnv).To(BeFalse())
+	})
+
+	It("stays on with an invalid value", func() {
+		config := newDefaultConfig()
+		config.ReadConfigMap(map[string]string{"PROPAGATE_PROXY_ENV": "no thanks"})
+		Expect(config.PropagateProxyEnv).To(BeTrue())
+	})
+})

@@ -48,6 +48,7 @@ import (
 	webhookv1 "github.com/cloudnative-pg/cloudnative-pg/internal/webhook/v1"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/certs"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/multicache"
+	"github.com/cloudnative-pg/cloudnative-pg/pkg/specs"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/utils"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/versions"
 )
@@ -222,6 +223,10 @@ func RunController(
 	}
 
 	setupLog.Info("Operator configuration loaded", "configuration", conf)
+
+	if conf.PropagateProxyEnv {
+		logProxyPropagation()
+	}
 
 	if conf.EnableWebhookNamespaceSuffix && conf.OperatorNamespace == "" {
 		return fmt.Errorf("ENABLE_WEBHOOK_NAMESPACE_SUFFIX requires OPERATOR_NAMESPACE to be set " +
@@ -433,6 +438,27 @@ func buildMetricsOpts(metricsAddr string, conf *configuration.Data) server.Optio
 	setupLog.Info("Metrics server enabled with TLS", "certDir", conf.MetricsCertDir)
 
 	return metricsOptions
+}
+
+// logProxyPropagation tells which proxy settings of the operator reach the
+// workloads, without the credentials of the proxy URLs, and warns about the
+// settings that are not valid URLs
+func logProxyPropagation() {
+	settings := specs.OperatorProxySettings()
+	if len(settings) == 0 {
+		setupLog.Info("No proxy setting in the environment of the operator, nothing to propagate to the workloads")
+		return
+	}
+
+	summary := make([]string, 0, len(settings))
+	for _, setting := range settings {
+		if err := setting.Validate(); err != nil {
+			setupLog.Warning("A proxy setting propagated to the workloads is not a valid URL",
+				"name", setting.Name, "error", err.Error())
+		}
+		summary = append(summary, setting.Name+"="+setting.Redacted())
+	}
+	setupLog.Info("Propagating the proxy settings of the operator to the workloads", "settings", summary)
 }
 
 // loadConfiguration reads the configuration from the provided configmap and secret
