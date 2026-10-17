@@ -29,6 +29,7 @@ import (
 	policyv1 "k8s.io/api/policy/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -147,6 +148,104 @@ var _ = Describe("the cache label on the objects the operator creates", func() {
 
 		expectEveryObjectReconcileLabelled(ctx, env.client, namespace, lists...)
 		Expect(resources.Deployment.Spec.Template.Labels).To(HaveKeyWithValue(utils.ReconcileLabelName, "true"))
+	})
+})
+
+// The default monitoring queries are copied into each Cluster namespace. A
+// copy made by an operator version without the label is only patched when its
+// data changes, so the label has to be added on its own, or a filtered cache
+// never holds the copy and every reconciliation reads it from the API server.
+var _ = Describe("the cache label on the default monitoring query copies", func() {
+	var (
+		env                   *testingEnvironment
+		operatorNamespace     string
+		namespace             string
+		cluster               *apiv1.Cluster
+		originalConfiguration configuration.Data
+	)
+
+	const (
+		sourceConfigMap = "monitoring-source"
+		sourceSecret    = "monitoring-source"
+	)
+
+	BeforeEach(func(ctx SpecContext) {
+		env = buildTestEnvironment()
+		originalConfiguration = *configuration.Current
+		operatorNamespace = newFakeNamespace(env.client)
+		namespace = newFakeNamespace(env.client)
+		cluster = newFakeCNPGCluster(env.client, namespace)
+		configuration.Current.OperatorNamespace = operatorNamespace
+		configuration.Current.MonitoringQueriesConfigmap = sourceConfigMap
+		configuration.Current.MonitoringQueriesSecret = sourceSecret
+
+		Expect(env.client.Create(ctx, &corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{Name: sourceConfigMap, Namespace: operatorNamespace},
+			Data:       map[string]string{apiv1.DefaultMonitoringKey: "queries"},
+		})).To(Succeed())
+		Expect(env.client.Create(ctx, &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: sourceSecret, Namespace: operatorNamespace},
+			Data:       map[string][]byte{apiv1.DefaultMonitoringKey: []byte("queries")},
+		})).To(Succeed())
+	})
+
+	AfterEach(func() {
+		*configuration.Current = originalConfiguration
+	})
+
+	// olderCopyMeta is the metadata an operator without the cache label gave
+	// its copies, the operator version annotation marking them as its own
+	olderCopyMeta := func(name string) metav1.ObjectMeta {
+		return metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+			Labels: map[string]string{
+				utils.WatchedLabelName:                "true",
+				utils.KubernetesAppManagedByLabelName: utils.ManagerName,
+			},
+			Annotations: map[string]string{utils.OperatorVersionAnnotationName: "1.29.0"},
+		}
+	}
+
+	It("is added to unchanged copies made before the label existed", func(ctx SpecContext) {
+		Expect(env.client.Create(ctx, &corev1.ConfigMap{
+			ObjectMeta: olderCopyMeta(apiv1.DefaultMonitoringConfigMapName),
+			Data:       map[string]string{apiv1.DefaultMonitoringKey: "queries"},
+		})).To(Succeed())
+		Expect(env.client.Create(ctx, &corev1.Secret{
+			ObjectMeta: olderCopyMeta(apiv1.DefaultMonitoringSecretName),
+			Data:       map[string][]byte{apiv1.DefaultMonitoringKey: []byte("queries")},
+		})).To(Succeed())
+
+		Expect(env.clusterReconciler.createOrPatchDefaultMetrics(ctx, cluster)).To(Succeed())
+
+		var configMap corev1.ConfigMap
+		Expect(env.client.Get(ctx, client.ObjectKey{Namespace: namespace, Name: apiv1.DefaultMonitoringConfigMapName},
+			&configMap)).To(Succeed())
+		Expect(configMap.Labels).To(HaveKeyWithValue(utils.ReconcileLabelName, "true"))
+		Expect(configMap.Labels).To(HaveKeyWithValue(utils.WatchedLabelName, "true"))
+
+		var secret corev1.Secret
+		Expect(env.client.Get(ctx, client.ObjectKey{Namespace: namespace, Name: apiv1.DefaultMonitoringSecretName},
+			&secret)).To(Succeed())
+		Expect(secret.Labels).To(HaveKeyWithValue(utils.ReconcileLabelName, "true"))
+		Expect(secret.Labels).To(HaveKeyWithValue(utils.WatchedLabelName, "true"))
+	})
+
+	It("is not added to an object of the same name the operator did not create", func(ctx SpecContext) {
+		foreignMeta := metav1.ObjectMeta{Name: apiv1.DefaultMonitoringConfigMapName, Namespace: namespace}
+		Expect(env.client.Create(ctx, &corev1.ConfigMap{
+			ObjectMeta: foreignMeta,
+			Data:       map[string]string{apiv1.DefaultMonitoringKey: "foreign queries"},
+		})).To(Succeed())
+
+		Expect(env.clusterReconciler.createOrPatchDefaultMetricsConfigmap(ctx, cluster)).To(Succeed())
+
+		var configMap corev1.ConfigMap
+		Expect(env.client.Get(ctx, client.ObjectKeyFromObject(&corev1.ConfigMap{ObjectMeta: foreignMeta}),
+			&configMap)).To(Succeed())
+		Expect(configMap.Labels).ToNot(HaveKey(utils.ReconcileLabelName))
+		Expect(configMap.Data).To(HaveKeyWithValue(apiv1.DefaultMonitoringKey, "foreign queries"))
 	})
 })
 
