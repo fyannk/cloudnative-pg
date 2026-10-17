@@ -424,7 +424,7 @@ func (pki PublicKeyInfrastructure) injectPublicKeyIntoMutatingWebhook(
 ) error {
 	config := &admissionregistrationv1.MutatingWebhookConfiguration{}
 	if err := kubeClient.Get(ctx, types.NamespacedName{Name: pki.MutatingWebhookConfigurationName}, config); err != nil {
-		return err
+		return webhookConfigurationError("MutatingWebhookConfiguration", pki.MutatingWebhookConfigurationName, err)
 	}
 	if len(config.Webhooks) == 0 {
 		return nil
@@ -450,7 +450,7 @@ func (pki PublicKeyInfrastructure) injectPublicKeyIntoValidatingWebhook(
 ) error {
 	config := &admissionregistrationv1.ValidatingWebhookConfiguration{}
 	if err := kubeClient.Get(ctx, types.NamespacedName{Name: pki.ValidatingWebhookConfigurationName}, config); err != nil {
-		return err
+		return webhookConfigurationError("ValidatingWebhookConfiguration", pki.ValidatingWebhookConfigurationName, err)
 	}
 
 	if len(config.Webhooks) == 0 {
@@ -468,6 +468,18 @@ func (pki PublicKeyInfrastructure) injectPublicKeyIntoValidatingWebhook(
 	}
 
 	return kubeClient.Patch(ctx, config, client.MergeFrom(oldConfig))
+}
+
+// webhookConfigurationError explains a failed read of a webhook configuration:
+// a missing one is a matter of installation, and the message says what to do
+func webhookConfigurationError(kind, name string, err error) error {
+	if !apierrors.IsNotFound(err) {
+		return err
+	}
+
+	return fmt.Errorf("%s %q not found: create it, set the operator configuration to the name in use, "+
+		"or set MANAGE_WEBHOOK_CONFIGURATIONS=false when the CA bundle is injected by something else: %w",
+		kind, name, err)
 }
 
 func isSecretsMountNotRefreshedError(err error) bool {
