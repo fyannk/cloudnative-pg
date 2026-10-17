@@ -251,6 +251,11 @@ or resource overrides.
 For a complete list of supported fields, see the
 [`PoolerSpec`](cloudnative-pg.v1.md#poolerspec) API reference.
 
+The operator can also set the standard proxy variables (`HTTP_PROXY`,
+`HTTPS_PROXY` and `NO_PROXY`) on the `pgbouncer` container from its own
+environment, unless the template defines them on that container. See
+["Proxy settings"](operator_conf.md#proxy-settings).
+
 ### Key requirements
 
 - **The `pgbouncer` container name:** When overriding container settings (like
