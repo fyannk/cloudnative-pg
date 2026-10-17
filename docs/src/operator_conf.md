@@ -67,6 +67,7 @@ Name | Description
 `PULL_SECRET_NAME` | Name of an additional pull secret to be defined in the operator's namespace and to be used to download images
 `STANDBY_TCP_USER_TIMEOUT` | Defines the [`TCP_USER_TIMEOUT` socket option](https://www.postgresql.org/docs/current/runtime-config-connection.html#GUC-TCP-USER-TIMEOUT) in milliseconds for replication connections from standby instances to the primary. Default is 5000 (5 seconds). Set to `0` to use the system's default.
 `WATCH_NAMESPACE` | Specifies the namespace(s) where the operator should watch for resources. Multiple namespaces can be specified separated by commas. If not set, the operator watches all namespaces (cluster-wide mode).
+`WEBHOOK_CERT_DIR` | The directory holding an externally provided certificate for the webhook server, as `apiserver.crt`/`apiserver.key` (what OLM writes) or `tls.crt`/`tls.key` (a Kubernetes TLS Secret, for example from cert-manager). When set, the operator serves the webhooks with that certificate, manages no certificate of its own and leaves the webhook configurations untouched; it refuses to start when the directory holds no complete, readable pair. When unset, the operator manages its own PKI. See [Webhook certificates and configurations](#webhook-certificates-and-configurations).
 
 :::warning
     CloudNativePG does NOT currently support running multiple operators on
@@ -87,6 +88,75 @@ cluster. That secret will be named `<cluster-name>-pull`.
 The namespace where the operator looks for the `PULL_SECRET_NAME` secret is where
 you installed the operator. If the operator is not able to find that secret, it
 will ignore the configuration parameter.
+
+## Webhook certificates and configurations
+
+The admission webhooks of the operator are served over TLS, through the
+`cnpg-webhook-service` Service of the operator namespace, and reached by the API
+server through a `MutatingWebhookConfiguration` and a
+`ValidatingWebhookConfiguration`, two cluster-scoped objects whose `caBundle`
+must trust the serving certificate. The operator supports three ways to run
+them.
+
+**The operator manages its PKI and the CA bundle (default).** The operator
+generates a CA, stored in the `cnpg-ca-secret` Secret, and a serving
+certificate, stored in the `cnpg-webhook-cert` Secret, both in its namespace,
+renews them, and injects the CA bundle into the two webhook configurations. It
+needs `get` and `patch` on the webhook configurations, which it looks up under
+`cnpg-mutating-webhook-configuration` and `cnpg-validating-webhook-configuration`
+(see `ENABLE_WEBHOOK_NAMESPACE_SUFFIX`).
+
+**The operator manages its PKI, something else injects the CA bundle.** With
+`MANAGE_WEBHOOK_CONFIGURATIONS=false`, the operator still generates and renews
+its certificates but leaves the webhook configurations untouched: the `caBundle`
+is set by the installation, for example by cert-manager's CA injector or by a
+GitOps tool. The operator needs no right on the webhook configurations.
+
+**An external certificate (`WEBHOOK_CERT_DIR`).** The serving certificate is
+issued outside the operator and mounted in its Pod; the operator manages no
+certificate, touches no webhook configuration, and reloads the files when they
+change. The directory may hold `apiserver.crt`/`apiserver.key`, the names OLM
+writes, or `tls.crt`/`tls.key`, the names of a Kubernetes TLS Secret. The
+operator refuses to start, with a message naming the directory and the two
+conventions, when neither pair is complete and readable. This is the mode of
+an installation where the operator has no cluster-wide right and the webhook
+configurations belong to the cluster administration. With cert-manager:
+
+```yaml
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: cnpg-webhook
+  namespace: cnpg-system
+spec:
+  secretName: cnpg-webhook-cert-manager
+  dnsNames:
+  - cnpg-webhook-service.cnpg-system.svc
+  - cnpg-webhook-service.cnpg-system.svc.cluster.local
+  issuerRef:
+    name: <issuer>
+    kind: Issuer
+```
+
+The operator Deployment mounts the Secret and points `WEBHOOK_CERT_DIR` at it:
+
+```yaml
+        env:
+        - name: WEBHOOK_CERT_DIR
+          value: /run/secrets/webhook
+        volumeMounts:
+        - name: webhook-certificate
+          mountPath: /run/secrets/webhook
+          readOnly: true
+      volumes:
+      - name: webhook-certificate
+        secret:
+          secretName: cnpg-webhook-cert-manager
+```
+
+The two webhook configurations carry the CA injector annotation
+`cert-manager.io/inject-ca-from: cnpg-system/cnpg-webhook`, so that their
+`caBundle` follows the certificate.
 
 ## Defining an operator config map
 
