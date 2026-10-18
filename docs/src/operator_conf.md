@@ -147,8 +147,10 @@ with the mode `off` until every Cluster, Pooler and DatabaseRole has been
 reconciled once. Their reconcilers add the label to the objects they
 manage; the pod template of each Pooler Deployment gets it too, which rolls
 the Pooler out once. Enabling a filtered mode before that leaves the
-existing Clusters without visible instances, and their reconciliations fail
-until the objects carry the label.
+existing Clusters without visible instances and volumes: the operator reports
+them as unrecoverable, keeps reconciling them in a tight loop without touching
+them, and only recovers once it runs with the mode `off` again long enough to
+label their objects.
 
 With a filtered mode, the Pods matched by `podSelectorRefs` must carry the
 `cnpg.io/reconcile=true` label, typically from the pod template of the
