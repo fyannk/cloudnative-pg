@@ -22,6 +22,7 @@ SPDX-License-Identifier: Apache-2.0
 package configuration
 
 import (
+	"fmt"
 	"path"
 	"slices"
 	"strings"
@@ -66,6 +67,15 @@ const (
 
 	// DefaultLeaderElectionID is the default name of the Lease used for the leader election
 	DefaultLeaderElectionID = "db9c8771.cnpg.io"
+
+	// OperatorStatusIdentityOff writes nothing about the operator in the Cluster status
+	OperatorStatusIdentityOff = "off"
+	// OperatorStatusIdentityVersion writes the operator version in the Cluster status
+	OperatorStatusIdentityVersion = "version"
+	// OperatorStatusIdentityName writes the operator version and Deployment name in the Cluster status
+	OperatorStatusIdentityName = "name"
+	// OperatorStatusIdentityFull writes the operator version, Deployment name and namespace in the Cluster status
+	OperatorStatusIdentityFull = "full"
 
 	// leaderElectionIDSuffix is appended to the Deployment name to derive the Lease name
 	leaderElectionIDSuffix = ".cnpg.io"
@@ -141,6 +151,15 @@ type Data struct {
 	// used as given. When unset, derived from OperatorDeploymentName, or the
 	// default. It must be a Pod environment variable.
 	LeaderElectionID string `json:"leaderElectionID" env:"LEADER_ELECTION_ID"`
+
+	// OperatorStatusIdentity is how much the operator says about itself in
+	// the status of the Clusters it reconciles: "off" nothing, "version" its
+	// version, "name" its version and Deployment name, "full" its version,
+	// Deployment name and namespace. The Deployment name, when reported, is
+	// also the field manager of every write of the operator. It must be a Pod
+	// environment variable: the field manager is fixed before the
+	// configuration objects are read.
+	OperatorStatusIdentity string `json:"operatorStatusIdentity" env:"OPERATOR_STATUS_IDENTITY"`
 
 	// OperatorPullSecretName is the pull secret used to download the
 	// pull secret name
@@ -262,6 +281,7 @@ func newDefaultConfig() *Data {
 		KubernetesClusterDomain:     DefaultKubernetesClusterDomain,
 		DrainTaints:                 DefaultDrainTaints,
 		ManageWebhookConfigurations: true,
+		OperatorStatusIdentity:      OperatorStatusIdentityVersion,
 	}
 }
 
@@ -380,6 +400,56 @@ func (config *Data) GetLeaderElectionID() string {
 // webhookConfigurationName resolves the name of a webhook configuration: the
 // explicit name is used as given; otherwise the name derived from
 // OperatorDeploymentName, or the default, with "-<OperatorNamespace>" appended
+
+// operatorStatusIdentityLevels orders the OperatorStatusIdentity values from
+// the least to the most detailed
+var operatorStatusIdentityLevels = []string{
+	OperatorStatusIdentityOff,
+	OperatorStatusIdentityVersion,
+	OperatorStatusIdentityName,
+	OperatorStatusIdentityFull,
+}
+
+// ValidateOperatorStatusIdentity returns an error when OperatorStatusIdentity
+// is not one of the known values; empty stands for the default
+func (config *Data) ValidateOperatorStatusIdentity() error {
+	if config.OperatorStatusIdentity == "" ||
+		slices.Contains(operatorStatusIdentityLevels, config.OperatorStatusIdentity) {
+		return nil
+	}
+	return fmt.Errorf("OPERATOR_STATUS_IDENTITY %q is not one of %s",
+		config.OperatorStatusIdentity, strings.Join(operatorStatusIdentityLevels, ", "))
+}
+
+// reportsOperatorIdentity tells whether OperatorStatusIdentity reaches the
+// passed level; empty stands for the default, an unknown value reports nothing
+func (config *Data) reportsOperatorIdentity(level string) bool {
+	mode := config.OperatorStatusIdentity
+	if mode == "" {
+		mode = OperatorStatusIdentityVersion
+	}
+	current := slices.Index(operatorStatusIdentityLevels, mode)
+	return current >= slices.Index(operatorStatusIdentityLevels, level)
+}
+
+// ReportsOperatorVersion tells whether the operator version is written in
+// the status of the reconciled Clusters
+func (config *Data) ReportsOperatorVersion() bool {
+	return config.reportsOperatorIdentity(OperatorStatusIdentityVersion)
+}
+
+// ReportsOperatorName tells whether the operator Deployment name is written
+// in the status of the reconciled Clusters and used as the field manager
+func (config *Data) ReportsOperatorName() bool {
+	return config.reportsOperatorIdentity(OperatorStatusIdentityName)
+}
+
+// ReportsOperatorNamespace tells whether the operator namespace is written
+// in the status of the reconciled Clusters
+func (config *Data) ReportsOperatorNamespace() bool {
+	return config.reportsOperatorIdentity(OperatorStatusIdentityFull)
+}
+
 // when EnableWebhookNamespaceSuffix is true and OperatorNamespace is set
 func (config *Data) webhookConfigurationName(explicit, suffix, literal string) string {
 	if explicit != "" {

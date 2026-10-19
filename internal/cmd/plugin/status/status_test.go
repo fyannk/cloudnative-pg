@@ -80,6 +80,25 @@ var _ = Describe("getPrimaryPromotionTime", func() {
 	})
 })
 
+var _ = Describe("operatorSummary", func() {
+	DescribeTable("formats what the status says about the operator",
+		func(operator *apiv1.OperatorStatus, expected string) {
+			Expect(operatorSummary(operator)).To(Equal(expected))
+		},
+		Entry("nothing reported", nil, ""),
+		Entry("empty block", &apiv1.OperatorStatus{}, ""),
+		Entry("version alone", &apiv1.OperatorStatus{Version: "1.30.1"}, "1.30.1"),
+		Entry("version and Deployment name",
+			&apiv1.OperatorStatus{Version: "1.30.1", Name: "cnpg-toto"}, "cnpg-toto (1.30.1)"),
+		Entry("version, Deployment name and namespace",
+			&apiv1.OperatorStatus{Version: "1.30.1", Name: "cnpg-toto", Namespace: "operators"},
+			"operators/cnpg-toto (1.30.1)"),
+		Entry("name without version", &apiv1.OperatorStatus{Name: "cnpg-toto"}, "cnpg-toto"),
+		Entry("namespace without name is not shown",
+			&apiv1.OperatorStatus{Version: "1.30.1", Namespace: "operators"}, "1.30.1"),
+	)
+})
+
 var _ = Describe("getWalArchivingStatus", func() {
 	It("should return 'Disabled' when WAL archiving is disabled", func() {
 		result := getWalArchivingStatus(false, "", true)
