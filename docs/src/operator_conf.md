@@ -182,6 +182,20 @@ error and resumes reconciliation.
 Validation performed during reconciliation honors the `cnpg.io/validation:
 disabled` annotation, exactly as the admission webhook does.
 
+The rules that compare an update of a `Cluster` with its previous state do not
+depend on the webhooks either: the `Cluster` CRD carries them as validation
+rules, and the API server enforces them on every update. They refuse a
+PostgreSQL major version downgrade and a major upgrade to a version below 16,
+a decrease of `.spec.storage.size`, `.spec.walStorage.size` or of a tablespace
+size, the removal of `walStorage`, of the `tablespaces` section or of a
+tablespace, `wal_level` set to `minimal` on an existing cluster, a change of
+`.spec.replicationSlots.highAvailability.slotPrefix` while the feature is
+enabled, the removal of `synchronizeReplicas` while enabled, a change of
+`postgresUID` or `postgresGID`, a change of the replica role while a switch to
+replica cluster is in progress, and a change of `imageName` together with
+PostgreSQL parameters when `primaryUpdateMethod` is `switchover`. The
+`cnpg.io/validation: disabled` annotation does not bypass these rules.
+
 ## Profiling tools
 
 The operator can expose a pprof HTTP server on `localhost:6060`.
