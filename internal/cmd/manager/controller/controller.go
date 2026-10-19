@@ -264,7 +264,7 @@ func RunController(
 		"availableArchitectures", utils.GetAvailableArchitectures(),
 	)
 
-	if err := ensurePKI(ctx, kubeClient, webhookServer.Options.CertDir, conf); err != nil {
+	if err := ensurePKI(ctx, kubeClient, webhookServer.Options.CertDir, port, conf); err != nil {
 		return err
 	}
 
@@ -557,6 +557,7 @@ func ensurePKI(
 	ctx context.Context,
 	kubeClient client.Client,
 	mgrCertDir string,
+	webhookPort int,
 	conf *configuration.Data,
 ) error {
 	if conf.WebhookCertDir != "" {
@@ -566,11 +567,14 @@ func ensurePKI(
 
 	// We need to self-manage required PKI infrastructure and, unless the webhook
 	// configurations are managed externally, inject the CA bundle into them.
+	webhookServiceNames := conf.GetWebhookServiceNames()
 	pkiConfig := certs.PublicKeyInfrastructure{
 		CaSecretName:                       conf.GetCaSecretName(),
 		CertDir:                            mgrCertDir,
 		SecretName:                         conf.GetWebhookSecretName(),
-		ServiceName:                        conf.GetWebhookServiceName(),
+		ServiceName:                        webhookServiceNames[0],
+		AlternativeServiceNames:            webhookServiceNames[1:],
+		WebhookPort:                        webhookPort,
 		OperatorNamespace:                  conf.OperatorNamespace,
 		MutatingWebhookConfigurationName:   conf.GetMutatingWebhookConfigurationName(),
 		ValidatingWebhookConfigurationName: conf.GetValidatingWebhookConfigurationName(),

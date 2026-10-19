@@ -73,7 +73,7 @@ Name | Description
 `VALIDATING_WEBHOOK_CONFIGURATION_NAME` | The name of the `ValidatingWebhookConfiguration` the operator injects its CA bundle into, used as given. When unset, `<OPERATOR_DEPLOYMENT_NAME>-validating-webhook-configuration` when the Deployment name is set, `cnpg-validating-webhook-configuration` otherwise, with the namespace suffix when `ENABLE_WEBHOOK_NAMESPACE_SUFFIX` is set. See [Webhook certificates and configurations](#webhook-certificates-and-configurations).
 `WATCH_NAMESPACE` | Specifies the namespace(s) where the operator should watch for resources. Multiple namespaces can be specified separated by commas. If not set, the operator watches all namespaces (cluster-wide mode).
 `WEBHOOK_CERT_DIR` | The directory holding an externally provided certificate for the webhook server, as `apiserver.crt`/`apiserver.key` (what OLM writes) or `tls.crt`/`tls.key` (a Kubernetes TLS Secret, for example from cert-manager). When set, the operator serves the webhooks with that certificate, manages no certificate of its own and leaves the webhook configurations untouched; it refuses to start when the directory holds no complete, readable pair. When unset, the operator manages its own PKI. See [Webhook certificates and configurations](#webhook-certificates-and-configurations).
-`WEBHOOK_SERVICE_NAME` | The name of the Service exposing the webhook server, the subject of the serving certificate the operator issues, used as given. When unset, `<OPERATOR_DEPLOYMENT_NAME>-webhook-service` when the Deployment name is set, `cnpg-webhook-service` otherwise.
+`WEBHOOK_SERVICE_NAME` | The name of the Service exposing the webhook server, the subject of the serving certificate the operator issues, used as given. When unset, `<OPERATOR_DEPLOYMENT_NAME>-webhook-service` when the Deployment name is set, `cnpg-webhook-service` otherwise. The certificate also carries the historical name, the derived one, the Services of the operator namespace selecting the operator Pods on the webhook port, and the Services the managed webhook configurations point at.
 
 :::warning
     CloudNativePG does NOT currently support running multiple operators on
@@ -106,9 +106,13 @@ them.
 
 **The operator manages its PKI and the CA bundle (default).** The operator
 generates a CA, stored in the `cnpg-ca-secret` Secret, and a serving
-certificate, stored in the `cnpg-webhook-cert` Secret, both in its namespace,
-renews them, and injects the CA bundle into the two webhook configurations. It
-needs `get` and `patch` on the webhook configurations, which it looks up under
+certificate, stored in the Secret mounted at its webhook certificate directory,
+`cnpg-webhook-cert` in the manifests, both in its namespace, renews them, and
+injects the CA bundle into the two webhook configurations. The serving
+certificate is issued for the `cnpg-webhook-service` Service and for every
+Service of the namespace that selects the operator Pods on the webhook port,
+which the operator lists when it is allowed to. It needs `get` and `patch` on
+the webhook configurations, which it looks up under
 `cnpg-mutating-webhook-configuration` and `cnpg-validating-webhook-configuration`,
 suffixed with the operator namespace when `ENABLE_WEBHOOK_NAMESPACE_SUFFIX` is
 set, or under the names given by `MUTATING_WEBHOOK_CONFIGURATION_NAME` and
@@ -191,9 +195,12 @@ and its serving certificate in `cnpg-toto-webhook-cert`, issues it for
 `cnpg-toto-validating-webhook-configuration`. Each name can still be set on
 its own (`LEADER_ELECTION_ID`, `CA_SECRET_NAME`, `WEBHOOK_SERVICE_NAME`,
 `MUTATING_WEBHOOK_CONFIGURATION_NAME`, `VALIDATING_WEBHOOK_CONFIGURATION_NAME`);
-the serving Secret follows the Deployment name. A Deployment running one
-operator per watched namespace then needs three instance-specific values: the
-identity, the watched namespace and the Secret mount.
+the serving Secret is the one mounted at the webhook certificate directory of
+the Deployment, whatever its name, and the certificate also covers the
+Services of the namespace that select the Pods of the Deployment on the
+webhook port. A Deployment running one operator per watched namespace then
+needs three instance-specific values: the identity, the watched namespace and
+the Secret mount.
 
 ```yaml
 apiVersion: apps/v1
@@ -231,10 +238,10 @@ spec:
           optional: true
 ```
 
-The installation provides, under the same names, the Service
-`cnpg-toto-webhook-service` selecting the Pods of that Deployment on the
-webhook port, and the two webhook configurations pointing at it with a
-`namespaceSelector` on the watched namespace. The Secret mount, the identity
+The installation provides the Service selecting the Pods of that Deployment on
+the webhook port, under the derived name or any other, and the two webhook
+configurations pointing at it with a `namespaceSelector` on the watched
+namespace. The Secret mount, the identity
 and `LEADER_ELECTION_ID` must be Pod environment variables, not entries of the
 operator configuration objects, which are read after the Lease is taken.
 
