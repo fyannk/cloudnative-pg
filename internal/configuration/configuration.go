@@ -273,6 +273,15 @@ func NewConfiguration() *Data {
 	return configuration
 }
 
+// NewFromData creates a configuration from the defaults and the passed in
+// data map only, without reading the environment of the current process: the
+// way the kubectl plugin reads the environment of the operator container
+func NewFromData(data map[string]string) *Data {
+	configuration := newDefaultConfig()
+	configparser.ReadData(configuration, newDefaultConfig(), data)
+	return configuration
+}
+
 // ReadConfigMap reads the configuration from the environment and the passed in data map
 func (config *Data) ReadConfigMap(data map[string]string) {
 	configparser.ReadConfigMap(config, newDefaultConfig(), data)

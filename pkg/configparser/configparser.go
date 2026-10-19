@@ -64,7 +64,26 @@ var configparserLog = log.WithName("configparser")
 
 // ReadConfigMap reads the configuration from the environment and the passed in data map.
 // Config and defaults are supposed to be pointers to structs of the same type
-func ReadConfigMap(target interface{}, defaults interface{}, data map[string]string) { //nolint: gocognit
+func ReadConfigMap(target interface{}, defaults interface{}, data map[string]string) {
+	readConfiguration(target, defaults, os.Getenv, data)
+}
+
+// ReadData is ReadConfigMap without the environment: the configuration is
+// made of the defaults and the passed in data map only
+func ReadData(target interface{}, defaults interface{}, data map[string]string) {
+	readConfiguration(target, defaults, func(string) string { return "" }, data)
+}
+
+// readConfiguration fills the target from the defaults, then the environment
+// as seen by getenv, then the data map
+//
+//nolint:gocognit
+func readConfiguration(
+	target interface{},
+	defaults interface{},
+	getenv func(string) string,
+	data map[string]string,
+) {
 	ensurePointerToCompatibleStruct("target", target, "default", defaults)
 
 	count := reflect.TypeOf(defaults).Elem().NumField()
@@ -117,7 +136,7 @@ func ReadConfigMap(target interface{}, defaults interface{}, data map[string]str
 			value = valueField.String()
 		}
 		// If the key is present in the environment, use its value
-		if envValue := os.Getenv(envName); envValue != "" {
+		if envValue := getenv(envName); envValue != "" {
 			value = envValue
 		}
 		// If the key is present in the passed data, use its value
