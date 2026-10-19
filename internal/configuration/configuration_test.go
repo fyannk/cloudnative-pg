@@ -377,3 +377,52 @@ var _ = Describe("Own object names", func() {
 		Expect(resolve(*newDefaultConfig())).To(Equal(literals))
 	})
 })
+
+var _ = Describe("Operator status identity", func() {
+	type reported struct {
+		version, name, namespace bool
+	}
+	resolve := func(config Data) reported {
+		return reported{
+			version:   config.ReportsOperatorVersion(),
+			name:      config.ReportsOperatorName(),
+			namespace: config.ReportsOperatorNamespace(),
+		}
+	}
+
+	DescribeTable("decides what the operator reports",
+		func(mode string, expected reported) {
+			config := Data{OperatorStatusIdentity: mode}
+			Expect(config.ValidateOperatorStatusIdentity()).To(Succeed())
+			Expect(resolve(config)).To(Equal(expected))
+		},
+		Entry("off: nothing", OperatorStatusIdentityOff, reported{}),
+		Entry("version: the version", OperatorStatusIdentityVersion, reported{version: true}),
+		Entry("name: the version and the Deployment name", OperatorStatusIdentityName,
+			reported{version: true, name: true}),
+		Entry("full: the version, the Deployment name and the namespace", OperatorStatusIdentityFull,
+			reported{version: true, name: true, namespace: true}),
+	)
+
+	It("reports the version by default", func() {
+		Expect(newDefaultConfig().OperatorStatusIdentity).To(Equal(OperatorStatusIdentityVersion))
+		Expect(resolve(*newDefaultConfig())).To(Equal(reported{version: true}))
+	})
+
+	It("refuses an unknown value and reports nothing with it", func() {
+		config := Data{OperatorStatusIdentity: "verbose"}
+		Expect(config.ValidateOperatorStatusIdentity()).To(MatchError(
+			ContainSubstring("OPERATOR_STATUS_IDENTITY \"verbose\" is not one of off, version, name, full")))
+		Expect(resolve(config)).To(Equal(reported{}))
+	})
+
+	It("treats an empty value as the default", func() {
+		Expect((&Data{}).ValidateOperatorStatusIdentity()).To(Succeed())
+		Expect(resolve(Data{})).To(Equal(reported{version: true}))
+	})
+
+	It("is read from the configuration data", func() {
+		config := NewFromData(map[string]string{"OPERATOR_STATUS_IDENTITY": "full"})
+		Expect(resolve(*config)).To(Equal(reported{version: true, name: true, namespace: true}))
+	})
+})

@@ -115,6 +115,7 @@ func RunController(
 		"build", versions.Info)
 
 	if err := validateOperatorIdentity(conf); err != nil {
+		setupLog.Error(err, "invalid operator identity")
 		return err
 	}
 
@@ -216,6 +217,10 @@ func RunController(
 	}
 
 	setupLog.Info("Operator configuration loaded", "configuration", conf)
+	if err := conf.ValidateOperatorStatusIdentity(); err != nil {
+		setupLog.Error(err, "invalid operator configuration")
+		return err
+	}
 	logOwnObjectNames(conf)
 
 	if conf.EnableWebhookNamespaceSuffix && conf.OperatorNamespace == "" {
@@ -522,6 +527,9 @@ func readinessProbeHandler(w http.ResponseWriter, _ *http.Request) {
 // validateOperatorIdentity refuses an OPERATOR_DEPLOYMENT_NAME that cannot
 // name Kubernetes objects, before the Lease derived from it is taken
 func validateOperatorIdentity(conf *configuration.Data) error {
+	if err := conf.ValidateOperatorStatusIdentity(); err != nil {
+		return err
+	}
 	if conf.OperatorDeploymentName == "" {
 		return nil
 	}

@@ -38,6 +38,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
+	"github.com/cloudnative-pg/cloudnative-pg/internal/configuration"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/certs"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/postgres"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/postgres/replication"
@@ -346,6 +347,7 @@ func (r *ClusterReconciler) updateResourceStatus(
 	// to discover the exact version of the operator which worked the last time
 	// on this cluster
 	cluster.Status.CommitHash = versions.Info.Commit
+	cluster.Status.Operator = operatorStatus(configuration.Current)
 
 	if poolerIntegrations, err := r.getPoolerIntegrationsNeeded(ctx, cluster); err == nil {
 		cluster.Status.PoolerIntegrations = poolerIntegrations

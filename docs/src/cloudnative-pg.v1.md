@@ -735,6 +735,7 @@ _Appears in:_
 | `poolerIntegrations` _[PoolerIntegrations](#poolerintegrations)_ | The integration needed by poolers referencing the cluster |  |  |  |
 | `cloudNativePGOperatorHash` _string_ | The hash of the binary of the operator |  |  |  |
 | `operatorCertificateFingerprint` _string_ | OperatorCertificateFingerprint is the SHA256 fingerprint of the operator's<br />in-memory client certificate public key. The instance manager pins this<br />fingerprint to authenticate requests from the operator. |  |  |  |
+| `operator` _[OperatorStatus](#operatorstatus)_ | Operator identifies the operator that reconciled the cluster the last<br />time, as far as its configuration lets it say |  |  |  |
 | `availableArchitectures` _[AvailableArchitecture](#availablearchitecture) array_ | AvailableArchitectures reports the available architectures of a cluster |  |  |  |
 | `conditions` _[Condition](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.34/#condition-v1-meta) array_ | Conditions for cluster object |  |  |  |
 | `instanceNames` _string array_ | List of instance names in the cluster |  |  |  |
@@ -1782,6 +1783,28 @@ _Appears in:_
 | --- | --- | --- | --- | --- |
 | `waitForArchive` _boolean_ | If false, the function will return immediately after the backup is completed,<br />without waiting for WAL to be archived.<br />This behavior is only useful with backup software that independently monitors WAL archiving.<br />Otherwise, WAL required to make the backup consistent might be missing and make the backup useless.<br />By default, or when this parameter is true, pg_backup_stop will wait for WAL to be archived when archiving is<br />enabled.<br />On a standby, this means that it will wait only when archive_mode = always.<br />If write activity on the primary is low, it may be useful to run pg_switch_wal on the primary in order to trigger<br />an immediate segment switch. |  | true |  |
 | `immediateCheckpoint` _boolean_ | Control whether the I/O workload for the backup initial checkpoint will<br />be limited, according to the `checkpoint_completion_target` setting on<br />the PostgreSQL server. If set to true, an immediate checkpoint will be<br />used, meaning PostgreSQL will complete the checkpoint as soon as<br />possible. `false` by default. |  |  |  |
+
+
+#### OperatorStatus
+
+
+
+OperatorStatus identifies the operator that reconciled the cluster the
+last time. The operator configuration decides which fields are written:
+the version alone by default, with the Deployment name, or with the
+Deployment name and the namespace
+
+
+
+_Appears in:_
+
+- [ClusterStatus](#clusterstatus)
+
+| Field | Description | Required | Default | Validation |
+| --- | --- | --- | --- | --- |
+| `version` _string_ | Version is the version of the operator |  |  |  |
+| `name` _string_ | Name is the name of the Deployment running the operator, when the<br />operator is configured to report it |  |  |  |
+| `namespace` _string_ | Namespace is the namespace of the operator, when the operator is<br />configured to report it |  |  |  |
 
 
 #### OptionSpec

@@ -892,6 +892,26 @@ type AvailableArchitecture struct {
 	Hash string `json:"hash"`
 }
 
+// OperatorStatus identifies the operator that reconciled the cluster the
+// last time. The operator configuration decides which fields are written:
+// the version alone by default, with the Deployment name, or with the
+// Deployment name and the namespace
+type OperatorStatus struct {
+	// Version is the version of the operator
+	// +optional
+	Version string `json:"version,omitempty"`
+
+	// Name is the name of the Deployment running the operator, when the
+	// operator is configured to report it
+	// +optional
+	Name string `json:"name,omitempty"`
+
+	// Namespace is the namespace of the operator, when the operator is
+	// configured to report it
+	// +optional
+	Namespace string `json:"namespace,omitempty"`
+}
+
 // ClusterStatus defines the observed state of a PostgreSQL cluster managed by
 // CloudNativePG.
 type ClusterStatus struct {
@@ -1086,6 +1106,11 @@ type ClusterStatus struct {
 	// fingerprint to authenticate requests from the operator.
 	// +optional
 	OperatorCertificateFingerprint string `json:"operatorCertificateFingerprint,omitempty"`
+
+	// Operator identifies the operator that reconciled the cluster the last
+	// time, as far as its configuration lets it say
+	// +optional
+	Operator *OperatorStatus `json:"operator,omitempty"`
 
 	// AvailableArchitectures reports the available architectures of a cluster
 	// +optional
