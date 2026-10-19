@@ -623,12 +623,12 @@ _Appears in:_
 | --- | --- | --- | --- | --- |
 | `description` _string_ | Description of this PostgreSQL cluster |  |  |  |
 | `inheritedMetadata` _[EmbeddedObjectMetadata](#embeddedobjectmetadata)_ | Metadata that will be inherited by all objects related to the Cluster |  |  |  |
-| `imageName` _string_ | Name of the container image, supporting both tags (`<image>:<tag>`)<br />and digests for deterministic and repeatable deployments<br />(`<image>:<tag>@sha256:<digestValue>`) |  |  |  |
+| `imageName` _string_ | Name of the container image, supporting both tags (`<image>:<tag>`)<br />and digests for deterministic and repeatable deployments<br />(`<image>:<tag>@sha256:<digestValue>`) |  |  | MaxLength: 1024 <br /> |
 | `imageCatalogRef` _[ImageCatalogRef](#imagecatalogref)_ | Defines the major PostgreSQL version we want to use within an ImageCatalog |  |  |  |
 | `imagePullPolicy` _[PullPolicy](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.34/#pullpolicy-v1-core)_ | Image pull policy.<br />One of `Always`, `Never` or `IfNotPresent`.<br />If not defined, it defaults to `IfNotPresent`.<br />Cannot be updated.<br />More info: https://kubernetes.io/docs/concepts/containers/images#updating-images |  |  |  |
 | `schedulerName` _string_ | If specified, the pod will be dispatched by specified Kubernetes<br />scheduler. If not specified, the pod will be dispatched by the default<br />scheduler. More info:<br />https://kubernetes.io/docs/concepts/scheduling-eviction/kube-scheduler/ |  |  |  |
-| `postgresUID` _integer_ | The UID of the `postgres` user inside the image, defaults to `26` |  | 26 |  |
-| `postgresGID` _integer_ | The GID of the `postgres` user inside the image, defaults to `26` |  | 26 |  |
+| `postgresUID` _integer_ | The UID of the `postgres` user inside the image, defaults to `26`.<br />It cannot be changed once the cluster is created. |  | 26 |  |
+| `postgresGID` _integer_ | The GID of the `postgres` user inside the image, defaults to `26`.<br />It cannot be changed once the cluster is created. |  | 26 |  |
 | `instances` _integer_ | Number of instances required in the cluster | True | 1 | Minimum: 1 <br /> |
 | `minSyncReplicas` _integer_ | Minimum number of instances required in synchronous replication with the<br />primary. Undefined or 0 allow writes to complete when no standby is<br />available. |  | 0 | Minimum: 0 <br /> |
 | `maxSyncReplicas` _integer_ | The target value for the synchronous replication quorum, that can be<br />decreased if the number of ready standbys is lower than this.<br />Undefined or 0 disable synchronous replication. |  | 0 | Minimum: 0 <br /> |
@@ -671,7 +671,7 @@ _Appears in:_
 | `seccompProfile` _[SeccompProfile](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.34/#seccompprofile-v1-core)_ | The SeccompProfile applied to every Pod and Container.<br />Defaults to: `RuntimeDefault` |  |  |  |
 | `podSecurityContext` _[PodSecurityContext](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.34/#podsecuritycontext-v1-core)_ | Override the PodSecurityContext applied to every Pod of the cluster.<br />When set, this overrides the operator's default PodSecurityContext for the cluster.<br />If omitted, the operator defaults are used.<br />This field doesn't have any effect if SecurityContextConstraints are present. |  |  |  |
 | `securityContext` _[SecurityContext](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.34/#securitycontext-v1-core)_ | Override the SecurityContext applied to every Container in the Pod of the cluster.<br />When set, this overrides the operator's default Container SecurityContext.<br />If omitted, the operator defaults are used. |  |  |  |
-| `tablespaces` _[TablespaceConfiguration](#tablespaceconfiguration) array_ | The tablespaces configuration |  |  |  |
+| `tablespaces` _[TablespaceConfiguration](#tablespaceconfiguration) array_ | The tablespaces configuration. A tablespace cannot be removed once created. |  |  | MaxItems: 64 <br /> |
 | `enablePDB` _boolean_ | Manage the `PodDisruptionBudget` resources within the cluster. When<br />configured as `true` (default setting), the pod disruption budgets<br />will safeguard the primary node from being terminated. Conversely,<br />setting it to `false` will result in the absence of any<br />`PodDisruptionBudget` resource, permitting the shutdown of all nodes<br />hosting the PostgreSQL cluster. This latter configuration is<br />advisable for any PostgreSQL cluster employed for<br />development/staging purposes. |  | true |  |
 | `plugins` _[PluginConfiguration](#pluginconfiguration) array_ | The plugins configuration, containing<br />any plugin to be loaded with the corresponding configuration |  |  |  |
 | `probes` _[ProbesConfiguration](#probesconfiguration)_ | The configuration of the probes to be injected<br />in the PostgreSQL Pods. |  |  |  |
@@ -2641,7 +2641,7 @@ _Appears in:_
 | Field | Description | Required | Default | Validation |
 | --- | --- | --- | --- | --- |
 | `enabled` _boolean_ | If enabled (default), the operator will automatically manage replication slots<br />on the primary instance and use them in streaming replication<br />connections with all the standby instances that are part of the HA<br />cluster. If disabled, the operator will not take advantage<br />of replication slots in streaming connections with the replicas.<br />This feature also controls replication slots in replica cluster,<br />from the designated primary to its cascading replicas. |  | true |  |
-| `slotPrefix` _string_ | Prefix for replication slots managed by the operator for HA.<br />It may only contain lower case letters, numbers, and the underscore character.<br />This can only be set at creation time. By default set to `_cnpg_`. |  | _cnpg_ | Pattern: `^[0-9a-z_]*$` <br /> |
+| `slotPrefix` _string_ | Prefix for replication slots managed by the operator for HA.<br />It may only contain lower case letters, numbers, and the underscore character.<br />This can only be set at creation time. By default set to `_cnpg_`. |  | _cnpg_ | MaxLength: 63 <br />Pattern: `^[0-9a-z_]*$` <br /> |
 | `synchronizeLogicalDecoding` _boolean_ | When enabled, the operator automatically manages synchronization of logical<br />decoding (replication) slots across high-availability clusters.<br />Requires one of the following conditions:<br />- PostgreSQL version 17 or later<br />- PostgreSQL version < 17 with pg_failover_slots extension enabled |  |  |  |
 
 
@@ -3011,7 +3011,7 @@ _Appears in:_
 | Field | Description | Required | Default | Validation |
 | --- | --- | --- | --- | --- |
 | `storageClass` _string_ | StorageClass to use for PVCs. Applied after<br />evaluating the PVC template, if available.<br />If not specified, the generated PVCs will use the<br />default storage class |  |  |  |
-| `size` _string_ | Size of the storage. Required if not already specified in the PVC template.<br />Changes to this field are automatically reapplied to the created PVCs.<br />Size cannot be decreased. |  |  |  |
+| `size` _string_ | Size of the storage. Required if not already specified in the PVC template.<br />Changes to this field are automatically reapplied to the created PVCs.<br />Size cannot be decreased. |  |  | MaxLength: 64 <br /> |
 | `resizeInUseVolumes` _boolean_ | Resize existent PVCs, defaults to true |  | true |  |
 | `pvcTemplate` _[PersistentVolumeClaimSpec](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.34/#persistentvolumeclaimspec-v1-core)_ | Template to be used to generate the Persistent Volume Claim |  |  |  |
 
@@ -3213,7 +3213,7 @@ _Appears in:_
 
 | Field | Description | Required | Default | Validation |
 | --- | --- | --- | --- | --- |
-| `name` _string_ | The name of the tablespace | True |  |  |
+| `name` _string_ | The name of the tablespace | True |  | MaxLength: 63 <br /> |
 | `storage` _[StorageConfiguration](#storageconfiguration)_ | The storage configuration for the tablespace | True |  |  |
 | `owner` _[DatabaseRoleRef](#databaseroleref)_ | Owner is the PostgreSQL user owning the tablespace |  |  |  |
 | `temporary` _boolean_ | When set to true, the tablespace will be added as a `temp_tablespaces`<br />entry in PostgreSQL, and will be available to automatically house temp<br />database objects, or other temporary files. Please refer to PostgreSQL<br />documentation for more information on the `temp_tablespaces` GUC. |  | false |  |

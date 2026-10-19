@@ -756,7 +756,7 @@ Here follows a brief description of the main options:
 
 `.spec.replicationSlots.highAvailability.slotPrefix`
 : the prefix that identifies replication slots managed by the operator for this
-feature (default: `_cnpg_`)
+feature (default: `_cnpg_`); it cannot change while the feature is enabled
 
 `.spec.replicationSlots.updateInterval`
 : how often the standby synchronizes the position of the local copy of the
