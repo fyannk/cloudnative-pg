@@ -26,6 +26,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/cloudnative-pg/machinery/pkg/log"
@@ -34,6 +35,7 @@ import (
 	apierrs "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/client-go/discovery"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
@@ -58,22 +60,25 @@ var (
 )
 
 const (
-	// WebhookSecretName is the name of the secret where the certificates
+	// WebhookSecretName is the default name of the secret where the certificates
 	// for the webhook server are stored
-	WebhookSecretName = "cnpg-webhook-cert" // #nosec
+	WebhookSecretName = configuration.DefaultWebhookSecretName
 
-	// WebhookServiceName is the name of the service where the webhook server
-	// is reachable
-	WebhookServiceName = "cnpg-webhook-service" // #nosec
+	// WebhookServiceName is the default name of the service where the webhook server
+	// will be reachable
+	WebhookServiceName = configuration.DefaultWebhookServiceName
 
-	// The name of the directory containing the TLS certificates for webhooks
+	// defaultWebhookCertDir is the directory where the webhook certificates are mounted
 	defaultWebhookCertDir = "/run/secrets/cnpg.io/webhook"
 
-	// LeaderElectionID The operator Leader Election ID
-	LeaderElectionID = "db9c8771.cnpg.io"
+	// LeaderElectionID is the default operator Leader Election ID
+	LeaderElectionID = configuration.DefaultLeaderElectionID
 
-	// CaSecretName is the name of the secret which is hosting the Operator CA
-	CaSecretName = "cnpg-ca-secret" // #nosec
+	// CaSecretName is the default name of the secret which is hosting the Operator CA
+	CaSecretName = configuration.DefaultCaSecretName
+
+	// operatorDeploymentLabelSelector finds the operator Deployment when its name is not known
+	operatorDeploymentLabelSelector = "app.kubernetes.io/name=cloudnative-pg"
 
 	// operatorClientCertCommonName is the fallback CN for the operator's in-memory
 	// client certificate when the Pod hostname cannot be determined.
@@ -112,6 +117,10 @@ func RunController(
 		"version", versions.Version,
 		"build", versions.Info)
 
+	if err := validateOperatorIdentity(conf); err != nil {
+		return err
+	}
+
 	webhookOptions, err := buildWebhookOptions(port, conf)
 	if err != nil {
 		return err
@@ -123,7 +132,7 @@ func RunController(
 		LeaderElection:   leaderConfig.enable,
 		LeaseDuration:    &leaderConfig.leaseDuration,
 		RenewDeadline:    &leaderConfig.renewDeadline,
-		LeaderElectionID: LeaderElectionID,
+		LeaderElectionID: conf.GetLeaderElectionID(),
 		WebhookServer:    webhook.NewServer(webhookOptions),
 		PprofBindAddress: getPprofServerAddress(pprofDebug),
 		// LeaderElectionReleaseOnCancel defines if the leader should step down voluntarily
@@ -210,6 +219,7 @@ func RunController(
 	}
 
 	setupLog.Info("Operator configuration loaded", "configuration", conf)
+	logOwnObjectNames(conf)
 
 	if conf.EnableWebhookNamespaceSuffix && conf.OperatorNamespace == "" {
 		err = fmt.Errorf("ENABLE_WEBHOOK_NAMESPACE_SUFFIX requires OPERATOR_NAMESPACE to be set " +
@@ -254,7 +264,7 @@ func RunController(
 		"availableArchitectures", utils.GetAvailableArchitectures(),
 	)
 
-	if err := ensurePKI(ctx, kubeClient, webhookServer.Options.CertDir, conf); err != nil {
+	if err := ensurePKI(ctx, kubeClient, webhookServer.Options.CertDir, port, conf); err != nil {
 		return err
 	}
 
@@ -512,12 +522,42 @@ func readinessProbeHandler(w http.ResponseWriter, _ *http.Request) {
 	_, _ = fmt.Fprint(w, "OK")
 }
 
+// validateOperatorIdentity refuses an OPERATOR_DEPLOYMENT_NAME that cannot
+// name Kubernetes objects, before the Lease derived from it is taken
+func validateOperatorIdentity(conf *configuration.Data) error {
+	if conf.OperatorDeploymentName == "" {
+		return nil
+	}
+	if errs := validation.IsDNS1123Subdomain(conf.OperatorDeploymentName); len(errs) > 0 {
+		return fmt.Errorf("OPERATOR_DEPLOYMENT_NAME %q cannot name the operator's own objects: %s",
+			conf.OperatorDeploymentName, strings.Join(errs, "; "))
+	}
+	return nil
+}
+
+// logOwnObjectNames logs the names the operator uses for its own objects when
+// they follow its Deployment
+func logOwnObjectNames(conf *configuration.Data) {
+	if conf.OperatorDeploymentName == "" {
+		return
+	}
+	setupLog.Info("Operator own objects named after its Deployment",
+		"deploymentName", conf.OperatorDeploymentName,
+		"leaderElectionID", conf.GetLeaderElectionID(),
+		"caSecretName", conf.GetCaSecretName(),
+		"webhookSecretName", conf.GetWebhookSecretName(),
+		"webhookServiceName", conf.GetWebhookServiceName(),
+		"mutatingWebhookConfigurationName", conf.GetMutatingWebhookConfigurationName(),
+		"validatingWebhookConfigurationName", conf.GetValidatingWebhookConfigurationName())
+}
+
 // ensurePKI ensures that we have the required PKI infrastructure to make
 // the operator and the clusters working
 func ensurePKI(
 	ctx context.Context,
 	kubeClient client.Client,
 	mgrCertDir string,
+	webhookPort int,
 	conf *configuration.Data,
 ) error {
 	if conf.WebhookCertDir != "" {
@@ -527,15 +567,19 @@ func ensurePKI(
 
 	// We need to self-manage required PKI infrastructure and, unless the webhook
 	// configurations are managed externally, inject the CA bundle into them.
+	webhookServiceNames := conf.GetWebhookServiceNames()
 	pkiConfig := certs.PublicKeyInfrastructure{
-		CaSecretName:                       CaSecretName,
+		CaSecretName:                       conf.GetCaSecretName(),
 		CertDir:                            mgrCertDir,
-		SecretName:                         WebhookSecretName,
-		ServiceName:                        WebhookServiceName,
+		SecretName:                         conf.GetWebhookSecretName(),
+		ServiceName:                        webhookServiceNames[0],
+		AlternativeServiceNames:            webhookServiceNames[1:],
+		WebhookPort:                        webhookPort,
 		OperatorNamespace:                  conf.OperatorNamespace,
 		MutatingWebhookConfigurationName:   conf.GetMutatingWebhookConfigurationName(),
 		ValidatingWebhookConfigurationName: conf.GetValidatingWebhookConfigurationName(),
-		OperatorDeploymentLabelSelector:    "app.kubernetes.io/name=cloudnative-pg",
+		OperatorDeploymentName:             conf.OperatorDeploymentName,
+		OperatorDeploymentLabelSelector:    operatorDeploymentLabelSelector,
 		ManageWebhookConfigurations:        conf.ManageWebhookConfigurations,
 	}
 	err := pkiConfig.Setup(ctx, kubeClient)

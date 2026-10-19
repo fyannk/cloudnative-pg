@@ -45,6 +45,7 @@ The operator looks for the following environment variables to be defined in the 
 
 Name | Description
 ---- | -----------
+`CA_SECRET_NAME` | The name of the Secret holding the CA the operator generates for its webhooks, used as given. When unset, `<OPERATOR_DEPLOYMENT_NAME>-ca-secret` when the Deployment name is set, `cnpg-ca-secret` otherwise. See [Several operators in one namespace](#several-operators-in-one-namespace).
 `CERTIFICATE_DURATION` | Determines the lifetime of the generated certificates in days. Default is 90.
 `CLUSTERS_ROLLOUT_DELAY` | The duration (in seconds) to wait between the roll-outs of different clusters during an operator upgrade. This setting controls the timing of upgrades across clusters, spreading them out to reduce system impact. The default value is `0` which means no delay between PostgreSQL cluster upgrades.
 `CREATE_ANY_SERVICE` | When set to `true`, will create `-any` service for the cluster. Default is `false`
@@ -57,19 +58,22 @@ Name | Description
 `INHERITED_LABELS` | List of label names that, when defined in a `Cluster` metadata, will be inherited by all the generated resources, including pods
 `INSTANCES_ROLLOUT_DELAY` | The duration (in seconds) to wait between roll-outs of individual PostgreSQL instances within the same cluster during an operator upgrade. The default value is `0`, meaning no delay between upgrades of instances in the same PostgreSQL cluster.
 `KUBERNETES_CLUSTER_DOMAIN` | Defines the domain suffix for service FQDNs within the Kubernetes cluster. If left unset, it defaults to "cluster.local".
+`LEADER_ELECTION_ID` | The name of the Lease used for the leader election, used as given. When unset, `<OPERATOR_DEPLOYMENT_NAME>.cnpg.io` when the Deployment name is set, `db9c8771.cnpg.io` otherwise. It must be a Pod environment variable, the Lease is taken before the operator configuration objects are read.
 `MANAGE_WEBHOOK_CONFIGURATIONS` | When set to `true` (default), the operator injects its CA bundle into the `MutatingWebhookConfiguration` and `ValidatingWebhookConfiguration`. Set to `false` when the CA bundle is injected externally, for example by cert-manager's CA injector or by GitOps. This is independent of the webhook serving certificate, which the operator always manages when it owns its PKI.
 `METRICS_CERT_DIR` | The directory where TLS certificates for the operator metrics server are stored. When set, enables TLS for the metrics endpoint on port 8080. The directory must contain `tls.crt` and `tls.key` files following standard Kubernetes TLS secret conventions. If not set, the metrics server operates without TLS (default behavior).
-`MUTATING_WEBHOOK_CONFIGURATION_NAME` | The name of the `MutatingWebhookConfiguration` the operator injects its CA bundle into, used as given. When unset, `cnpg-mutating-webhook-configuration`, with the namespace suffix when `ENABLE_WEBHOOK_NAMESPACE_SUFFIX` is set. See [Webhook certificates and configurations](#webhook-certificates-and-configurations).
+`MUTATING_WEBHOOK_CONFIGURATION_NAME` | The name of the `MutatingWebhookConfiguration` the operator injects its CA bundle into, used as given. When unset, `<OPERATOR_DEPLOYMENT_NAME>-mutating-webhook-configuration` when the Deployment name is set, `cnpg-mutating-webhook-configuration` otherwise, with the namespace suffix when `ENABLE_WEBHOOK_NAMESPACE_SUFFIX` is set. See [Webhook certificates and configurations](#webhook-certificates-and-configurations).
 `MONITORING_QUERIES_CONFIGMAP` | The name of a ConfigMap in the operator's namespace with a set of default queries (to be specified under the key `queries`) to be applied to all created Clusters
 `MONITORING_QUERIES_SECRET` | The name of a Secret in the operator's namespace with a set of default queries (to be specified under the key `queries`) to be applied to all created Clusters
+`OPERATOR_DEPLOYMENT_NAME` | The name of the Deployment running the operator. When set, the operator fetches its Deployment by this name instead of searching it by the `app.kubernetes.io/name=cloudnative-pg` label, and names the objects it creates for itself after it: `<name>-ca-secret`, `<name>-webhook-cert`, `<name>-webhook-service`, `<name>-mutating-webhook-configuration`, `<name>-validating-webhook-configuration` and the Lease `<name>.cnpg.io`, each one still overridable by its own setting. When unset, the lookup is by label and every name keeps its historical value. It must be a Pod environment variable. See [Several operators in one namespace](#several-operators-in-one-namespace).
 `OPERATOR_IMAGE_NAME` | The name of the operator image used to bootstrap Pods. Defaults to the image specified during installation.
 `PGBOUNCER_IMAGE_NAME` | The name of the PgBouncer image used by default for new poolers. Defaults to the version specified in the operator.
 `POSTGRES_IMAGE_NAME` | The name of the PostgreSQL image used by default for new clusters. Defaults to the version specified in the operator.
 `PULL_SECRET_NAME` | Name of an additional pull secret to be defined in the operator's namespace and to be used to download images
 `STANDBY_TCP_USER_TIMEOUT` | Defines the [`TCP_USER_TIMEOUT` socket option](https://www.postgresql.org/docs/current/runtime-config-connection.html#GUC-TCP-USER-TIMEOUT) in milliseconds for replication connections from standby instances to the primary. Default is 5000 (5 seconds). Set to `0` to use the system's default.
-`VALIDATING_WEBHOOK_CONFIGURATION_NAME` | The name of the `ValidatingWebhookConfiguration` the operator injects its CA bundle into, used as given. When unset, `cnpg-validating-webhook-configuration`, with the namespace suffix when `ENABLE_WEBHOOK_NAMESPACE_SUFFIX` is set. See [Webhook certificates and configurations](#webhook-certificates-and-configurations).
+`VALIDATING_WEBHOOK_CONFIGURATION_NAME` | The name of the `ValidatingWebhookConfiguration` the operator injects its CA bundle into, used as given. When unset, `<OPERATOR_DEPLOYMENT_NAME>-validating-webhook-configuration` when the Deployment name is set, `cnpg-validating-webhook-configuration` otherwise, with the namespace suffix when `ENABLE_WEBHOOK_NAMESPACE_SUFFIX` is set. See [Webhook certificates and configurations](#webhook-certificates-and-configurations).
 `WATCH_NAMESPACE` | Specifies the namespace(s) where the operator should watch for resources. Multiple namespaces can be specified separated by commas. If not set, the operator watches all namespaces (cluster-wide mode).
 `WEBHOOK_CERT_DIR` | The directory holding an externally provided certificate for the webhook server, as `apiserver.crt`/`apiserver.key` (what OLM writes) or `tls.crt`/`tls.key` (a Kubernetes TLS Secret, for example from cert-manager). When set, the operator serves the webhooks with that certificate, manages no certificate of its own and leaves the webhook configurations untouched; it refuses to start when the directory holds no complete, readable pair. When unset, the operator manages its own PKI. See [Webhook certificates and configurations](#webhook-certificates-and-configurations).
+`WEBHOOK_SERVICE_NAME` | The name of the Service exposing the webhook server, the subject of the serving certificate the operator issues, used as given. When unset, `<OPERATOR_DEPLOYMENT_NAME>-webhook-service` when the Deployment name is set, `cnpg-webhook-service` otherwise. The certificate also carries the historical name, the derived one, the Services of the operator namespace selecting the operator Pods on the webhook port, and the Services the managed webhook configurations point at.
 
 :::warning
     CloudNativePG does NOT currently support running multiple operators on
@@ -102,14 +106,20 @@ them.
 
 **The operator manages its PKI and the CA bundle (default).** The operator
 generates a CA, stored in the `cnpg-ca-secret` Secret, and a serving
-certificate, stored in the `cnpg-webhook-cert` Secret, both in its namespace,
-renews them, and injects the CA bundle into the two webhook configurations. It
-needs `get` and `patch` on the webhook configurations, which it looks up under
+certificate, stored in the Secret mounted at its webhook certificate directory,
+`cnpg-webhook-cert` in the manifests, both in its namespace, renews them, and
+injects the CA bundle into the two webhook configurations. The serving
+certificate is issued for the `cnpg-webhook-service` Service and for every
+Service of the namespace that selects the operator Pods on the webhook port,
+which the operator lists when it is allowed to. It needs `get` and `patch` on
+the webhook configurations, which it looks up under
 `cnpg-mutating-webhook-configuration` and `cnpg-validating-webhook-configuration`,
 suffixed with the operator namespace when `ENABLE_WEBHOOK_NAMESPACE_SUFFIX` is
 set, or under the names given by `MUTATING_WEBHOOK_CONFIGURATION_NAME` and
 `VALIDATING_WEBHOOK_CONFIGURATION_NAME` when the configurations follow another
-naming convention. When a configuration is not found, the operator does not
+naming convention. All these names, and the one of the webhook Service, follow
+the operator Deployment instead when `OPERATOR_DEPLOYMENT_NAME` is set, see
+[Several operators in one namespace](#several-operators-in-one-namespace). When a configuration is not found, the operator does not
 start: either create it, point the setting at the name in use, or set
 `MANAGE_WEBHOOK_CONFIGURATIONS=false` when the CA bundle is injected by
 something else.
@@ -165,6 +175,85 @@ The operator Deployment mounts the Secret and points `WEBHOOK_CERT_DIR` at it:
 The two webhook configurations carry the CA injector annotation
 `cert-manager.io/inject-ca-from: cnpg-system/cnpg-webhook`, so that their
 `caBundle` follows the certificate.
+
+## Several operators in one namespace
+
+An operator names the objects it creates for itself, and finds the ones it
+needs, with fixed names: the Lease `db9c8771.cnpg.io`, the Secrets
+`cnpg-ca-secret` and `cnpg-webhook-cert`, the Service `cnpg-webhook-service`
+and the two webhook configurations; it finds its own Deployment, the owner of
+its Secrets, by the `app.kubernetes.io/name=cloudnative-pg` label. Two
+operators installed in the same namespace would therefore contend for one
+Lease, renew each other's CA and find more than one Deployment.
+
+`OPERATOR_DEPLOYMENT_NAME` makes every one of these names follow the
+Deployment: with `cnpg-toto`, the operator fetches the Deployment `cnpg-toto`,
+takes the Lease `cnpg-toto.cnpg.io`, stores its CA in `cnpg-toto-ca-secret`
+and its serving certificate in `cnpg-toto-webhook-cert`, issues it for
+`cnpg-toto-webhook-service`, and injects the CA bundle into
+`cnpg-toto-mutating-webhook-configuration` and
+`cnpg-toto-validating-webhook-configuration`. Each name can still be set on
+its own (`LEADER_ELECTION_ID`, `CA_SECRET_NAME`, `WEBHOOK_SERVICE_NAME`,
+`MUTATING_WEBHOOK_CONFIGURATION_NAME`, `VALIDATING_WEBHOOK_CONFIGURATION_NAME`);
+the serving Secret is the one mounted at the webhook certificate directory of
+the Deployment, whatever its name, and the certificate also covers the
+Services of the namespace that select the Pods of the Deployment on the
+webhook port. A Deployment running one operator per watched namespace then
+needs three instance-specific values: the identity, the watched namespace and
+the Secret mount.
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cnpg-toto
+  namespace: operators
+spec:
+  template:
+    spec:
+      containers:
+      - name: manager
+        args:
+        - controller
+        - --leader-elect
+        - --config-map-name=cnpg-toto-config
+        - --secret-name=cnpg-toto-config
+        - --webhook-port=9443
+        env:
+        - name: OPERATOR_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: OPERATOR_DEPLOYMENT_NAME
+          value: cnpg-toto
+        - name: WATCH_NAMESPACE
+          value: toto
+        volumeMounts:
+        - mountPath: /run/secrets/cnpg.io/webhook
+          name: webhook-certificates
+      volumes:
+      - name: webhook-certificates
+        secret:
+          secretName: cnpg-toto-webhook-cert
+          optional: true
+```
+
+The installation provides the Service selecting the Pods of that Deployment on
+the webhook port, under the derived name or any other, and the two webhook
+configurations pointing at it with a `namespaceSelector` on the watched
+namespace. The Secret mount, the identity
+and `LEADER_ELECTION_ID` must be Pod environment variables, not entries of the
+operator configuration objects, which are read after the Lease is taken.
+
+Setting `OPERATOR_DEPLOYMENT_NAME` on an existing installation renames its
+Lease and its two Secrets: scale the Deployment to zero replicas before
+changing it, otherwise the Pod being replaced and the new one hold two
+different Leases during the rollout. Without the variable, nothing changes:
+the lookup is by label and every name keeps its historical value.
+
+The warning above still applies: the operators share the CRDs, and an upgrade
+across several concurrently running operators is not guaranteed to be
+backwards compatible.
 
 ## Defining an operator config map
 
