@@ -88,3 +88,10 @@ var _ = Describe("Operator identity", func() {
 		Expect(err).To(MatchError(ContainSubstring("OPERATOR_DEPLOYMENT_NAME")))
 	})
 })
+
+var _ = Describe("Operator status identity", func() {
+	It("is refused with the identity when the mode is unknown", func() {
+		err := validateOperatorIdentity(&configuration.Data{OperatorStatusIdentity: "verbose"})
+		Expect(err).To(MatchError(ContainSubstring("OPERATOR_STATUS_IDENTITY")))
+	})
+})
