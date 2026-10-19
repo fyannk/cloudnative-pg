@@ -155,7 +155,10 @@ type Data struct {
 	// OperatorStatusIdentity is how much the operator says about itself in
 	// the status of the Clusters it reconciles: "off" nothing, "version" its
 	// version, "name" its version and Deployment name, "full" its version,
-	// Deployment name and namespace.
+	// Deployment name and namespace. The Deployment name, when reported, is
+	// also the field manager of every write of the operator. It must be a Pod
+	// environment variable: the field manager is fixed before the
+	// configuration objects are read.
 	OperatorStatusIdentity string `json:"operatorStatusIdentity" env:"OPERATOR_STATUS_IDENTITY"`
 
 	// OperatorPullSecretName is the pull secret used to download the
@@ -436,7 +439,7 @@ func (config *Data) ReportsOperatorVersion() bool {
 }
 
 // ReportsOperatorName tells whether the operator Deployment name is written
-// in the status of the reconciled Clusters
+// in the status of the reconciled Clusters and used as the field manager
 func (config *Data) ReportsOperatorName() bool {
 	return config.reportsOperatorIdentity(OperatorStatusIdentityName)
 }
