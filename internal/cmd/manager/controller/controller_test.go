@@ -24,6 +24,7 @@ import (
 	"path/filepath"
 
 	"github.com/cloudnative-pg/cloudnative-pg/internal/configuration"
+	"github.com/cloudnative-pg/cloudnative-pg/pkg/certs"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -36,7 +37,7 @@ var _ = Describe("Webhook server options", func() {
 		options, err := buildWebhookOptions(9443, &configuration.Data{})
 		Expect(err).ToNot(HaveOccurred())
 		Expect(options.Port).To(Equal(9443))
-		Expect(options.CertDir).To(Equal(defaultWebhookCertDir))
+		Expect(options.CertDir).To(Equal(certs.DefaultWebhookCertDir))
 		Expect(options.CertName).To(Equal("tls.crt"))
 		Expect(options.KeyName).To(Equal("tls.key"))
 	})

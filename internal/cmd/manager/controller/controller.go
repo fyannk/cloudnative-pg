@@ -68,9 +68,6 @@ const (
 	// will be reachable
 	WebhookServiceName = configuration.DefaultWebhookServiceName
 
-	// defaultWebhookCertDir is the directory where the webhook certificates are mounted
-	defaultWebhookCertDir = "/run/secrets/cnpg.io/webhook"
-
 	// LeaderElectionID is the default operator Leader Election ID
 	LeaderElectionID = configuration.DefaultLeaderElectionID
 
@@ -449,7 +446,7 @@ func buildMetricsOpts(metricsAddr string, conf *configuration.Data) server.Optio
 func buildWebhookOptions(port int, conf *configuration.Data) (webhook.Options, error) {
 	options := webhook.Options{
 		Port:     port,
-		CertDir:  defaultWebhookCertDir,
+		CertDir:  certs.DefaultWebhookCertDir,
 		CertName: certs.TLSCertKey,
 		KeyName:  certs.TLSPrivateKeyKey,
 	}
