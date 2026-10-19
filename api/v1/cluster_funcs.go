@@ -1355,6 +1355,7 @@ func (cluster *Cluster) SetInheritedData(obj *metav1.ObjectMeta) {
 	utils.InheritAnnotations(obj, cluster.Annotations, cluster.GetFixedInheritedAnnotations(), configuration.Current)
 	utils.InheritLabels(obj, cluster.Labels, cluster.GetFixedInheritedLabels(), configuration.Current)
 	utils.LabelClusterName(obj, cluster.GetName())
+	utils.LabelReconciled(obj)
 }
 
 // ShouldForceLegacyBackup if present takes a backup without passing the name argument even on barman version 3.3.0+.
