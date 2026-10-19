@@ -44,7 +44,7 @@ type operatorReport struct {
 	secrets                 []namedObject
 	configs                 []namedObject
 	events                  corev1.EventList
-	webhookService          corev1.Service
+	webhookServices         []corev1.Service
 	mutatingWebhookConfig   *admissionregistrationv1.MutatingWebhookConfigurationList
 	validatingWebhookConfig *admissionregistrationv1.ValidatingWebhookConfigurationList
 }
@@ -96,8 +96,13 @@ func (or operatorReport) writeToZip(zipper *zip.Writer, format plugin.OutputForm
 	}
 
 	// Include webhook service only if collected (check for non-empty name)
-	if or.webhookService.Name != "" {
-		if err := addContentToZip(or.webhookService, "webhook-service", newFolder, format, zipper); err != nil {
+	if len(or.webhookServices) > 0 {
+		// One Service is written as it always was, several as a list
+		var services interface{} = corev1.ServiceList{Items: or.webhookServices}
+		if len(or.webhookServices) == 1 {
+			services = or.webhookServices[0]
+		}
+		if err := addContentToZip(services, "webhook-service", newFolder, format, zipper); err != nil {
 			return err
 		}
 	}
@@ -136,14 +141,14 @@ func (or operatorReport) writeToZip(zipper *zip.Writer, format plugin.OutputForm
 //   - operator's Validating/MutatingWebhookConfiguration and their associated services (optional)
 //   - operator pod's logs (optional, if `includeLogs` is true)
 func operator(ctx context.Context, format plugin.OutputFormat,
-	file string, stopRedaction, includeLogs, logTimeStamp bool, now time.Time,
+	file, deploymentName string, stopRedaction, includeLogs, logTimeStamp bool, now time.Time,
 ) error {
 	// Configure redactors
 	secretRedactor, configMapRedactor := configureRedactors(stopRedaction)
 
 	// Collect deployment (the only truly required resource)
-	deployment, err := getOperatorDeployment(ctx)
-	if errors.Is(err, errNoOperatorDeployment) {
+	deployment, err := getOperatorDeployment(ctx, deploymentName)
+	if errors.Is(err, errNoOperatorDeployment) && deploymentName == "" {
 		return fmt.Errorf("%w\n"+
 			"HINT: Operator might be installed in another namespace."+
 			"Specify a namespace using the '-n' option", err)
@@ -153,11 +158,11 @@ func operator(ctx context.Context, format plugin.OutputFormat,
 	}
 
 	// Collect all optional resources (all can fail gracefully)
-	pods := tryCollectPods(ctx)
+	pods := tryCollectPods(ctx, deployment)
 	secrets, configs := tryCollectConfigurations(ctx, deployment, secretRedactor, configMapRedactor)
 	events := tryCollectEvents(ctx, deployment.Namespace)
-	mutatingWebhook, validatingWebhook := tryCollectWebhooks(ctx, stopRedaction)
-	webhookService := tryCollectWebhookService(ctx, mutatingWebhook)
+	mutatingWebhook, validatingWebhook := tryCollectWebhooks(ctx, deployment, stopRedaction)
+	webhookServices := tryCollectWebhookServices(ctx, mutatingWebhook, validatingWebhook)
 
 	// Build the report structure
 	rep := operatorReport{
@@ -168,7 +173,7 @@ func operator(ctx context.Context, format plugin.OutputFormat,
 		events:                  events,
 		mutatingWebhookConfig:   mutatingWebhook,
 		validatingWebhookConfig: validatingWebhook,
-		webhookService:          webhookService,
+		webhookServices:         webhookServices,
 	}
 
 	// Assemble all sections for the ZIP file
@@ -195,8 +200,8 @@ func configureRedactors(stopRedaction bool) (
 }
 
 // tryCollectPods attempts to collect operator pods, logging warnings on failure
-func tryCollectPods(ctx context.Context) []corev1.Pod {
-	pods, err := getOperatorPods(ctx)
+func tryCollectPods(ctx context.Context, deployment appsv1.Deployment) []corev1.Pod {
+	pods, err := getOperatorPods(ctx, deployment)
 	if err != nil {
 		logWarning("could not get operator pods", err,
 			"Continuing without pod information. This is expected if you don't have permissions to list pods.")
@@ -263,11 +268,12 @@ func tryCollectEvents(ctx context.Context, namespace string) corev1.EventList {
 // tryCollectWebhooks attempts to collect webhook configurations, logging warnings on failure
 func tryCollectWebhooks(
 	ctx context.Context,
+	deployment appsv1.Deployment,
 	stopRedaction bool,
 ) (*admissionregistrationv1.MutatingWebhookConfigurationList,
 	*admissionregistrationv1.ValidatingWebhookConfigurationList,
 ) {
-	mutatingWebhook, validatingWebhook, err := getWebhooks(ctx, stopRedaction)
+	mutatingWebhook, validatingWebhook, err := getWebhooks(ctx, deployment, stopRedaction)
 	if err != nil {
 		logWarning("could not get webhooks", err,
 			"Continuing without webhook information. This is expected if you don't have cluster-level permissions.")
@@ -275,17 +281,18 @@ func tryCollectWebhooks(
 	return mutatingWebhook, validatingWebhook
 }
 
-// tryCollectWebhookService attempts to collect the webhook service, logging warnings on failure
-func tryCollectWebhookService(
+// tryCollectWebhookServices attempts to collect the webhook services, logging warnings on failure
+func tryCollectWebhookServices(
 	ctx context.Context,
 	mutatingWebhook *admissionregistrationv1.MutatingWebhookConfigurationList,
-) corev1.Service {
-	webhookService, err := getWebhookService(ctx, mutatingWebhook)
+	validatingWebhook *admissionregistrationv1.ValidatingWebhookConfigurationList,
+) []corev1.Service {
+	webhookServices, err := getWebhookServices(ctx, mutatingWebhook, validatingWebhook)
 	if err != nil {
 		logWarning("could not get webhook service", err,
 			"Continuing without webhook service information.")
 	}
-	return webhookService
+	return webhookServices
 }
 
 // assembleSections creates all ZIP file sections including manifests, logs, and OLM data

@@ -535,21 +535,28 @@ regarding the operator deployment, configuration and events.
 The report includes:
 
 - **deployment information** (required): the operator `Deployment`
-- **operator pods** (optional): the operator `Pod` information
-- **configuration** (optional): `Secrets` and `ConfigMaps` in the operator
-  namespace
+- **operator pods** (optional): the `Pods` the deployment selects
+- **configuration** (optional): the `Secrets` and `ConfigMaps` of the operator,
+  under the names it resolves from its deployment (its configuration objects,
+  the webhook certificate mounted in its pod, its CA), plus the `Secrets` owned
+  by the deployment when they can be listed
 - **events** (optional): `Events` in the operator namespace
-- **webhook configuration** (optional): mutating and validating webhook
-  configurations (cluster-scoped)
-- **webhook service** (optional): the webhook service
+- **webhook configuration** (optional): the mutating and validating webhook
+  configurations of this operator (cluster-scoped): the ones it manages, by
+  name, and the ones pointing at a service selecting its pods
+- **webhook service** (optional): the services the webhook configurations
+  point at
 - **OLM resources** (optional): subscriptions, cluster service versions,
   install plans (if OLM is installed)
 - **logs** (optional): operator `Pod` logs in JSON-lines format (requires
   `--logs` flag)
 
 :::warning[Minimal permissions]
-    Read access (`get`) to the operator deployment in the operator namespace.
-    This allows namespace-scoped users to generate basic troubleshooting reports.
+    Read access (`get`) to the operator deployment in the operator namespace,
+    named with `--deployment-name`. Without the flag the command lists the
+    deployments of the namespace and keeps the ones running the operator, so
+    `list` is needed instead; one is used, several are listed in the error.
+    A namespace-scoped access is enough for basic troubleshooting reports.
 :::
 
 :::info[Recommended permissions for full report]
@@ -591,6 +598,12 @@ results in
 
 ```output
 Successfully written report to "report_operator_<TIMESTAMP>.zip" (format: "yaml")
+```
+
+With several operators in one namespace, name the one to report on:
+
+```sh
+kubectl cnpg report operator -n awesome-operators --deployment-name cnpg-toto
 ```
 
 With the `-f` flag set:
