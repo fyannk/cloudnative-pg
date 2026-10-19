@@ -80,8 +80,12 @@ type PublicKeyInfrastructure struct {
 	// to inject the caBundle
 	ValidatingWebhookConfigurationName string
 
-	// The labelSelector to be used to get the operators deployment,
-	// e.g. "app.kubernetes.io/name=cloudnative-pg"
+	// The name of the operator deployment, when known: the deployment is
+	// then fetched by name instead of being searched by label
+	OperatorDeploymentName string
+
+	// The labelSelector to be used to get the operators deployment when its
+	// name is not known, e.g. "app.kubernetes.io/name=cloudnative-pg"
 	OperatorDeploymentLabelSelector string
 
 	// ManageWebhookConfigurations controls whether the operator injects the CA
@@ -190,7 +194,8 @@ func (pki *PublicKeyInfrastructure) ensureRootCACertificate(
 	}
 
 	secret = pair.GenerateCASecret(pki.OperatorNamespace, pki.CaSecretName)
-	err = SetAsOwnedByOperatorDeployment(ctx, kubeClient, &secret.ObjectMeta, pki.OperatorDeploymentLabelSelector)
+	err = SetAsOwnedByOperatorDeployment(ctx, kubeClient, &secret.ObjectMeta,
+		pki.OperatorDeploymentName, pki.OperatorDeploymentLabelSelector)
 	if err != nil {
 		return nil, err
 	}
@@ -368,6 +373,7 @@ func (pki PublicKeyInfrastructure) ensureCertificate(
 		ctx,
 		kubeClient,
 		&secret.ObjectMeta,
+		pki.OperatorDeploymentName,
 		pki.OperatorDeploymentLabelSelector,
 	); err != nil {
 		return nil, err

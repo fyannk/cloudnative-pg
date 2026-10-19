@@ -23,6 +23,7 @@ import (
 	"context"
 
 	appsv1 "k8s.io/api/apps/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -110,5 +111,72 @@ var _ = Describe("Difference of values of maps", func() {
 			client.MatchingLabelsSelector{Selector: labelMap.AsSelector()})
 		Expect(err).ToNot(HaveOccurred())
 		Expect(deployment).ToNot(BeNil())
+	})
+})
+
+var _ = Describe("Operator deployment lookup by name", func() {
+	operatorLabelSelector := "app.kubernetes.io/name=cloudnative-pg"
+	operatorLabels := map[string]string{"app.kubernetes.io/name": "cloudnative-pg"}
+
+	It("returns the deployment named, whatever its labels", func(ctx SpecContext) {
+		kubeClient := generateFakeClient()
+		Expect(createFakeOperatorDeploymentByName(ctx, kubeClient, "cnpg-toto",
+			map[string]string{"app.kubernetes.io/name": "toto"})).To(Succeed())
+		Expect(createFakeOperatorDeploymentByName(ctx, kubeClient, "cnpg-tata",
+			map[string]string{"app.kubernetes.io/name": "tata"})).To(Succeed())
+
+		deployment, err := GetOperatorDeployment(ctx, kubeClient, operatorNamespaceName, "cnpg-toto",
+			operatorLabelSelector)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(deployment.Name).To(Equal("cnpg-toto"))
+	})
+
+	It("prefers the name over the label when several deployments carry the label", func(ctx SpecContext) {
+		kubeClient := generateFakeClient()
+		Expect(createFakeOperatorDeploymentByName(ctx, kubeClient, "cnpg-toto", operatorLabels)).To(Succeed())
+		Expect(createFakeOperatorDeploymentByName(ctx, kubeClient, "cnpg-tata", operatorLabels)).To(Succeed())
+
+		deployment, err := GetOperatorDeployment(ctx, kubeClient, operatorNamespaceName, "cnpg-tata",
+			operatorLabelSelector)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(deployment.Name).To(Equal("cnpg-tata"))
+
+		_, err = GetOperatorDeployment(ctx, kubeClient, operatorNamespaceName, "", operatorLabelSelector)
+		Expect(err).To(MatchError(ContainSubstring("more than one operator deployment")))
+	})
+
+	It("explains a missing deployment of the name given, keeping the not-found nature", func(ctx SpecContext) {
+		kubeClient := generateFakeClient()
+		Expect(createFakeOperatorDeploymentByName(ctx, kubeClient, operatorDeploymentName, operatorLabels)).
+			To(Succeed())
+
+		_, err := GetOperatorDeployment(ctx, kubeClient, operatorNamespaceName, "cnpg-toto", operatorLabelSelector)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring(`operator deployment "cnpg-toto" not found in namespace`))
+		Expect(err.Error()).To(ContainSubstring("OPERATOR_DEPLOYMENT_NAME"))
+		Expect(apierrors.IsNotFound(err)).To(BeTrue())
+	})
+
+	It("searches by label when no name is given", func(ctx SpecContext) {
+		kubeClient := generateFakeClient()
+		Expect(createFakeOperatorDeploymentByName(ctx, kubeClient, operatorDeploymentName, operatorLabels)).
+			To(Succeed())
+
+		deployment, err := GetOperatorDeployment(ctx, kubeClient, operatorNamespaceName, "", operatorLabelSelector)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(deployment.Name).To(Equal(operatorDeploymentName))
+	})
+
+	It("sets the owner from the deployment named", func(ctx SpecContext) {
+		kubeClient := generateFakeClient()
+		Expect(createFakeOperatorDeploymentByName(ctx, kubeClient, "cnpg-toto",
+			map[string]string{"app.kubernetes.io/name": "toto"})).To(Succeed())
+
+		controlled := metav1.ObjectMeta{Name: "cnpg-toto-ca-secret", Namespace: operatorNamespaceName}
+		Expect(SetAsOwnedByOperatorDeployment(ctx, kubeClient, &controlled, "cnpg-toto", operatorLabelSelector)).
+			To(Succeed())
+		Expect(controlled.OwnerReferences).To(HaveLen(1))
+		Expect(controlled.OwnerReferences[0].Name).To(Equal("cnpg-toto"))
+		Expect(controlled.OwnerReferences[0].Kind).To(Equal("Deployment"))
 	})
 })
