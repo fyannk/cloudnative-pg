@@ -23,6 +23,7 @@ package configuration
 
 import (
 	"path"
+	"slices"
 	"strings"
 	"time"
 
@@ -336,6 +337,22 @@ func (config *Data) GetWebhookSecretName() string {
 // server, the subject of the serving certificate
 func (config *Data) GetWebhookServiceName() string {
 	return config.ownObjectName(config.WebhookServiceName, "webhook-service", DefaultWebhookServiceName)
+}
+
+// GetWebhookServiceNames returns the names the webhook Service may have, the
+// subject of the serving certificate first: the configured or derived name,
+// then the derived one and the historical literal, without duplicates
+func (config *Data) GetWebhookServiceNames() []string {
+	names := []string{config.GetWebhookServiceName()}
+	for _, name := range []string{
+		config.ownObjectName("", "webhook-service", DefaultWebhookServiceName),
+		DefaultWebhookServiceName,
+	} {
+		if !slices.Contains(names, name) {
+			names = append(names, name)
+		}
+	}
+	return names
 }
 
 // GetLeaderElectionID returns the name of the Lease used for the leader

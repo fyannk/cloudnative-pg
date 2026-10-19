@@ -353,6 +353,26 @@ var _ = Describe("Own object names", func() {
 		Expect(config.GetLeaderElectionID()).To(Equal("toto-leader"))
 	})
 
+	DescribeTable("list the webhook Service names, subject first",
+		func(config Data, expected []string) {
+			Expect(config.GetWebhookServiceNames()).To(Equal(expected))
+		},
+		Entry("the literal alone when nothing is set",
+			Data{}, []string{"cnpg-webhook-service"}),
+		Entry("the derived name then the literal",
+			Data{OperatorDeploymentName: "cnpg-toto"},
+			[]string{"cnpg-toto-webhook-service", "cnpg-webhook-service"}),
+		Entry("the explicit name, the derived one, the literal",
+			Data{OperatorDeploymentName: "cnpg-toto", WebhookServiceName: "toto-webhook"},
+			[]string{"toto-webhook", "cnpg-toto-webhook-service", "cnpg-webhook-service"}),
+		Entry("the explicit name then the literal, without the Deployment name",
+			Data{WebhookServiceName: "toto-webhook"},
+			[]string{"toto-webhook", "cnpg-webhook-service"}),
+		Entry("no duplicate when the explicit name is the literal",
+			Data{OperatorDeploymentName: "cnpg-toto", WebhookServiceName: "cnpg-webhook-service"},
+			[]string{"cnpg-webhook-service", "cnpg-toto-webhook-service"}),
+	)
+
 	It("leaves the defaults untouched when nothing is configured", func() {
 		Expect(resolve(*newDefaultConfig())).To(Equal(literals))
 	})
