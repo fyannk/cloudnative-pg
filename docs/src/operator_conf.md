@@ -66,7 +66,7 @@ Name | Description
 `MONITORING_QUERIES_SECRET` | The name of a Secret in the operator's namespace with a set of default queries (to be specified under the key `queries`) to be applied to all created Clusters
 `OPERATOR_DEPLOYMENT_NAME` | The name of the Deployment running the operator. When set, the operator fetches its Deployment by this name instead of searching it by the `app.kubernetes.io/name=cloudnative-pg` label, and names the objects it creates for itself after it: `<name>-ca-secret`, `<name>-webhook-cert`, `<name>-webhook-service`, `<name>-mutating-webhook-configuration`, `<name>-validating-webhook-configuration` and the Lease `<name>.cnpg.io`, each one still overridable by its own setting. When unset, the lookup is by label and every name keeps its historical value. It must be a Pod environment variable. See [Several operators in one namespace](#several-operators-in-one-namespace).
 `OPERATOR_IMAGE_NAME` | The name of the operator image used to bootstrap Pods. Defaults to the image specified during installation.
-`OPERATOR_STATUS_IDENTITY` | How much the operator says about itself in the `status.operator` block of the Clusters it reconciles: `off` nothing, `version` (the default) its version, `name` its version and its Deployment name, `full` its version, its Deployment name and its namespace. See [Several operators in one namespace](#several-operators-in-one-namespace).
+`OPERATOR_STATUS_IDENTITY` | How much the operator says about itself in the `status.operator` block of the Clusters it reconciles: `off` nothing, `version` (the default) its version, `name` its version and its Deployment name, `full` its version, its Deployment name and its namespace. With `name` and `full`, the Deployment name is also the field manager of every write of the operator, visible in the `managedFields` of every object it creates or updates. It must be a Pod environment variable, the field manager is fixed before the operator configuration objects are read. See [Several operators in one namespace](#several-operators-in-one-namespace).
 `PGBOUNCER_IMAGE_NAME` | The name of the PgBouncer image used by default for new poolers. Defaults to the version specified in the operator.
 `POSTGRES_IMAGE_NAME` | The name of the PostgreSQL image used by default for new clusters. Defaults to the version specified in the operator.
 `PULL_SECRET_NAME` | Name of an additional pull secret to be defined in the operator's namespace and to be used to download images
@@ -257,7 +257,10 @@ far as `OPERATOR_STATUS_IDENTITY` lets the operator tell: the version alone by
 default, the Deployment name with `name`, the namespace too with `full`, and
 nothing with `off`. A namespace watched by one instance can then read which
 one manages its Clusters without any access to the operator namespace, while
-a cluster-wide installation keeps its namespace to itself. The
+a cluster-wide installation keeps its namespace to itself. With `name` and
+`full`, the Deployment name is also the field manager of every write of the
+operator: `kubectl get --show-managed-fields` on any object it created or
+updated names the instance and the time of its last write. The
 `cnpg.io/operatorVersion` annotation on the created ConfigMaps, Secrets and
 Jobs and the `cloudNativePGCommitHash` status field are written whatever the
 mode.
