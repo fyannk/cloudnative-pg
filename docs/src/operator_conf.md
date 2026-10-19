@@ -263,7 +263,8 @@ operator: `kubectl get --show-managed-fields` on any object it created or
 updated names the instance and the time of its last write. The
 `cnpg.io/operatorVersion` annotation on the created ConfigMaps, Secrets and
 Jobs and the `cloudNativePGCommitHash` status field are written whatever the
-mode.
+mode. `kubectl cnpg status` prints the block as one `Operator` line of its
+summary, `1.30.1`, `cnpg-toto (1.30.1)` or `operators/cnpg-toto (1.30.1)`.
 
 ```yaml
 status:

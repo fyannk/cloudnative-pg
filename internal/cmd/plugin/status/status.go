@@ -276,6 +276,9 @@ func (fullStatus *PostgresqlStatus) printBasicInfo(
 		summary.AddLine("System ID:", primaryInstanceStatus.SystemID)
 	}
 	summary.AddLine("PostgreSQL Image:", cluster.Status.Image)
+	if operator := operatorSummary(cluster.Status.Operator); operator != "" {
+		summary.AddLine("Operator:", operator)
+	}
 	if cluster.IsReplica() {
 		summary.AddLine("Designated primary:", primaryInstance)
 		summary.AddLine("Source cluster: ", cluster.Spec.ReplicaCluster.Source)
@@ -355,6 +358,26 @@ func (fullStatus *PostgresqlStatus) printBasicInfo(
 
 	summary.Print()
 	fmt.Println()
+}
+
+// operatorSummary formats the operator reported in the status: its version,
+// behind its Deployment name and namespace when the status carries them
+func operatorSummary(operator *apiv1.OperatorStatus) string {
+	if operator == nil {
+		return ""
+	}
+	name := operator.Name
+	if name != "" && operator.Namespace != "" {
+		name = operator.Namespace + "/" + name
+	}
+	switch {
+	case name == "":
+		return operator.Version
+	case operator.Version == "":
+		return name
+	default:
+		return fmt.Sprintf("%s (%s)", name, operator.Version)
+	}
 }
 
 func (fullStatus *PostgresqlStatus) printHibernationInfo() {
