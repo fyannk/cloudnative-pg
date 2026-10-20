@@ -647,15 +647,23 @@ func (instance *Instance) TryShuttingDownSmartFast(ctx context.Context) error {
 		smartTimeout = 0
 	}
 
+	if smartTimeout > 0 && instance.isNoLongerTargetPrimary() {
+		contextLogger.Info("This primary is no longer the target primary of the cluster, " +
+			"skipping the smart shutdown")
+		smartTimeout = 0
+	}
+
 	if smartTimeout > 0 {
 		contextLogger.Info("Requesting smart shutdown of the PostgreSQL instance")
-		err = instance.Shutdown(
+		fast := shutdownOptions{Mode: shutdownModeFast, Wait: true, Timeout: &maxStopDelay}
+		err = runSmartShutdownUnlessDemoted(
 			ctx,
-			shutdownOptions{
-				Mode:    shutdownModeSmart,
-				Wait:    true,
-				Timeout: &smartTimeout,
+			func() error {
+				return instance.Shutdown(ctx, shutdownOptions{Mode: shutdownModeSmart, Wait: true, Timeout: &smartTimeout})
 			},
+			func() error { return instance.Shutdown(ctx, fast) },
+			instance.isNoLongerTargetPrimary,
+			smartShutdownEscalationPeriod,
 		)
 		if err != nil {
 			contextLogger.Warning("Error while handling the smart shutdown request", "err", err)
@@ -683,6 +691,64 @@ func (instance *Instance) TryShuttingDownSmartFast(ctx context.Context) error {
 
 	contextLogger.Info("PostgreSQL instance shut down")
 	return nil
+}
+
+// smartShutdownEscalationPeriod is how often a smart shutdown in progress checks
+// whether the cluster has moved the primary role away from this instance
+const smartShutdownEscalationPeriod = time.Second
+
+// isNoLongerTargetPrimary reports whether this instance runs as a primary while
+// the cluster has elected another target primary (another instance, or the
+// pending marker of a failover). Nobody comes back to such an instance as
+// primary: a smart shutdown, which waits for its sessions to end, only delays
+// the promotion of the new one.
+func (instance *Instance) isNoLongerTargetPrimary() bool {
+	isPrimary, err := instance.IsPrimary()
+	if err != nil || !isPrimary {
+		return false
+	}
+	targetPrimary := instance.GetClusterOrDefault().Status.TargetPrimary
+	return targetPrimary != "" && targetPrimary != instance.GetPodName()
+}
+
+// runSmartShutdownUnlessDemoted runs a smart shutdown and, while it waits for
+// the sessions to end, checks every period whether the instance has been
+// demoted in the meantime. When it has, a fast shutdown is requested on top of
+// the smart one: PostgreSQL upgrades the shutdown in progress, the sessions are
+// terminated and the shutdown checkpoint is shipped to the standbys at once.
+// The result is the one of the shutdown that completed the stop.
+func runSmartShutdownUnlessDemoted(
+	ctx context.Context,
+	smart func() error,
+	fast func() error,
+	demoted func() bool,
+	period time.Duration,
+) error {
+	contextLogger := log.FromContext(ctx)
+
+	smartResult := make(chan error, 1)
+	go func() { smartResult <- smart() }()
+
+	ticker := time.NewTicker(period)
+	defer ticker.Stop()
+	for {
+		select {
+		case err := <-smartResult:
+			return err
+		case <-ticker.C:
+			if !demoted() {
+				continue
+			}
+			contextLogger.Info("This primary is no longer the target primary of the cluster, " +
+				"escalating the smart shutdown in progress to a fast shutdown")
+			err := fast()
+			// the smart request returns once the postmaster is down
+			if smartErr := <-smartResult; smartErr != nil {
+				contextLogger.Debug("Smart shutdown request ended after the escalation", "err", smartErr)
+			}
+			return err
+		}
+	}
 }
 
 // TryShuttingDownFastImmediate first attempts to shut down the instance using the "fast" mode,
