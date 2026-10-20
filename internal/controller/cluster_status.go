@@ -22,6 +22,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"maps"
 	"reflect"
 	"runtime"
 	"slices"
@@ -150,8 +151,9 @@ func (r *ClusterReconciler) getManagedResources(
 		return nil, err
 	}
 
+	// Nodes are read only when the node state comes from the Node API
 	nodes := map[string]corev1.Node{}
-	if configuration.Current.APINodeEnabled {
+	if r.nodeStatusSource == configuration.NodeStatusSourceAPI {
 		if nodes, err = r.getNodes(ctx); err != nil {
 			return nil, err
 		}
@@ -276,12 +278,12 @@ func (r *ClusterReconciler) updateResourceStatus(
 	cluster.Status.JobCount = newJobs
 
 	podLabelKeys, nodeLabelKeys := cluster.GetTopologyLabelKeys()
-	cluster.Status.Topology = getPodsTopology(
+	cluster.Status.Topology = extractPodsTopology(
 		ctx,
 		resources.instances.Items,
-		resources.nodes,
 		podLabelKeys,
 		nodeLabelKeys,
+		r.nodeLabelsResolver(resources.nodes),
 	)
 	r.updateTopologyAvailability(cluster, existingClusterStatus.Conditions, resources.instances.Items, nodeLabelKeys)
 	updateSyncReplicationTopologyCondition(cluster)
@@ -856,12 +858,100 @@ func (r *ClusterReconciler) updateClusterStatusThatRequiresInstancesState(
 // label makes the whole extraction fail), while the keys in nodeLabelNames
 // are resolved from the labels of the Node hosting the Pod, and a missing
 // Node makes the whole extraction fail.
+// nodeLabelsResolver returns the values of the given node labels for the
+// Node of a Pod, and false when they cannot be resolved
+type nodeLabelsResolver func(pod *corev1.Pod, keys []string) (map[string]string, bool)
+
+// nodeLabelsFromNodes resolves the node labels of a Pod from the Nodes read
+// from the API: a label the Node lacks resolves to an empty value
+func nodeLabelsFromNodes(nodes map[string]corev1.Node) nodeLabelsResolver {
+	return func(pod *corev1.Pod, keys []string) (map[string]string, bool) {
+		node, ok := nodes[pod.Spec.NodeName]
+		if !ok {
+			return nil, false
+		}
+		labels := make(map[string]string, len(keys))
+		for _, key := range keys {
+			labels[key] = node.Labels[key]
+		}
+		return labels, true
+	}
+}
+
+// noNodeLabels resolves nothing
+func noNodeLabels(*corev1.Pod, []string) (map[string]string, bool) {
+	return nil, false
+}
+
+// nodeLabelsResolver returns how the node labels of a Pod are resolved with
+// the configured source of node state: from the Nodes read from the API, from
+// the copies a node bridge echoed onto the Pod, or not at all
+func (r *ClusterReconciler) nodeLabelsResolver(nodes map[string]corev1.Node) nodeLabelsResolver {
+	switch r.nodeStatusSource {
+	case configuration.NodeStatusSourceAPI:
+		return nodeLabelsFromNodes(nodes)
+	case configuration.NodeStatusSourcePods:
+		return r.nodeStatus.NodeLabels
+	default:
+		return noNodeLabels
+	}
+}
+
+// updateTopologyAvailability declares, through the TopologyUnavailable
+// condition, that the topology needs node labels the operator cannot read
+// because it reads no node state. The nodes used are still counted from the
+// instance Pods, and a Warning Event is emitted when the condition is first
+// set: the node label constraints are not applied.
+func (r *ClusterReconciler) updateTopologyAvailability(
+	cluster *apiv1.Cluster,
+	previous []metav1.Condition,
+	pods []corev1.Pod,
+	nodeLabelKeys []string,
+) {
+	if r.nodeStatusSource != configuration.NodeStatusSourceNone || len(nodeLabelKeys) == 0 {
+		meta.RemoveStatusCondition(&cluster.Status.Conditions, string(apiv1.ConditionTopologyUnavailable))
+		return
+	}
+
+	cluster.Status.Topology = apiv1.Topology{
+		NodesUsed: extractPodsTopology(context.Background(), pods, nil, nil, noNodeLabels).NodesUsed,
+	}
+	message := "The operator reads no node state (NODE_STATUS_SOURCE=none): the node labels " +
+		strings.Join(nodeLabelKeys, ", ") + " cannot be resolved and the failure domain " +
+		"constraints of the synchronous replicas are not applied"
+	meta.SetStatusCondition(&cluster.Status.Conditions, metav1.Condition{
+		Type:    string(apiv1.ConditionTopologyUnavailable),
+		Status:  metav1.ConditionTrue,
+		Reason:  string(apiv1.ConditionReasonNodeAccessUnavailable),
+		Message: message,
+	})
+	if !meta.IsStatusConditionTrue(previous, string(apiv1.ConditionTopologyUnavailable)) && r.Recorder != nil {
+		r.Recorder.Event(cluster, corev1.EventTypeWarning, string(apiv1.ConditionTopologyUnavailable), message)
+	}
+}
+
+// getPodsTopology extracts the topology of the instances with the node
+// labels read from the Nodes of the API
 func getPodsTopology(
 	ctx context.Context,
 	pods []corev1.Pod,
 	nodes map[string]corev1.Node,
 	podLabelNames []string,
 	nodeLabelNames []string,
+) apiv1.Topology {
+	return extractPodsTopology(ctx, pods, podLabelNames, nodeLabelNames, nodeLabelsFromNodes(nodes))
+}
+
+// extractPodsTopology extracts the topology of the instances: the values of
+// the pod failure domain labels, read from the Pods, and those of the node
+// failure domain labels, resolved by nodeLabels. A missing value fails the
+// extraction
+func extractPodsTopology(
+	ctx context.Context,
+	pods []corev1.Pod,
+	podLabelNames []string,
+	nodeLabelNames []string,
+	nodeLabels nodeLabelsResolver,
 ) apiv1.Topology {
 	contextLogger := log.FromContext(ctx)
 	data := make(map[apiv1.PodName]apiv1.PodTopologyLabels)
@@ -893,53 +983,19 @@ func getPodsTopology(
 			continue
 		}
 
-		node, ok := nodes[pod.Spec.NodeName]
+		labels, ok := nodeLabels(&pod, nodeLabelNames)
 		if !ok {
-			// node not found, it means that:
-			// - the node could have been drained
-			// - others
-			contextLogger.Debug("node not found, skipping pod topology matching")
+			// the node labels cannot be resolved: the node is not known (it
+			// could have been drained), or the state echoed onto the pod
+			// does not carry them yet
+			contextLogger.Debug("node labels not resolved, skipping pod topology matching",
+				"podName", pod.Name, "nodeName", pod.Spec.NodeName)
 			return apiv1.Topology{}
 		}
-		for _, labelName := range nodeLabelNames {
-			data[podName][labelName] = node.Labels[labelName]
-		}
+		maps.Copy(data[podName], labels)
 	}
 
 	return apiv1.Topology{SuccessfullyExtracted: true, Instances: data, NodesUsed: int32(len(nodesMap))} //nolint:gosec
-}
-
-// updateTopologyAvailability declares, through the TopologyUnavailable
-// condition, that the topology needs node labels the operator cannot read
-// because the Node API is disabled. The nodes used are still counted from
-// the instance Pods, and a Warning Event is emitted when the condition is
-// first set: the node label constraints are not applied.
-func (r *ClusterReconciler) updateTopologyAvailability(
-	cluster *apiv1.Cluster,
-	previous []metav1.Condition,
-	pods []corev1.Pod,
-	nodeLabelKeys []string,
-) {
-	if configuration.Current.APINodeEnabled || len(nodeLabelKeys) == 0 {
-		meta.RemoveStatusCondition(&cluster.Status.Conditions, string(apiv1.ConditionTopologyUnavailable))
-		return
-	}
-
-	cluster.Status.Topology = apiv1.Topology{
-		NodesUsed: getPodsTopology(context.Background(), pods, nil, nil, nil).NodesUsed,
-	}
-	message := "The operator does not read the Node API (API_NODE_ENABLED): the node labels " +
-		strings.Join(nodeLabelKeys, ", ") + " cannot be resolved and the failure domain " +
-		"constraints of the synchronous replicas are not applied"
-	meta.SetStatusCondition(&cluster.Status.Conditions, metav1.Condition{
-		Type:    string(apiv1.ConditionTopologyUnavailable),
-		Status:  metav1.ConditionTrue,
-		Reason:  string(apiv1.ConditionReasonNodeAccessUnavailable),
-		Message: message,
-	})
-	if !meta.IsStatusConditionTrue(previous, string(apiv1.ConditionTopologyUnavailable)) && r.Recorder != nil {
-		r.Recorder.Event(cluster, corev1.EventTypeWarning, string(apiv1.ConditionTopologyUnavailable), message)
-	}
 }
 
 // updateSyncReplicationTopologyCondition sets the SyncReplicationTopologySatisfied

@@ -506,6 +506,11 @@ setup. If you are on Kubernetes 1.34 or older, or the
 `nodeFailureDomainKeys` instead.
 ::::
 
+`nodeFailureDomainKeys` needs the operator to read node state: from the `Node`
+API by default, or from the copies a node bridge echoes onto the instance pods
+when the operator is installed without access to it. See
+[Node state from the instance pods](operator_conf.md#node-state-from-the-instance-pods).
+
 CloudNativePG applies the failure domain constraint only when there are
 enough cross-domain standbys to satisfy it completely: the full configured
 `number` with `required` data durability, or just one with `preferred`. When

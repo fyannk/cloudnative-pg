@@ -100,9 +100,11 @@ type ClusterReconciler struct {
 	Plugins            repository.Interface
 	OperatorClientCert *tls.Certificate
 
-	drainTaints    []string
-	rolloutManager *rolloutManager.Manager
-	admission      *guard.Admission[*apiv1.Cluster]
+	drainTaints      []string
+	nodeStatusSource string
+	nodeStatus       utils.NodeStatusReader
+	rolloutManager   *rolloutManager.Manager
+	admission        *guard.Admission[*apiv1.Cluster]
 }
 
 // NewClusterReconciler creates a new ClusterReconciler initializing it
@@ -124,8 +126,14 @@ func NewClusterReconciler(
 			configuration.Current.GetClustersRolloutDelay(),
 			configuration.Current.GetInstancesRolloutDelay(),
 		),
-		drainTaints: drainTaints,
-		admission:   admission,
+		drainTaints:      drainTaints,
+		nodeStatusSource: configuration.Current.NodeStatusSource,
+		nodeStatus: utils.NodeStatusReader{
+			KeyPrefix:      configuration.Current.NodeStatusPodKeyPrefix,
+			LabelPrefix:    configuration.Current.NodeStatusLabelPrefix,
+			EvictionMaxAge: configuration.Current.GetNodeStatusEvictionMaxAge(),
+		},
+		admission: admission,
 	}
 }
 
@@ -1399,8 +1407,10 @@ func (r *ClusterReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manag
 			builder.WithPredicates(isBeingDeletedPredicate),
 		)
 
-	// Nodes are watched to detect drains: cluster-scoped and optional
-	if configuration.Current.APINodeEnabled {
+	// Nodes are watched to detect drains only when the node state comes from
+	// the Node API: with the other sources the instance Pods, owned above,
+	// carry it and wake the Cluster up themselves
+	if r.nodeStatusSource == configuration.NodeStatusSourceAPI {
 		ctrlBuilder = ctrlBuilder.Watches(
 			&corev1.Node{},
 			handler.EnqueueRequestsFromMapFunc(r.mapNodeToClusters()),

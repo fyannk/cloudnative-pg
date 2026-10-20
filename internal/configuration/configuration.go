@@ -22,6 +22,7 @@ SPDX-License-Identifier: Apache-2.0
 package configuration
 
 import (
+	"fmt"
 	"path"
 	"strings"
 	"time"
@@ -54,6 +55,25 @@ const (
 	// DefaultValidatingWebhookConfigurationName is the default name of the validating webhook configuration
 	DefaultValidatingWebhookConfigurationName = "cnpg-validating-webhook-configuration"
 )
+
+// Values of NodeStatusSource
+const (
+	// NodeStatusSourceAPI reads the cluster-scoped Node API: a Node watch and
+	// a list at every reconciliation
+	NodeStatusSourceAPI = "api"
+
+	// NodeStatusSourcePods reads the node state that a node bridge echoes
+	// onto the instance Pods, under the keys named by NodeStatusPodKeyPrefix
+	// and NodeStatusLabelPrefix
+	NodeStatusSourcePods = "pods"
+
+	// NodeStatusSourceNone reads no node state at all
+	NodeStatusSourceNone = "none"
+)
+
+// DefaultNodeStatusEvictionMaxAge is the default age, in seconds, after which
+// an eviction request echoed onto a primary Pod is ignored
+const DefaultNodeStatusEvictionMaxAge = 600
 
 // DefaultDrainTaints is the default list of taints the operator will watch and treat
 // as Unschedule
@@ -187,6 +207,29 @@ type Data struct {
 	// DrainTaints is a list of taints the operator will watch and treat as Unschedule
 	DrainTaints []string `json:"drainTaints" env:"DRAIN_TAINTS"`
 
+	// NodeStatusSource says where the operator learns the state of the nodes.
+	// Unset, it is resolved from APINodeEnabled at startup, see
+	// ResolveNodeStatusSource
+	// (cordon, drain taints, node labels): "api" reads the cluster-scoped
+	// Node API, "pods" reads the keys a node bridge echoes onto the instance
+	// Pods, "none" reads nothing
+	NodeStatusSource string `json:"nodeStatusSource" env:"NODE_STATUS_SOURCE"`
+
+	// NodeStatusPodKeyPrefix is the prefix of the keys read on the instance
+	// Pods when NodeStatusSource is "pods": <prefix>unschedulable,
+	// <prefix>taints and <prefix>eviction-requested. Required with "pods"
+	NodeStatusPodKeyPrefix string `json:"nodeStatusPodKeyPrefix" env:"NODE_STATUS_POD_KEY_PREFIX"`
+
+	// NodeStatusLabelPrefix is the prefix under which the node labels are
+	// copied onto the instance Pods when NodeStatusSource is "pods": the
+	// node label <key> is read from the Pod label <prefix><key>
+	NodeStatusLabelPrefix string `json:"nodeStatusLabelPrefix" env:"NODE_STATUS_LABEL_PREFIX"`
+
+	// NodeStatusEvictionMaxAge is the age, in seconds, after which an
+	// eviction request echoed onto a primary Pod no longer triggers a
+	// switchover. Zero means no limit
+	NodeStatusEvictionMaxAge int `json:"nodeStatusEvictionMaxAge" env:"NODE_STATUS_EVICTION_MAX_AGE"`
+
 	// ManageWebhookConfigurations is true when the operator should inject the
 	// CA bundle into the mutating and validating webhook configurations. It can
 	// be disabled when the webhook configurations are managed externally (e.g.
@@ -237,6 +280,7 @@ func newDefaultConfig() *Data {
 		APIVolumeSnapshotEnabled:      true,
 		APIClusterImageCatalogEnabled: true,
 		APINodeEnabled:                true,
+		NodeStatusEvictionMaxAge:      DefaultNodeStatusEvictionMaxAge,
 	}
 }
 
@@ -275,6 +319,69 @@ func (config *Data) GetClustersRolloutDelay() time.Duration {
 func (config *Data) GetInstancesRolloutDelay() time.Duration {
 	return time.Duration(config.InstancesRolloutDelay) * time.Second
 }
+
+// ReadsNodeAPI reports whether the operator watches and lists the Nodes
+func (config *Data) ReadsNodeAPI() bool {
+	return config.NodeStatusSource == NodeStatusSourceAPI
+}
+
+// ReadsNodeStatusFromPods reports whether the operator reads the node state
+// echoed onto the instance Pods
+func (config *Data) ReadsNodeStatusFromPods() bool {
+	return config.NodeStatusSource == NodeStatusSourcePods
+}
+
+// GetNodeStatusEvictionMaxAge returns the age after which an echoed eviction
+// request is ignored, zero for no limit
+func (config *Data) GetNodeStatusEvictionMaxAge() time.Duration {
+	return time.Duration(config.NodeStatusEvictionMaxAge) * time.Second
+}
+
+// ResolveNodeStatusSource settles NodeStatusSource once APINodeEnabled is
+// known, after the probe of the Node API. Unset, the source follows the API:
+// "api" when the operator reads it, "none" when it is disabled or not
+// accessible. Set to "api" while the Node API is disabled, the source is
+// refused: a stated source that cannot work. "pods" and "none" never depend
+// on the Node API. "pods" needs NodeStatusPodKeyPrefix.
+func (config *Data) ResolveNodeStatusSource() error {
+	switch config.NodeStatusSource {
+	case "":
+		config.NodeStatusSource = NodeStatusSourceNone
+		if config.APINodeEnabled {
+			config.NodeStatusSource = NodeStatusSourceAPI
+		}
+		return nil
+	case NodeStatusSourceAPI:
+		if !config.APINodeEnabled {
+			return fmt.Errorf("NODE_STATUS_SOURCE=%s requires the Node API, which is disabled or not "+
+				"accessible (API_NODE_ENABLED): leave NODE_STATUS_SOURCE unset, or set it to %s or %s",
+				NodeStatusSourceAPI, NodeStatusSourcePods, NodeStatusSourceNone)
+		}
+		return nil
+	case NodeStatusSourceNone:
+		return nil
+	case NodeStatusSourcePods:
+		if config.NodeStatusPodKeyPrefix == "" {
+			return fmt.Errorf("NODE_STATUS_SOURCE=%s requires NODE_STATUS_POD_KEY_PREFIX, "+
+				"the prefix of the keys echoed onto the instance Pods", NodeStatusSourcePods)
+		}
+		if config.NodeStatusEvictionMaxAge < 0 {
+			return fmt.Errorf("NODE_STATUS_EVICTION_MAX_AGE must not be negative, got %d",
+				config.NodeStatusEvictionMaxAge)
+		}
+		return nil
+	default:
+		return fmt.Errorf("unknown NODE_STATUS_SOURCE %q, expected %s, %s or %s",
+			config.NodeStatusSource, NodeStatusSourceAPI, NodeStatusSourcePods, NodeStatusSourceNone)
+	}
+}
+
+// NodeStatusUnavailableMessage says what the operator gives up when it reads
+// no node state, for the operator log, the Cluster Events and the webhook
+const NodeStatusUnavailableMessage = "The operator reads no node state (NODE_STATUS_SOURCE=none): " +
+	"the primary of a node being drained is not switched over before the drain, and the node " +
+	"labels of the instance topology are not resolved; set NODE_STATUS_SOURCE=pods with a node " +
+	"bridge to recover them without the Node API"
 
 // WatchedNamespaces get the list of additional watched namespaces.
 // The result is a list of namespaces specified in the WATCHED_NAMESPACE where
