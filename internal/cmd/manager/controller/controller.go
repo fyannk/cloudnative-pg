@@ -154,6 +154,15 @@ func RunController(
 	}
 	utils.SetVolumeSnapshot(conf.APIVolumeSnapshotEnabled)
 
+	// The source of node state follows the probe of the Node API
+	if err := conf.ResolveNodeStatusSource(); err != nil {
+		setupLog.Error(err, "invalid node status configuration")
+		return err
+	}
+	if conf.NodeStatusSource == configuration.NodeStatusSourceNone {
+		setupLog.Warning(configuration.NodeStatusUnavailableMessage)
+	}
+
 	// Detect the available architectures
 	if err = utils.DetectAvailableArchitectures(); err != nil {
 		setupLog.Error(err, "unable to detect the available instance's architectures")
@@ -166,6 +175,7 @@ func RunController(
 		"apiVolumeSnapshot", conf.APIVolumeSnapshotEnabled,
 		"apiClusterImageCatalog", conf.APIClusterImageCatalogEnabled,
 		"apiNode", conf.APINodeEnabled,
+		"nodeStatusSource", conf.NodeStatusSource,
 		"availableArchitectures", utils.GetAvailableArchitectures(),
 	)
 

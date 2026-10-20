@@ -20,6 +20,7 @@ SPDX-License-Identifier: Apache-2.0
 package controller
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"time"
@@ -1535,6 +1536,96 @@ var _ = Describe("isNodeUnschedulableOrBeingDrained", func() {
 		Entry("node is tainted", nodeTainted, true),
 		Entry("node has an unknown taint", nodeWithUnknownTaint, false),
 	)
+})
+
+var _ = Describe("The node state of an instance per source", func() {
+	const prefix = "bridge.example.com/"
+
+	var env *testingEnvironment
+	var cordonedNode, plainNode corev1.Node
+
+	BeforeEach(func() {
+		env = buildTestEnvironment()
+		plainNode = corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "plain-node"}}
+		cordonedNode = corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{Name: "cordoned-node"},
+			Spec:       corev1.NodeSpec{Unschedulable: true},
+		}
+		Expect(env.client.Create(context.Background(), &plainNode)).To(Succeed())
+		Expect(env.client.Create(context.Background(), &cordonedNode)).To(Succeed())
+	})
+
+	reconciler := func(source string) *ClusterReconciler {
+		return &ClusterReconciler{
+			Client:           env.client,
+			drainTaints:      configuration.DefaultDrainTaints,
+			nodeStatusSource: source,
+			nodeStatus:       utils.NodeStatusReader{KeyPrefix: prefix, EvictionMaxAge: 10 * time.Minute},
+		}
+	}
+
+	instance := func(nodeName string, labels, annotations map[string]string) *postgres.PostgresqlStatus {
+		return &postgres.PostgresqlStatus{
+			Node: nodeName,
+			Pod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{Name: "pg-1", Labels: labels, Annotations: annotations},
+				Spec:       corev1.PodSpec{NodeName: nodeName},
+			},
+		}
+	}
+
+	cordonedMark := map[string]string{prefix + "unschedulable": "true"}
+	taintMark := map[string]string{prefix + "taints": `[{"key":"karpenter.sh/disrupted","effect":"NoSchedule"}]`}
+	evictionMark := map[string]string{prefix + "eviction-requested": time.Now().Add(-time.Minute).Format(time.RFC3339)}
+	staleEvictionMark := map[string]string{
+		prefix + "eviction-requested": time.Now().Add(-time.Hour).Format(time.RFC3339),
+	}
+
+	DescribeTable("whether the node is cordoned or being drained",
+		func(source, nodeName string, labels, annotations map[string]string, expected bool) {
+			draining, err := reconciler(source).isInstanceOnDrainingNode(
+				context.Background(), instance(nodeName, labels, annotations))
+			Expect(err).ToNot(HaveOccurred())
+			Expect(draining).To(Equal(expected))
+		},
+		Entry("api: the Node is read", configuration.NodeStatusSourceAPI, "cordoned-node", nil, nil, true),
+		Entry("api: a plain Node", configuration.NodeStatusSourceAPI, "plain-node", nil, nil, false),
+		Entry("api: the marks on the Pod do not count", configuration.NodeStatusSourceAPI, "plain-node",
+			cordonedMark, taintMark, false),
+		Entry("pods: the cordon mark", configuration.NodeStatusSourcePods, "plain-node", cordonedMark, nil, true),
+		Entry("pods: the drain taint mark", configuration.NodeStatusSourcePods, "plain-node", nil, taintMark, true),
+		Entry("pods: the Node does not count", configuration.NodeStatusSourcePods, "cordoned-node", nil, nil, false),
+		Entry("none: nothing counts", configuration.NodeStatusSourceNone, "cordoned-node", cordonedMark, taintMark, false),
+	)
+
+	It("api: fails when the Node cannot be read", func() {
+		_, err := reconciler(configuration.NodeStatusSourceAPI).isInstanceOnDrainingNode(
+			context.Background(), instance("unknown-node", nil, nil))
+		Expect(err).To(HaveOccurred())
+	})
+
+	It("pods: an instance without a Pod is not on a draining node", func() {
+		draining, err := reconciler(configuration.NodeStatusSourcePods).isInstanceOnDrainingNode(
+			context.Background(), &postgres.PostgresqlStatus{Node: "cordoned-node"})
+		Expect(err).ToNot(HaveOccurred())
+		Expect(draining).To(BeFalse())
+	})
+
+	DescribeTable("whether an eviction of the instance was requested",
+		func(source string, annotations map[string]string, expected bool) {
+			Expect(reconciler(source).isEvictionRequested(instance("plain-node", nil, annotations))).To(Equal(expected))
+		},
+		Entry("pods: a fresh request", configuration.NodeStatusSourcePods, evictionMark, true),
+		Entry("pods: a request older than the maximum age", configuration.NodeStatusSourcePods, staleEvictionMark, false),
+		Entry("pods: no request", configuration.NodeStatusSourcePods, nil, false),
+		Entry("api: the mark does not count", configuration.NodeStatusSourceAPI, evictionMark, false),
+		Entry("none: the mark does not count", configuration.NodeStatusSourceNone, evictionMark, false),
+	)
+
+	It("pods: an instance without a Pod has no eviction requested", func() {
+		Expect(reconciler(configuration.NodeStatusSourcePods).isEvictionRequested(
+			&postgres.PostgresqlStatus{Node: "plain-node"})).To(BeFalse())
+	})
 })
 
 var _ = Describe("evaluatePodReadinessGuards", func() {
