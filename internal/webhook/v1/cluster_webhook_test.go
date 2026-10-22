@@ -31,13 +31,16 @@ import (
 	"github.com/cloudnative-pg/machinery/pkg/image/reference"
 	pgversion "github.com/cloudnative-pg/machinery/pkg/postgres/version"
 	volumesnapshotv1 "github.com/kubernetes-csi/external-snapshotter/client/v8/apis/volumesnapshot/v1"
+	admissionv1 "k8s.io/api/admission/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/utils/ptr"
+	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
+	"github.com/cloudnative-pg/cloudnative-pg/internal/configuration"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/utils"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/versions"
 
@@ -7525,5 +7528,97 @@ var _ = Describe("pg_basebackup tablespaceMapping validation", func() {
 		Expect(result).To(HaveLen(1))
 		Expect(result[0].Type).To(Equal(field.ErrorTypeDuplicate))
 		Expect(result[0].Field).To(Equal("spec.bootstrap.pg_basebackup.tablespaceMapping[1].sourceLocation"))
+	})
+})
+
+var _ = Describe("default storage class in the defaulting webhook", func() {
+	const defaultClass = "cnpg-ssd"
+
+	var d *ClusterCustomDefaulter
+
+	BeforeEach(func() {
+		d = &ClusterCustomDefaulter{}
+
+		current := configuration.Current
+		config := *current
+		config.DefaultStorageClass = defaultClass
+		configuration.Current = &config
+		DeferCleanup(func() { configuration.Current = current })
+	})
+
+	newCluster := func() *apiv1.Cluster {
+		return &apiv1.Cluster{
+			ObjectMeta: metav1.ObjectMeta{Name: "cluster-example", Namespace: "default"},
+			Spec: apiv1.ClusterSpec{
+				StorageConfiguration: apiv1.StorageConfiguration{Size: "1Gi"},
+				WalStorage:           &apiv1.StorageConfiguration{Size: "1Gi"},
+				Tablespaces: []apiv1.TablespaceConfiguration{
+					{Name: "first", Storage: apiv1.StorageConfiguration{Size: "1Gi"}},
+				},
+			},
+		}
+	}
+
+	withOperation := func(operation admissionv1.Operation) context.Context {
+		return admission.NewContextWithRequest(context.Background(), admission.Request{
+			AdmissionRequest: admissionv1.AdmissionRequest{Operation: operation},
+		})
+	}
+
+	It("writes the class when the Cluster is created", func() {
+		cluster := newCluster()
+		Expect(d.Default(withOperation(admissionv1.Create), cluster)).To(Succeed())
+		Expect(cluster.Spec.StorageConfiguration.StorageClass).To(HaveValue(Equal(defaultClass)))
+		Expect(cluster.Spec.WalStorage.StorageClass).To(HaveValue(Equal(defaultClass)))
+		Expect(cluster.Spec.Tablespaces[0].Storage.StorageClass).To(HaveValue(Equal(defaultClass)))
+		// the other defaults are applied as before
+		Expect(cluster.Spec.Bootstrap.InitDB.Database).To(Equal("app"))
+	})
+
+	It("keeps the class set by the Cluster being created", func() {
+		cluster := newCluster()
+		cluster.Spec.StorageConfiguration.StorageClass = ptr.To("data-class")
+		cluster.Spec.WalStorage.PersistentVolumeClaimTemplate = &corev1.PersistentVolumeClaimSpec{
+			StorageClassName: ptr.To(""),
+		}
+		Expect(d.Default(withOperation(admissionv1.Create), cluster)).To(Succeed())
+		Expect(cluster.Spec.StorageConfiguration.StorageClass).To(HaveValue(Equal("data-class")))
+		Expect(cluster.Spec.WalStorage.StorageClass).To(BeNil())
+		Expect(cluster.Spec.Tablespaces[0].Storage.StorageClass).To(HaveValue(Equal(defaultClass)))
+	})
+
+	It("does not touch the storage sections when the Cluster is updated", func() {
+		cluster := newCluster()
+		Expect(d.Default(withOperation(admissionv1.Update), cluster)).To(Succeed())
+		Expect(cluster.Spec.StorageConfiguration.StorageClass).To(BeNil())
+		Expect(cluster.Spec.WalStorage.StorageClass).To(BeNil())
+		Expect(cluster.Spec.Tablespaces[0].Storage.StorageClass).To(BeNil())
+		Expect(cluster.Spec.Bootstrap.InitDB.Database).To(Equal("app"))
+	})
+
+	It("writes the class without an admission request while the Cluster has created no instance", func() {
+		cluster := newCluster()
+		Expect(d.Default(context.Background(), cluster)).To(Succeed())
+		Expect(cluster.Spec.StorageConfiguration.StorageClass).To(HaveValue(Equal(defaultClass)))
+		Expect(cluster.Spec.WalStorage.StorageClass).To(HaveValue(Equal(defaultClass)))
+		Expect(cluster.Spec.Tablespaces[0].Storage.StorageClass).To(HaveValue(Equal(defaultClass)))
+	})
+
+	It("does not touch the storage sections without an admission request once an instance was created", func() {
+		cluster := newCluster()
+		cluster.Status.TargetPrimary = "cluster-example-1"
+		Expect(d.Default(context.Background(), cluster)).To(Succeed())
+		Expect(cluster.Spec.StorageConfiguration.StorageClass).To(BeNil())
+		Expect(cluster.Spec.WalStorage.StorageClass).To(BeNil())
+		Expect(cluster.Spec.Tablespaces[0].Storage.StorageClass).To(BeNil())
+	})
+
+	It("does nothing when the operator configuration sets no class", func() {
+		configuration.Current.DefaultStorageClass = ""
+		cluster := newCluster()
+		Expect(d.Default(withOperation(admissionv1.Create), cluster)).To(Succeed())
+		Expect(cluster.Spec.StorageConfiguration.StorageClass).To(BeNil())
+		Expect(cluster.Spec.WalStorage.StorageClass).To(BeNil())
+		Expect(cluster.Spec.Tablespaces[0].Storage.StorageClass).To(BeNil())
 	})
 })

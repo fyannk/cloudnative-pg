@@ -39,6 +39,7 @@ import (
 	"github.com/cloudnative-pg/machinery/pkg/types"
 	jsonpatch "github.com/evanphx/json-patch/v5"
 	volumesnapshotv1 "github.com/kubernetes-csi/external-snapshotter/client/v8/apis/volumesnapshot/v1"
+	admissionv1 "k8s.io/api/admission/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -93,10 +94,23 @@ func NewClusterAdmissionGuard() *guard.Admission[*apiv1.Cluster] {
 type ClusterCustomDefaulter struct{}
 
 // Default implements webhook.CustomDefaulter so a webhook will be registered for the Kind Cluster.
-func (d *ClusterCustomDefaulter) Default(_ context.Context, cluster *apiv1.Cluster) error {
+func (d *ClusterCustomDefaulter) Default(ctx context.Context, cluster *apiv1.Cluster) error {
 	clusterLog.Info("Defaulting for Cluster", "name", cluster.GetName(), "namespace", cluster.GetNamespace())
 
 	cluster.Default()
+
+	// The default StorageClass is written only when the Cluster is created,
+	// a Cluster whose PVCs exist keeps its storage sections as they are: on
+	// the create operation, or, when these defaults are replayed outside an
+	// admission request (the webhook not installed), while the Cluster has
+	// created no instance.
+	if req, err := admission.RequestFromContext(ctx); err == nil {
+		if req.Operation == admissionv1.Create {
+			cluster.SetDefaultStorageClass()
+		}
+	} else if !cluster.HasCreatedInstances() {
+		cluster.SetDefaultStorageClass()
+	}
 
 	return nil
 }

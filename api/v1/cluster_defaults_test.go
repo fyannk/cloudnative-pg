@@ -20,6 +20,7 @@ SPDX-License-Identifier: Apache-2.0
 package v1
 
 import (
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
 
@@ -573,5 +574,151 @@ var _ = Describe("failover quorum defaults", func() {
 
 		cluster.Default()
 		Expect(cluster.Spec.PostgresConfiguration.Synchronous.FailoverQuorum).To(BeTrue())
+	})
+})
+
+var _ = Describe("default storage class", func() {
+	const defaultClass = "cnpg-ssd"
+
+	withDefault := &configuration.Data{DefaultStorageClass: defaultClass}
+
+	newCluster := func() *Cluster {
+		return &Cluster{
+			Spec: ClusterSpec{
+				StorageConfiguration: StorageConfiguration{Size: "1Gi"},
+				WalStorage:           &StorageConfiguration{Size: "1Gi"},
+				Tablespaces: []TablespaceConfiguration{
+					{Name: "first", Storage: StorageConfiguration{Size: "1Gi"}},
+					{Name: "second", Storage: StorageConfiguration{Size: "1Gi"}},
+				},
+			},
+		}
+	}
+
+	It("does nothing when the operator configuration sets no class", func() {
+		cluster := newCluster()
+		cluster.setDefaultStorageClass(&configuration.Data{})
+		Expect(cluster.Spec.StorageConfiguration.StorageClass).To(BeNil())
+		Expect(cluster.Spec.WalStorage.StorageClass).To(BeNil())
+		Expect(cluster.Spec.Tablespaces[0].Storage.StorageClass).To(BeNil())
+		Expect(cluster.Spec.Tablespaces[1].Storage.StorageClass).To(BeNil())
+	})
+
+	It("writes the class into every storage section that names none", func() {
+		cluster := newCluster()
+		cluster.setDefaultStorageClass(withDefault)
+		Expect(cluster.Spec.StorageConfiguration.StorageClass).To(HaveValue(Equal(defaultClass)))
+		Expect(cluster.Spec.WalStorage.StorageClass).To(HaveValue(Equal(defaultClass)))
+		Expect(cluster.Spec.Tablespaces[0].Storage.StorageClass).To(HaveValue(Equal(defaultClass)))
+		Expect(cluster.Spec.Tablespaces[1].Storage.StorageClass).To(HaveValue(Equal(defaultClass)))
+	})
+
+	It("leaves a Cluster without WAL storage and tablespaces as it is", func() {
+		cluster := &Cluster{Spec: ClusterSpec{StorageConfiguration: StorageConfiguration{Size: "1Gi"}}}
+		cluster.setDefaultStorageClass(withDefault)
+		Expect(cluster.Spec.StorageConfiguration.StorageClass).To(HaveValue(Equal(defaultClass)))
+		Expect(cluster.Spec.WalStorage).To(BeNil())
+		Expect(cluster.Spec.Tablespaces).To(BeEmpty())
+	})
+
+	It("keeps the class set by the section", func() {
+		cluster := newCluster()
+		cluster.Spec.StorageConfiguration.StorageClass = ptr.To("data-class")
+		cluster.Spec.WalStorage.StorageClass = ptr.To("wal-class")
+		cluster.Spec.Tablespaces[1].Storage.StorageClass = ptr.To("tbs-class")
+		cluster.setDefaultStorageClass(withDefault)
+		Expect(cluster.Spec.StorageConfiguration.StorageClass).To(HaveValue(Equal("data-class")))
+		Expect(cluster.Spec.WalStorage.StorageClass).To(HaveValue(Equal("wal-class")))
+		Expect(cluster.Spec.Tablespaces[0].Storage.StorageClass).To(HaveValue(Equal(defaultClass)))
+		Expect(cluster.Spec.Tablespaces[1].Storage.StorageClass).To(HaveValue(Equal("tbs-class")))
+	})
+
+	It("keeps the class set by the PVC template, an empty one included", func() {
+		cluster := newCluster()
+		cluster.Spec.StorageConfiguration.PersistentVolumeClaimTemplate = &corev1.PersistentVolumeClaimSpec{
+			StorageClassName: ptr.To("template-class"),
+		}
+		cluster.Spec.WalStorage.PersistentVolumeClaimTemplate = &corev1.PersistentVolumeClaimSpec{
+			StorageClassName: ptr.To(""),
+		}
+		cluster.Spec.Tablespaces[0].Storage.PersistentVolumeClaimTemplate = &corev1.PersistentVolumeClaimSpec{
+			AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
+		}
+		cluster.setDefaultStorageClass(withDefault)
+		Expect(cluster.Spec.StorageConfiguration.StorageClass).To(BeNil())
+		Expect(cluster.Spec.WalStorage.StorageClass).To(BeNil())
+		Expect(cluster.Spec.WalStorage.PersistentVolumeClaimTemplate.StorageClassName).To(HaveValue(Equal("")))
+		Expect(cluster.Spec.Tablespaces[0].Storage.StorageClass).To(HaveValue(Equal(defaultClass)))
+		Expect(cluster.Spec.Tablespaces[1].Storage.StorageClass).To(HaveValue(Equal(defaultClass)))
+	})
+
+	It("is idempotent", func() {
+		cluster := newCluster()
+		cluster.setDefaultStorageClass(withDefault)
+		once := cluster.DeepCopy()
+		cluster.setDefaultStorageClass(&configuration.Data{DefaultStorageClass: "another"})
+		Expect(cluster.Spec).To(Equal(once.Spec))
+	})
+
+	Context("through the Cluster defaults", func() {
+		BeforeEach(func() {
+			current := configuration.Current
+			config := *current
+			config.DefaultStorageClass = defaultClass
+			configuration.Current = &config
+			DeferCleanup(func() { configuration.Current = current })
+		})
+
+		It("is not part of the webhook defaults, which run on updates too", func() {
+			cluster := newCluster()
+			cluster.Default()
+			Expect(cluster.Spec.StorageConfiguration.StorageClass).To(BeNil())
+			Expect(cluster.Spec.WalStorage.StorageClass).To(BeNil())
+			Expect(cluster.Spec.Tablespaces[0].Storage.StorageClass).To(BeNil())
+		})
+
+		It("is applied by SetDefaultStorageClass", func() {
+			cluster := newCluster()
+			cluster.SetDefaultStorageClass()
+			Expect(cluster.Spec.StorageConfiguration.StorageClass).To(HaveValue(Equal(defaultClass)))
+			Expect(cluster.Spec.WalStorage.StorageClass).To(HaveValue(Equal(defaultClass)))
+			Expect(cluster.Spec.Tablespaces[0].Storage.StorageClass).To(HaveValue(Equal(defaultClass)))
+		})
+
+		It("is part of the reconcile-time defaults while the Cluster has created no instance", func() {
+			cluster := newCluster()
+			cluster.SetDefaults()
+			Expect(cluster.Spec.StorageConfiguration.StorageClass).To(HaveValue(Equal(defaultClass)))
+			Expect(cluster.Spec.WalStorage.StorageClass).To(HaveValue(Equal(defaultClass)))
+			Expect(cluster.Spec.Tablespaces[0].Storage.StorageClass).To(HaveValue(Equal(defaultClass)))
+		})
+
+		DescribeTable("is not part of the reconcile-time defaults once the Cluster has created an instance",
+			func(status ClusterStatus) {
+				cluster := newCluster()
+				cluster.Status = status
+				cluster.SetDefaults()
+				Expect(cluster.Spec.StorageConfiguration.StorageClass).To(BeNil())
+				Expect(cluster.Spec.WalStorage.StorageClass).To(BeNil())
+				Expect(cluster.Spec.Tablespaces[0].Storage.StorageClass).To(BeNil())
+			},
+			Entry("target primary recorded, bootstrap in progress", ClusterStatus{
+				TargetPrimary: "cluster-example-1",
+				Conditions: []metav1.Condition{{
+					Type:   string(ConditionInitialized),
+					Status: metav1.ConditionFalse,
+				}},
+			}),
+			Entry("initialized", ClusterStatus{
+				TargetPrimary: "cluster-example-1",
+				Conditions: []metav1.Condition{{
+					Type:   string(ConditionInitialized),
+					Status: metav1.ConditionTrue,
+				}},
+			}),
+			Entry("status written by an operator version without the Initialized condition", ClusterStatus{
+				LatestGeneratedNode: 1,
+			}),
+		)
 	})
 })
