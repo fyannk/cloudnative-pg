@@ -41,6 +41,9 @@ import (
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/utils/hash"
 )
 
+// pgBouncerContainerName is the name of the container running PgBouncer
+const pgBouncerContainerName = "pgbouncer"
+
 // Deployment creates the pgbouncer Deployment for the given Pooler. The
 // container image and deployment hash both derive from
 // pooler.Status.Image; the caller (updateDeployment) must populate it
@@ -48,12 +51,15 @@ import (
 func Deployment(pooler *apiv1.Pooler, cluster *apiv1.Cluster) (*appsv1.Deployment, error) {
 	operatorImageName := config.Current.OperatorImageName
 
-	poolerHash, err := computeTemplateHash(pooler, operatorImageName)
+	// The proxy settings of the operator, unless the Pooler sets its own
+	proxyEnvironment := specs.ProxyEnvironment(templateContainerEnv(pooler.Spec.Template, pgBouncerContainerName))
+
+	poolerHash, err := computeTemplateHash(pooler, operatorImageName, proxyEnvironment)
 	if err != nil {
 		return nil, err
 	}
 
-	podTemplate := podspec.NewFrom(pooler.Spec.Template).
+	podTemplateBuilder := podspec.NewFrom(pooler.Spec.Template).
 		WithLabel(utils.PgbouncerNameLabel, pooler.Name).
 		WithLabel(utils.ClusterLabelName, cluster.Name).
 		WithLabel(utils.PodRoleLabelName, string(utils.PodRolePooler)).
@@ -78,17 +84,17 @@ func Deployment(pooler *apiv1.Pooler, cluster *apiv1.Cluster) (*appsv1.Deploymen
 			},
 		}).
 		WithSecurityContext(createPodSecurityContext(cluster.GetSeccompProfile(), 998, 996), true).
-		WithContainerImage("pgbouncer", pooler.Status.Image, false).
-		WithContainerCommand("pgbouncer", []string{
+		WithContainerImage(pgBouncerContainerName, pooler.Status.Image, false).
+		WithContainerCommand(pgBouncerContainerName, []string{
 			"/controller/manager",
 			"pgbouncer",
 			"run",
 		}, false).
-		WithContainerPort("pgbouncer", &corev1.ContainerPort{
+		WithContainerPort(pgBouncerContainerName, &corev1.ContainerPort{
 			Name:          pgBouncerConfig.PgBouncerPortName,
 			ContainerPort: pgBouncerConfig.PgBouncerPort,
 		}).
-		WithContainerPort("pgbouncer", &corev1.ContainerPort{
+		WithContainerPort(pgBouncerContainerName, &corev1.ContainerPort{
 			Name:          "metrics",
 			ContainerPort: url.PgBouncerMetricsPort,
 		}).
@@ -109,34 +115,38 @@ func Deployment(pooler *apiv1.Pooler, cluster *apiv1.Cluster) (*appsv1.Deploymen
 			Name:      "scratch-data",
 			MountPath: postgres.ScratchDataDirectory,
 		}, true).
-		WithContainerVolumeMount("pgbouncer", &corev1.VolumeMount{
+		WithContainerVolumeMount(pgBouncerContainerName, &corev1.VolumeMount{
 			Name:      "scratch-data",
 			MountPath: postgres.ScratchDataDirectory,
 		}, true).
-		WithContainerEnv("pgbouncer", corev1.EnvVar{Name: "NAMESPACE", Value: pooler.Namespace}, true).
-		WithContainerEnv("pgbouncer", corev1.EnvVar{Name: "POOLER_NAME", Value: pooler.Name}, true).
-		WithContainerEnv("pgbouncer", corev1.EnvVar{Name: "PGUSER", Value: "pgbouncer"}, false).
-		WithContainerEnv("pgbouncer", corev1.EnvVar{Name: "PGDATABASE", Value: "pgbouncer"}, false).
-		WithContainerEnv("pgbouncer", corev1.EnvVar{Name: "PGHOST", Value: "/controller/run"}, false).
-		WithContainerEnv("pgbouncer", corev1.EnvVar{
+		WithContainerEnv(pgBouncerContainerName, corev1.EnvVar{Name: "NAMESPACE", Value: pooler.Namespace}, true).
+		WithContainerEnv(pgBouncerContainerName, corev1.EnvVar{Name: "POOLER_NAME", Value: pooler.Name}, true).
+		WithContainerEnv(pgBouncerContainerName, corev1.EnvVar{Name: "PGUSER", Value: "pgbouncer"}, false).
+		WithContainerEnv(pgBouncerContainerName, corev1.EnvVar{Name: "PGDATABASE", Value: "pgbouncer"}, false).
+		WithContainerEnv(pgBouncerContainerName, corev1.EnvVar{Name: "PGHOST", Value: "/controller/run"}, false).
+		WithContainerEnv(pgBouncerContainerName, corev1.EnvVar{
 			Name:  "PSQL_HISTORY",
 			Value: path.Join(postgres.TemporaryDirectory, ".psql_history"),
 		}, false).
-		WithContainerEnv("pgbouncer", corev1.EnvVar{
+		WithContainerEnv(pgBouncerContainerName, corev1.EnvVar{
 			Name:  "METRICS_PORT_TLS",
 			Value: strconv.FormatBool(pooler.IsMetricsTLSEnabled()),
 		}, true).
-		WithContainerSecurityContext("pgbouncer", specs.GetSecurityContext(cluster), true).
+		WithContainerSecurityContext(pgBouncerContainerName, specs.GetSecurityContext(cluster), true).
 		WithServiceAccountName(pooler.GetServiceAccountName(), true).
-		WithReadinessProbe("pgbouncer", &corev1.Probe{
+		WithReadinessProbe(pgBouncerContainerName, &corev1.Probe{
 			TimeoutSeconds: 5,
 			ProbeHandler: corev1.ProbeHandler{
 				TCPSocket: &corev1.TCPSocketAction{
 					Port: intstr.FromInt32(pgBouncerConfig.PgBouncerPort),
 				},
 			},
-		}, false).
-		Build()
+		}, false)
+
+	for _, env := range proxyEnvironment {
+		podTemplateBuilder = podTemplateBuilder.WithContainerEnv(pgBouncerContainerName, env, false)
+	}
+	podTemplate := podTemplateBuilder.Build()
 
 	return &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
@@ -174,12 +184,20 @@ func Deployment(pooler *apiv1.Pooler, cluster *apiv1.Cluster) (*appsv1.Deploymen
 	}, nil
 }
 
-func computeTemplateHash(pooler *apiv1.Pooler, operatorImageName string) (string, error) {
+// computeTemplateHash hashes what the Deployment is built from, so that a
+// change of any of it, the proxy settings of the operator included, is a
+// change of the Deployment
+func computeTemplateHash(
+	pooler *apiv1.Pooler,
+	operatorImageName string,
+	proxyEnvironment []corev1.EnvVar,
+) (string, error) {
 	type deploymentHash struct {
 		poolerSpec                      apiv1.PoolerSpec
 		operatorImageName               string
 		pgbouncerImage                  string
 		isPodSpecReconciliationDisabled bool
+		proxyEnvironment                []corev1.EnvVar
 	}
 
 	return hash.ComputeHash(deploymentHash{
@@ -187,7 +205,23 @@ func computeTemplateHash(pooler *apiv1.Pooler, operatorImageName string) (string
 		operatorImageName:               operatorImageName,
 		pgbouncerImage:                  pooler.Status.Image,
 		isPodSpecReconciliationDisabled: utils.IsPodSpecReconciliationDisabled(&pooler.ObjectMeta),
+		proxyEnvironment:                proxyEnvironment,
 	})
+}
+
+// templateContainerEnv returns the environment a Pooler template sets on the
+// given container, if any
+func templateContainerEnv(template *apiv1.PodTemplateSpec, containerName string) []corev1.EnvVar {
+	if template == nil {
+		return nil
+	}
+	for _, container := range template.Spec.Containers {
+		if container.Name == containerName {
+			return container.Env
+		}
+	}
+
+	return nil
 }
 
 func getDeploymentStrategy(strategy *appsv1.DeploymentStrategy) appsv1.DeploymentStrategy {

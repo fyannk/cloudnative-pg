@@ -64,6 +64,7 @@ Name | Description
 `OPERATOR_IMAGE_NAME` | The name of the operator image used to bootstrap Pods. Defaults to the image specified during installation.
 `PGBOUNCER_IMAGE_NAME` | The name of the PgBouncer image used by default for new poolers. Defaults to the version specified in the operator.
 `POSTGRES_IMAGE_NAME` | The name of the PostgreSQL image used by default for new clusters. Defaults to the version specified in the operator.
+`PROPAGATE_PROXY_ENV` | When set to `true` (default), the proxy settings of the operator (`HTTP_PROXY`, `HTTPS_PROXY` and `NO_PROXY`, read from its environment) are set on the PostgreSQL instances, bootstrap included, on the major upgrade jobs and on the PgBouncer poolers, unless the `Cluster` or the `Pooler` defines any of them. Set to `false` to keep the proxy settings to the operator. See [Proxy settings](#proxy-settings).
 `PULL_SECRET_NAME` | Name of an additional pull secret to be defined in the operator's namespace and to be used to download images
 `STANDBY_TCP_USER_TIMEOUT` | Defines the [`TCP_USER_TIMEOUT` socket option](https://www.postgresql.org/docs/current/runtime-config-connection.html#GUC-TCP-USER-TIMEOUT) in milliseconds for replication connections from standby instances to the primary. Default is 5000 (5 seconds). Set to `0` to use the system's default.
 `WATCH_NAMESPACE` | Specifies the namespace(s) where the operator should watch for resources. Multiple namespaces can be specified separated by commas. If not set, the operator watches all namespaces (cluster-wide mode).
@@ -87,6 +88,57 @@ cluster. That secret will be named `<cluster-name>-pull`.
 The namespace where the operator looks for the `PULL_SECRET_NAME` secret is where
 you installed the operator. If the operator is not able to find that secret, it
 will ignore the configuration parameter.
+
+## Proxy settings
+
+Behind an egress proxy, the PostgreSQL instances need `HTTP_PROXY`,
+`HTTPS_PROXY` and `NO_PROXY` for the traffic that leaves the Kubernetes
+cluster, such as WAL archiving and backups to an object store. The operator
+usually has these variables already: on OpenShift, Operator Lifecycle Manager
+injects the cluster-wide proxy into the operator deployment, and on other
+platforms they are set on the operator deployment.
+
+By default (`PROPAGATE_PROXY_ENV` set to `true`), the operator copies its own
+proxy settings to the environment of the instance pods, including the init
+container that bootstraps them (initdb, join or recovery), to the major
+upgrade jobs, and to the `pgbouncer` container of the poolers. Set it to
+`false` to keep the proxy settings to the operator.
+
+- The three variables are read from the environment of the operator, the
+  upper case name first and the lower case one as a fallback, as Go does.
+  Empty values are not propagated.
+- Each setting is written in both spellings (`HTTP_PROXY` and `http_proxy`,
+  and so on): Go reads the upper case name first, while curl and some Python
+  tooling read the lower case one only.
+- When the `env` stanza of a `Cluster`, or the `pgbouncer` container of a
+  `Pooler` template, defines any of the six names, in any case, none of the
+  operator settings is injected: the resource is in control of its proxy
+  settings as a whole, including no proxy at all (an empty value) or a proxy
+  URL with credentials read from a Secret through `valueFrom.secretKeyRef`.
+  The `envFrom` stanza is not inspected: Kubernetes gives `env` precedence
+  over `envFrom` on duplicate names, so an override that comes from a
+  ConfigMap or a Secret needs an `env` entry as well.
+- The propagated variables are part of the environment of the pods, so a
+  change of the operator proxy rolls the clusters and poolers that receive
+  them, as a change of `spec.env` or of the pooler template would. The
+  `cnpg.io/reconcilePodSpec: disabled` annotation prevents the rollout as
+  usual.
+- On an operator that already runs behind a proxy, the first start of a
+  version with this setting rolls every cluster and pooler once, as the pods
+  receive the proxy variables. Set `PROPAGATE_PROXY_ENV` to `false` before
+  the upgrade to avoid it.
+
+Keep in mind:
+
+- `NO_PROXY` must cover the Kubernetes API server and the in-cluster traffic
+  (service and pod networks, `.svc`, `.cluster.local`), otherwise the instance
+  manager reaches the API server through the proxy. The propagated settings
+  are the ones the operator itself runs with.
+- A proxy URL with credentials is copied in clear text into the pod
+  specification, as it already is in the operator deployment. Use the
+  `spec.env` override with a Secret for those clusters.
+- At startup, the operator logs the settings it propagates, without the
+  credentials of the URLs, and warns when a value is not a valid URL.
 
 ## Defining an operator config map
 
