@@ -118,6 +118,12 @@ type Data struct {
 	// used by default for new poolers
 	PgbouncerImageName string `json:"pgbouncerImageName" env:"PGBOUNCER_IMAGE_NAME"`
 
+	// DefaultStorageClass is the name of the StorageClass written, when a
+	// Cluster is created, into every storage section that names none.
+	// Empty (the default): the PVCs get the default StorageClass of the
+	// Kubernetes cluster.
+	DefaultStorageClass string `json:"defaultStorageClass" env:"DEFAULT_STORAGE_CLASS"`
+
 	// InheritedAnnotations is a list of annotations that every resource could inherit from
 	// the owning Cluster
 	InheritedAnnotations []string `json:"inheritedAnnotations" env:"INHERITED_ANNOTATIONS"`
