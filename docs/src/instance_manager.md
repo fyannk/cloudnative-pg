@@ -422,6 +422,13 @@ The shutdown procedure is composed of two steps:
 1. The instance manager first issues a `CHECKPOINT`, then initiates a **smart**
 shut down, disallowing any new connection to PostgreSQL. This step will last
 for up to `.spec.smartShutdownTimeout` seconds.
+   On a primary that is no longer the target primary of its cluster, because
+   the operator has started a failover or a switchover to another instance, the
+   smart shutdown is skipped, or escalated to a **fast** one as soon as the
+   operator takes that decision: no session will ever come back to that
+   instance as primary, and the sessions it waits for only delay the promotion
+   of the new primary. A primary restarted in place keeps the smart shutdown,
+   and so does a replica.
 
 2. If PostgreSQL is still up, the instance manager requests a **fast**
 shut down, terminating any existing connection and exiting promptly.
@@ -436,6 +443,14 @@ seconds.
     the primary instance is running. In this case, perform a switchover to
     another instance first.
 :::
+
+When the Pod of the primary is deleted without a prior switchover, the operator
+starts a failover within a second of the deletion, and the shutdown above is
+escalated to a fast one: the standbys receive the shutdown checkpoint, the
+primary lease is released, and the elected replica is promoted. The former
+primary comes back as a replica without needing `pg_rewind`. This is the path
+of an installation that keeps its PodDisruptionBudgets disabled, or that cannot
+see a node drain coming because it has no access to the `Node` API.
 
 ### Shutdown of the primary during a switchover
 
