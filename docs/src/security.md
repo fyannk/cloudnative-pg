@@ -414,7 +414,11 @@ namespaced or non-namespaced resources.
 `validatingwebhookconfigurations` and `mutatingwebhookconfigurations`
 : The operator injects its self-signed webhook CA into both webhook
   configurations, which are needed to validate and mutate all the resources it
-  manages. For more details, please see the
+  manages. The rules are bounded with `resourceNames` to the operator's own two
+  configurations (`cnpg-mutating-webhook-configuration` and
+  `cnpg-validating-webhook-configuration`): control over any webhook
+  configuration would reach every object admitted to the cluster. For more
+  details, please see the
   [Kubernetes documentation](https://kubernetes.io/docs/reference/access-authn-authz/extensible-admission-controllers/).
 
 `volumesnapshots`

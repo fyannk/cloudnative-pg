@@ -137,8 +137,8 @@ func NewClusterReconciler(
 var ErrNextLoop = utils.ErrNextLoop
 
 // Alphabetical order to not repeat or miss permissions
-// +kubebuilder:rbac:groups=admissionregistration.k8s.io,resources=mutatingwebhookconfigurations,verbs=get;patch
-// +kubebuilder:rbac:groups=admissionregistration.k8s.io,resources=validatingwebhookconfigurations,verbs=get;patch
+// +kubebuilder:rbac:groups=admissionregistration.k8s.io,resources=mutatingwebhookconfigurations,resourceNames=cnpg-mutating-webhook-configuration,verbs=get;patch
+// +kubebuilder:rbac:groups=admissionregistration.k8s.io,resources=validatingwebhookconfigurations,resourceNames=cnpg-validating-webhook-configuration,verbs=get;patch
 // +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;delete;patch;create;watch
 // +kubebuilder:rbac:groups=coordination.k8s.io,resources=leases,verbs=get;list;watch;create;update;delete
 // +kubebuilder:rbac:groups=discovery.k8s.io,resources=endpointslices,verbs=get;list;watch

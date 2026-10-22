@@ -74,8 +74,18 @@ rules:
   - watch
 - apiGroups:
   - admissionregistration.k8s.io
+  resourceNames:
+  - cnpg-mutating-webhook-configuration
   resources:
   - mutatingwebhookconfigurations
+  verbs:
+  - get
+  - patch
+- apiGroups:
+  - admissionregistration.k8s.io
+  resourceNames:
+  - cnpg-validating-webhook-configuration
+  resources:
   - validatingwebhookconfigurations
   verbs:
   - get
