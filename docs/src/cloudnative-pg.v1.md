@@ -3012,7 +3012,7 @@ _Appears in:_
 
 | Field | Description | Required | Default | Validation |
 | --- | --- | --- | --- | --- |
-| `storageClass` _string_ | StorageClass to use for PVCs. Applied after<br />evaluating the PVC template, if available.<br />If not specified, the generated PVCs will use the<br />default storage class |  |  |  |
+| `storageClass` _string_ | StorageClass to use for PVCs. Applied after<br />evaluating the PVC template, if available.<br />If not specified, the generated PVCs will use the<br />default storage class. When the operator configuration<br />sets a default StorageClass, it is written here when<br />the Cluster is created. |  |  |  |
 | `size` _string_ | Size of the storage. Required if not already specified in the PVC template.<br />Changes to this field are automatically reapplied to the created PVCs.<br />Size cannot be decreased. |  |  |  |
 | `resizeInUseVolumes` _boolean_ | Resize existent PVCs, defaults to true |  | true |  |
 | `pvcTemplate` _[PersistentVolumeClaimSpec](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.34/#persistentvolumeclaimspec-v1-core)_ | Template to be used to generate the Persistent Volume Claim |  |  |  |

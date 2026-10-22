@@ -30,8 +30,10 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/rand"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/ptr"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
@@ -1934,5 +1936,64 @@ var _ = Describe("mapClusterOwnedResourceToCluster", func() {
 
 	It("returns nil for an object that does not reference a cluster", func(ctx SpecContext) {
 		Expect(mapClusterOwnedResourceToCluster(ctx, &corev1.Secret{})).To(BeNil())
+	})
+})
+
+var _ = Describe("setDefaults without the webhooks: default storage class", func() {
+	const defaultClass = "cnpg-ssd"
+
+	var (
+		env       *testingEnvironment
+		namespace string
+	)
+
+	BeforeEach(func() {
+		env = buildTestEnvironment()
+		namespace = newFakeNamespace(env.client)
+
+		current := configuration.Current
+		config := *current
+		config.DefaultStorageClass = defaultClass
+		configuration.Current = &config
+		DeferCleanup(func() { configuration.Current = current })
+	})
+
+	newStoredCluster := func(ctx SpecContext, status apiv1.ClusterStatus) *apiv1.Cluster {
+		cluster := &apiv1.Cluster{
+			ObjectMeta: metav1.ObjectMeta{Name: "cluster-" + rand.String(10), Namespace: namespace},
+			Spec: apiv1.ClusterSpec{
+				Instances:            1,
+				StorageConfiguration: apiv1.StorageConfiguration{Size: "1Gi"},
+				WalStorage:           &apiv1.StorageConfiguration{Size: "1Gi"},
+			},
+		}
+		Expect(env.client.Create(ctx, cluster)).To(Succeed())
+		cluster.Status = status
+		Expect(env.client.Status().Update(ctx, cluster)).To(Succeed())
+		return cluster
+	}
+
+	It("patches the class into a Cluster that has created no instance", func(ctx SpecContext) {
+		cluster := newStoredCluster(ctx, apiv1.ClusterStatus{})
+
+		Expect(env.clusterReconciler.setDefaults(ctx, cluster)).To(Succeed())
+
+		var stored apiv1.Cluster
+		Expect(env.client.Get(ctx, client.ObjectKeyFromObject(cluster), &stored)).To(Succeed())
+		Expect(stored.Spec.StorageConfiguration.StorageClass).To(HaveValue(Equal(defaultClass)))
+		Expect(stored.Spec.WalStorage.StorageClass).To(HaveValue(Equal(defaultClass)))
+		Expect(stored.Spec.Bootstrap.InitDB.Database).To(Equal("app"))
+	})
+
+	It("leaves the storage sections of a Cluster that has created an instance", func(ctx SpecContext) {
+		cluster := newStoredCluster(ctx, apiv1.ClusterStatus{TargetPrimary: "cluster-example-1"})
+
+		Expect(env.clusterReconciler.setDefaults(ctx, cluster)).To(Succeed())
+
+		var stored apiv1.Cluster
+		Expect(env.client.Get(ctx, client.ObjectKeyFromObject(cluster), &stored)).To(Succeed())
+		Expect(stored.Spec.StorageConfiguration.StorageClass).To(BeNil())
+		Expect(stored.Spec.WalStorage.StorageClass).To(BeNil())
+		Expect(stored.Spec.Bootstrap.InitDB.Database).To(Equal("app"))
 	})
 })

@@ -2346,7 +2346,9 @@ type StorageConfiguration struct {
 	// StorageClass to use for PVCs. Applied after
 	// evaluating the PVC template, if available.
 	// If not specified, the generated PVCs will use the
-	// default storage class
+	// default storage class. When the operator configuration
+	// sets a default StorageClass, it is written here when
+	// the Cluster is created.
 	// +optional
 	StorageClass *string `json:"storageClass,omitempty"`
 
