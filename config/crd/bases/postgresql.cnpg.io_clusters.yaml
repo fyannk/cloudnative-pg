@@ -3270,6 +3270,7 @@ spec:
                   Name of the container image, supporting both tags (`<image>:<tag>`)
                   and digests for deterministic and repeatable deployments
                   (`<image>:<tag>@sha256:<digestValue>`)
+                maxLength: 1024
                 type: string
               imagePullPolicy:
                 description: |-
@@ -4509,16 +4510,24 @@ spec:
                 x-kubernetes-list-type: map
               postgresGID:
                 default: 26
-                description: The GID of the `postgres` user inside the image, defaults
-                  to `26`
+                description: |-
+                  The GID of the `postgres` user inside the image, defaults to `26`.
+                  It cannot be changed once the cluster is created.
                 format: int64
                 type: integer
+                x-kubernetes-validations:
+                - message: postgresGID is immutable
+                  rule: self == oldSelf
               postgresUID:
                 default: 26
-                description: The UID of the `postgres` user inside the image, defaults
-                  to `26`
+                description: |-
+                  The UID of the `postgres` user inside the image, defaults to `26`.
+                  It cannot be changed once the cluster is created.
                 format: int64
                 type: integer
+                x-kubernetes-validations:
+                - message: postgresUID is immutable
+                  rule: self == oldSelf
               postgresql:
                 description: Configuration of the PostgreSQL server
                 properties:
@@ -4717,6 +4726,12 @@ spec:
                       type: string
                     description: PostgreSQL configuration options (postgresql.conf)
                     type: object
+                    x-kubernetes-validations:
+                    - message: wal_level cannot be changed to minimal on an existing
+                        cluster
+                      rule: '!(''wal_level'' in self) || self[''wal_level''] != ''minimal''
+                        || !(''wal_level'' in oldSelf) || oldSelf[''wal_level''] ==
+                        '''' || oldSelf[''wal_level''] == ''minimal'''
                   pg_hba:
                     description: |-
                       PostgreSQL Host Based Authentication rules (lines to be appended
@@ -5754,6 +5769,7 @@ spec:
                           Prefix for replication slots managed by the operator for HA.
                           It may only contain lower case letters, numbers, and the underscore character.
                           This can only be set at creation time. By default set to `_cnpg_`.
+                        maxLength: 63
                         pattern: ^[0-9a-z_]*$
                         type: string
                       synchronizeLogicalDecoding:
@@ -5793,6 +5809,20 @@ spec:
                     minimum: 1
                     type: integer
                 type: object
+                x-kubernetes-validations:
+                - fieldPath: .highAvailability
+                  message: highAvailability.slotPrefix cannot change while highAvailability
+                    is enabled
+                  rule: '!has(oldSelf.highAvailability) || (has(oldSelf.highAvailability.enabled)
+                    && !oldSelf.highAvailability.enabled) || (has(self.highAvailability)
+                    && (has(self.highAvailability.slotPrefix) ? self.highAvailability.slotPrefix
+                    : ''_cnpg_'') == (has(oldSelf.highAvailability.slotPrefix) ? oldSelf.highAvailability.slotPrefix
+                    : ''_cnpg_''))'
+                - fieldPath: .synchronizeReplicas
+                  message: synchronizeReplicas cannot be removed while enabled, disable
+                    it first
+                  rule: '!has(oldSelf.synchronizeReplicas) || (has(oldSelf.synchronizeReplicas.enabled)
+                    && !oldSelf.synchronizeReplicas.enabled) || has(self.synchronizeReplicas)'
               resources:
                 description: |-
                   Resources requirements of every generated Pod. Please refer to
@@ -6357,6 +6387,7 @@ spec:
                       Size of the storage. Required if not already specified in the PVC template.
                       Changes to this field are automatically reapplied to the created PVCs.
                       Size cannot be decreased.
+                    maxLength: 64
                     type: string
                   storageClass:
                     description: |-
@@ -6366,6 +6397,11 @@ spec:
                       default storage class
                     type: string
                 type: object
+                x-kubernetes-validations:
+                - fieldPath: .size
+                  message: size cannot be decreased
+                  rule: '!has(oldSelf.size) || !has(self.size) || !isQuantity(oldSelf.size)
+                    || !isQuantity(self.size) || !quantity(self.size).isLessThan(quantity(oldSelf.size))'
               superuserSecret:
                 description: |-
                   The secret containing the superuser password. If not defined a new
@@ -6386,7 +6422,8 @@ spec:
                 format: int32
                 type: integer
               tablespaces:
-                description: The tablespaces configuration
+                description: The tablespaces configuration. A tablespace cannot be
+                  removed once created.
                 items:
                   description: |-
                     TablespaceConfiguration is the configuration of a tablespace, and includes
@@ -6394,6 +6431,7 @@ spec:
                   properties:
                     name:
                       description: The name of the tablespace
+                      maxLength: 63
                       type: string
                     owner:
                       description: Owner is the PostgreSQL user owning the tablespace
@@ -6612,6 +6650,7 @@ spec:
                             Size of the storage. Required if not already specified in the PVC template.
                             Changes to this field are automatically reapplied to the created PVCs.
                             Size cannot be decreased.
+                          maxLength: 64
                           type: string
                         storageClass:
                           description: |-
@@ -6633,7 +6672,15 @@ spec:
                   - name
                   - storage
                   type: object
+                maxItems: 64
                 type: array
+                x-kubernetes-validations:
+                - message: no tablespace can be deleted once created
+                  rule: oldSelf.all(o, self.exists(n, n.name == o.name))
+                - message: the size of a tablespace cannot be decreased
+                  rule: oldSelf.all(o, self.exists(n, n.name == o.name && (!has(o.storage.size)
+                    || !has(n.storage.size) || !isQuantity(o.storage.size) || !isQuantity(n.storage.size)
+                    || !quantity(n.storage.size).isLessThan(quantity(o.storage.size)))))
               topologySpreadConstraints:
                 description: |-
                   TopologySpreadConstraints specifies how to spread matching pods among the given topology.
@@ -7019,6 +7066,7 @@ spec:
                       Size of the storage. Required if not already specified in the PVC template.
                       Changes to this field are automatically reapplied to the created PVCs.
                       Size cannot be decreased.
+                    maxLength: 64
                     type: string
                   storageClass:
                     description: |-
@@ -7028,12 +7076,31 @@ spec:
                       default storage class
                     type: string
                 type: object
+                x-kubernetes-validations:
+                - fieldPath: .size
+                  message: size cannot be decreased
+                  rule: '!has(oldSelf.size) || !has(self.size) || !isQuantity(oldSelf.size)
+                    || !isQuantity(self.size) || !quantity(self.size).isLessThan(quantity(oldSelf.size))'
             required:
             - instances
             type: object
             x-kubernetes-validations:
             - message: imageName and imageCatalogRef are mutually exclusive
               rule: '!(has(self.imageCatalogRef) && has(self.imageName))'
+            - fieldPath: .walStorage
+              message: walStorage cannot be disabled once configured
+              rule: '!has(oldSelf.walStorage) || has(self.walStorage)'
+            - fieldPath: .tablespaces
+              message: tablespaces section cannot be deleted once created
+              rule: '!has(oldSelf.tablespaces) || has(self.tablespaces)'
+            - fieldPath: .imageName
+              message: imageName and postgresql.parameters cannot change together
+                when primaryUpdateMethod is switchover
+              rule: '!has(self.imageName) || !has(oldSelf.imageName) || self.imageName
+                == oldSelf.imageName || self.primaryUpdateMethod != ''switchover''
+                || (has(self.postgresql) && has(self.postgresql.parameters) ? self.postgresql.parameters
+                : {}) == (has(oldSelf.postgresql) && has(oldSelf.postgresql.parameters)
+                ? oldSelf.postgresql.parameters : {})'
           status:
             description: |-
               Most recently observed status of the cluster. This data may not be up
@@ -7890,6 +7957,43 @@ spec:
         - metadata
         - spec
         type: object
+        x-kubernetes-validations:
+        - fieldPath: .spec.imageCatalogRef.major
+          message: the PostgreSQL major version cannot be downgraded
+          rule: '!has(self.spec.imageCatalogRef) || !has(oldSelf.status) || !has(oldSelf.status.pgDataImageInfo)
+            || self.spec.imageCatalogRef.major >= oldSelf.status.pgDataImageInfo.majorVersion'
+        - fieldPath: .spec.imageCatalogRef.major
+          message: major upgrades are only supported to version 16 or higher
+          rule: '!has(self.spec.imageCatalogRef) || !has(oldSelf.status) || !has(oldSelf.status.pgDataImageInfo)
+            || self.spec.imageCatalogRef.major <= oldSelf.status.pgDataImageInfo.majorVersion
+            || self.spec.imageCatalogRef.major >= 16'
+        - fieldPath: .spec.imageName
+          message: the PostgreSQL major version cannot be downgraded
+          rule: '!has(self.spec.imageName) || !has(oldSelf.status) || !has(oldSelf.status.pgDataImageInfo)
+            || self.spec.imageName.split(''@'')[0].substring(self.spec.imageName.split(''@'')[0].lastIndexOf('':'')
+            + 1).contains(''/'') || !self.spec.imageName.split(''@'')[0].substring(self.spec.imageName.split(''@'')[0].lastIndexOf('':'')
+            + 1).matches(''^[0-9]+'') || int(self.spec.imageName.split(''@'')[0].substring(self.spec.imageName.split(''@'')[0].lastIndexOf('':'')
+            + 1).find(''^[0-9]+'')) >= oldSelf.status.pgDataImageInfo.majorVersion'
+        - fieldPath: .spec.imageName
+          message: major upgrades are only supported to version 16 or higher
+          rule: '!has(self.spec.imageName) || !has(oldSelf.status) || !has(oldSelf.status.pgDataImageInfo)
+            || self.spec.imageName.split(''@'')[0].substring(self.spec.imageName.split(''@'')[0].lastIndexOf('':'')
+            + 1).contains(''/'') || !self.spec.imageName.split(''@'')[0].substring(self.spec.imageName.split(''@'')[0].lastIndexOf('':'')
+            + 1).matches(''^[0-9]+'') || int(self.spec.imageName.split(''@'')[0].substring(self.spec.imageName.split(''@'')[0].lastIndexOf('':'')
+            + 1).find(''^[0-9]+'')) <= oldSelf.status.pgDataImageInfo.majorVersion
+            || int(self.spec.imageName.split(''@'')[0].substring(self.spec.imageName.split(''@'')[0].lastIndexOf('':'')
+            + 1).find(''^[0-9]+'')) >= 16'
+        - fieldPath: .spec.replica
+          message: the replica role cannot change while the switch to replica cluster
+            is in progress
+          rule: '!has(self.status) || !has(self.status.switchReplicaClusterStatus)
+            || !has(self.status.switchReplicaClusterStatus.inProgress) || !self.status.switchReplicaClusterStatus.inProgress
+            || (has(self.spec.replica) && (has(self.spec.replica.enabled) ? self.spec.replica.enabled
+            : (!has(self.spec.replica.primary) || (has(self.spec.replica.self) ? self.spec.replica.self
+            : self.metadata.name) != self.spec.replica.primary))) == (has(oldSelf.spec.replica)
+            && (has(oldSelf.spec.replica.enabled) ? oldSelf.spec.replica.enabled :
+            (!has(oldSelf.spec.replica.primary) || (has(oldSelf.spec.replica.self)
+            ? oldSelf.spec.replica.self : oldSelf.metadata.name) != oldSelf.spec.replica.primary)))'
     served: true
     storage: true
     subresources:

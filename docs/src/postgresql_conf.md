@@ -161,7 +161,8 @@ If your cluster does not require logical replication, it is recommended to set
 `wal_level` to `replica` to reduce WAL volume and overhead.
 
 Finally, CloudNativePG allows `wal_level` to be set to `minimal` only for
-single-instance clusters with WAL archiving disabled.
+single-instance clusters with WAL archiving disabled, and only when the cluster
+is created: an existing cluster cannot switch to `minimal`.
 
 ### Replication Settings
 
