@@ -989,6 +989,7 @@ func (r *ClusterReconciler) reconcileResources(
 	if res, err := persistentvolumeclaim.Reconcile(
 		ctx,
 		r.Client,
+		r.Recorder,
 		cluster,
 		resources.instances.Items,
 		resources.pvcs.Items,
