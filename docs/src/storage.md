@@ -262,6 +262,37 @@ $ kubectl get storageclass -o jsonpath='{$.allowVolumeExpansion}' premium-storag
 true
 ```
 
+### When the expansion is refused
+
+The API server refuses to expand a PVC when its `StorageClass` does not allow
+it, when a `ResourceQuota` on `requests.storage` is full, or when an admission
+webhook denies the request. The operator then sets the
+`VolumeExpansionRefused` condition of the `Cluster` to `True`, with a reason
+telling which of the three it is (`StorageClassForbidsExpansion`,
+`QuotaExceeded` or `Forbidden`), and a message naming the refused PVCs, the
+size requested, the answer of the API server and the ways out. It records a
+`Warning` event with the same reason and message when the condition appears or
+its message changes:
+
+```sh
+kubectl get cluster cluster-example \
+  -o jsonpath='{.status.conditions[?(@.type=="VolumeExpansionRefused")]}'
+kubectl get events --field-selector involvedObject.name=cluster-example,type=Warning
+```
+
+The size of the `Cluster` storage cannot be lowered back below the size
+already requested, so the ways out are:
+
+- allow the expansion: set `allowVolumeExpansion: true` on the `StorageClass`,
+  or raise the `ResourceQuota`;
+- keep the existing volumes at their size: set `resizeInUseVolumes: false` in
+  the storage section, as described in [Re-creating storage](#re-creating-storage).
+
+Once every PVC accepts the requested size, or no longer needs to be resized,
+the condition turns `False` with the `VolumeExpansionAccepted` reason, and a
+`Normal` event says so. A `Cluster` that never had a refused expansion has no
+such condition.
+
 ### Using the volume expansion Kubernetes feature
 
 Given the storage class supports volume expansion, you can change the size
