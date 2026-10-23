@@ -380,6 +380,8 @@ func setupWebhooks(mgr ctrl.Manager) error {
 		return err
 	}
 
+	webhookv1.SetupClusterScaleWebhookWithManager(mgr)
+
 	if err := webhookv1.SetupBackupWebhookWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create webhook", "webhook", "Backup", "version", "v1")
 		return err
