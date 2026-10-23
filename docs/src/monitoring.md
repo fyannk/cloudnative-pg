@@ -186,7 +186,7 @@ spec:
 ### Predefined set of metrics
 
 Every PostgreSQL instance exporter automatically exposes a set of predefined
-metrics, which can be classified in two major categories:
+metrics, which can be classified in three major categories:
 
 - PostgreSQL related metrics, starting with `cnpg_collector_*`, including:
 
@@ -200,6 +200,10 @@ metrics, which can be classified in two major categories:
     - flag indicating if replica cluster mode is enabled or disabled
     - flag indicating if a manual switchover is required
     - flag indicating if fencing is enabled or disabled
+
+- Volume related metrics, starting with `cnpg_disk_*`: size, used and
+  available bytes, and total and free inodes of the filesystem of each volume
+  of the instance
 
 - Go runtime related metrics, starting with `go_*`
 
@@ -315,6 +319,31 @@ cnpg_collector_wal_write{stats_reset="2023-06-19T10:51:27.473259Z"} 7243
 # HELP cnpg_collector_wal_write_time Total amount of time spent writing WAL buffers to disk via XLogWrite request, in milliseconds (if track_wal_io_timing is enabled, otherwise zero). This includes the sync time when wal_sync_method is either open_datasync or open_sync. Only available on PG 14+
 # TYPE cnpg_collector_wal_write_time gauge
 cnpg_collector_wal_write_time{stats_reset="2023-06-19T10:51:27.473259Z"} 0
+
+# HELP cnpg_disk_available_bytes Bytes of the filesystem of the volume available to PostgreSQL, reserved blocks excluded
+# TYPE cnpg_disk_available_bytes gauge
+cnpg_disk_available_bytes{volume="pgdata"} 9.79345408e+08
+cnpg_disk_available_bytes{volume="wal"} 9.33236736e+08
+
+# HELP cnpg_disk_inodes Number of inodes of the filesystem of the volume. Not reported when the filesystem does not report inodes
+# TYPE cnpg_disk_inodes gauge
+cnpg_disk_inodes{volume="pgdata"} 65536
+cnpg_disk_inodes{volume="wal"} 65536
+
+# HELP cnpg_disk_inodes_free Number of free inodes of the filesystem of the volume. Not reported when the filesystem does not report inodes
+# TYPE cnpg_disk_inodes_free gauge
+cnpg_disk_inodes_free{volume="pgdata"} 64527
+cnpg_disk_inodes_free{volume="wal"} 65517
+
+# HELP cnpg_disk_total_bytes Size in bytes of the filesystem of the volume
+# TYPE cnpg_disk_total_bytes gauge
+cnpg_disk_total_bytes{volume="pgdata"} 1.04170496e+09
+cnpg_disk_total_bytes{volume="wal"} 1.04170496e+09
+
+# HELP cnpg_disk_used_bytes Bytes used in the filesystem of the volume
+# TYPE cnpg_disk_used_bytes gauge
+cnpg_disk_used_bytes{volume="pgdata"} 6.2359552e+07
+cnpg_disk_used_bytes{volume="wal"} 1.08468224e+08
 
 # HELP cnpg_last_error 1 if the last collection ended with error, 0 otherwise.
 # TYPE cnpg_last_error gauge
@@ -444,6 +473,18 @@ go_threads 18
     the `Major.Minor` version of PostgreSQL. The full semantic version
     `Major.Minor.Patch` can be found inside one of its label field
     named `full`.
+:::
+
+:::note
+    The `cnpg_disk_*` metrics are read with `statfs` on the mount point of
+    each volume, at each scrape, even while the instance is fenced or
+    PostgreSQL is down. The `volume` label is `pgdata`, `wal` (only when the
+    cluster has a WAL volume) or `tbs-<tablespace name>`. They describe the
+    filesystem, not the PVC: with a storage class that provisions a directory
+    of a shared filesystem, such as `local-path`, `hostPath` or NFS, they report
+    the shared filesystem. The inode series are not reported when the
+    filesystem reports no inodes. A volume is full when either
+    `cnpg_disk_available_bytes` or `cnpg_disk_inodes_free` reaches zero.
 :::
 
 :::warning

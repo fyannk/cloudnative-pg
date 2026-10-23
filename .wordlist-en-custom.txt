@@ -1089,6 +1089,8 @@ initDB
 initdb
 initialDelaySeconds
 initializingPVC
+inode
+inodes
 inplace
 installModes
 installplans
