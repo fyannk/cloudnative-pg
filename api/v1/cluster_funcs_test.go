@@ -345,6 +345,48 @@ var _ = Describe("resize in use volumes", func() {
 	})
 })
 
+var _ = Describe("autoGrow configuration", func() {
+	It("defaults the threshold to 80%", func() {
+		Expect((&AutoGrowConfiguration{}).GetThreshold()).To(Equal(80))
+		Expect((&AutoGrowConfiguration{Threshold: 60}).GetThreshold()).To(Equal(60))
+	})
+
+	DescribeTable("computes the step from the current size",
+		func(step, current, expected string) {
+			result, err := (&AutoGrowConfiguration{Step: step}).GetStep(resource.MustParse(current))
+			Expect(err).ToNot(HaveOccurred())
+			Expect(result.String()).To(Equal(expected))
+		},
+		Entry("20% by default", "", "10Gi", "2Gi"),
+		Entry("a percentage", "50%", "10Gi", "5Gi"),
+		Entry("a percentage rounded up to the mebibyte", "10%", "1Gi", "103Mi"),
+		Entry("at least one mebibyte", "1%", "10Mi", "1Mi"),
+		Entry("a quantity, whatever the size", "5Gi", "100Gi", "5Gi"),
+	)
+
+	DescribeTable("refuses an invalid step",
+		func(step string) {
+			_, err := (&AutoGrowConfiguration{Step: step}).GetStep(resource.MustParse("10Gi"))
+			Expect(err).To(HaveOccurred())
+		},
+		Entry("zero percent", "0%"),
+		Entry("above 100%", "101%"),
+		Entry("not a number", "abc%"),
+		Entry("not a quantity", "five"),
+		Entry("a zero quantity", "0"),
+		Entry("a negative quantity", "-1Gi"),
+	)
+
+	It("parses maxSize", func() {
+		maxSize, err := (&AutoGrowConfiguration{MaxSize: "100Gi"}).GetMaxSize()
+		Expect(err).ToNot(HaveOccurred())
+		Expect(maxSize.String()).To(Equal("100Gi"))
+
+		_, err = (&AutoGrowConfiguration{MaxSize: "lots"}).GetMaxSize()
+		Expect(err).To(HaveOccurred())
+	})
+})
+
 var _ = Describe("external cluster list", func() {
 	emptyCluster := &Cluster{}
 	cluster := Cluster{

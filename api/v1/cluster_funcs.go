@@ -25,6 +25,7 @@ import (
 	"maps"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -411,6 +412,50 @@ func (s *StorageConfiguration) ShouldResizeInUseVolumes() bool {
 	}
 
 	return *s.ResizeInUseVolumes
+}
+
+// GetThreshold returns the percentage of the filesystem used above which the
+// PVCs are grown
+func (a *AutoGrowConfiguration) GetThreshold() int {
+	if a.Threshold == 0 {
+		return 80
+	}
+	return a.Threshold
+}
+
+// GetMaxSize returns the size the PVCs are never grown beyond
+func (a *AutoGrowConfiguration) GetMaxSize() (resource.Quantity, error) {
+	return resource.ParseQuantity(a.MaxSize)
+}
+
+// GetStep returns how much a PVC of the given size is grown at a time
+func (a *AutoGrowConfiguration) GetStep(current resource.Quantity) (resource.Quantity, error) {
+	step := a.Step
+	if step == "" {
+		step = "20%"
+	}
+
+	percent, isPercent := strings.CutSuffix(step, "%")
+	if !isPercent {
+		quantity, err := resource.ParseQuantity(step)
+		if err != nil {
+			return resource.Quantity{}, err
+		}
+		if quantity.Sign() <= 0 {
+			return resource.Quantity{}, fmt.Errorf("the step %q is not positive", step)
+		}
+		return quantity, nil
+	}
+
+	value, err := strconv.Atoi(percent)
+	if err != nil || value <= 0 || value > 100 {
+		return resource.Quantity{}, fmt.Errorf("the step %q is not a percentage between 1%% and 100%%", step)
+	}
+
+	// rounded up to the mebibyte, as storage providers allocate whole units
+	const mebibyte = 1024 * 1024
+	bytes := (current.Value()*int64(value)/100 + mebibyte - 1) / mebibyte * mebibyte
+	return *resource.NewQuantity(max(bytes, mebibyte), resource.BinarySI), nil
 }
 
 // AreDefaultQueriesDisabled checks whether default monitoring queries should be disabled
