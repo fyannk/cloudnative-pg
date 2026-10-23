@@ -36,6 +36,7 @@ import (
 	"github.com/cloudnative-pg/cloudnative-pg/internal/management/cache"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/management/postgres"
 	m "github.com/cloudnative-pg/cloudnative-pg/pkg/management/postgres/metrics"
+	"github.com/cloudnative-pg/cloudnative-pg/pkg/management/postgres/volumeusage"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/management/postgres/webserver/client/local"
 	postgresconf "github.com/cloudnative-pg/cloudnative-pg/pkg/postgres"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/specs"
@@ -61,8 +62,8 @@ type Exporter struct {
 	pluginCollector m.PluginCollector
 
 	// diskPaths and statfs are used to read the filesystems of the volumes
-	diskPaths diskPaths
-	statfs    func(path string, stat *syscall.Statfs_t) error
+	diskPaths volumeusage.Paths
+	statfs    volumeusage.Statfs
 }
 
 // metrics here are related to the exporter itself, which is instrumented to
@@ -108,7 +109,7 @@ func NewExporter(instance *postgres.Instance, pluginCollector m.PluginCollector)
 		Metrics:         newMetrics(),
 		getCluster:      clusterGetter,
 		pluginCollector: pluginCollector,
-		diskPaths:       defaultDiskPaths,
+		diskPaths:       volumeusage.DefaultPaths,
 		statfs:          syscall.Statfs,
 	}
 }

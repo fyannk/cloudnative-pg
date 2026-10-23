@@ -486,3 +486,15 @@ var _ = Describe("Configuration report", func() {
 		),
 	)
 })
+
+var _ = Describe("VolumeUsage", func() {
+	It("counts the reserved blocks as used", func() {
+		usage := VolumeUsage{TotalBytes: 1000, AvailableBytes: 150, UsedBytes: 800}
+		Expect(usage.UsedPercent()).To(BeNumerically("~", 85, 0.001))
+	})
+
+	It("is 0% for an empty or unknown filesystem", func() {
+		Expect(VolumeUsage{}.UsedPercent()).To(BeZero())
+		Expect(VolumeUsage{TotalBytes: 100, AvailableBytes: 120}.UsedPercent()).To(BeZero())
+	})
+})
