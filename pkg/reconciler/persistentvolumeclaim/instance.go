@@ -21,15 +21,18 @@ package persistentvolumeclaim
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/specs"
+	"github.com/cloudnative-pg/cloudnative-pg/pkg/utils"
 )
 
 // CreateInstancePVCs creates the expected pvcs for the instance
@@ -40,7 +43,16 @@ func CreateInstancePVCs(
 	source *StorageSource,
 	serial int,
 ) error {
-	_, err := reconcileSingleInstanceMissingPVCs(ctx, c, cluster, serial, nil, source)
+	var pvcs corev1.PersistentVolumeClaimList
+	if err := c.List(ctx, &pvcs,
+		client.InNamespace(cluster.Namespace),
+		client.MatchingLabels{utils.ClusterLabelName: cluster.Name},
+	); err != nil {
+		return fmt.Errorf("while listing the PVCs of the cluster: %w", err)
+	}
+
+	_, err := reconcileSingleInstanceMissingPVCs(
+		ctx, c, cluster, serial, nil, getLargestRequests(pvcs.Items), source)
 	return err
 }
 
@@ -55,12 +67,13 @@ func reconcileMultipleInstancesMissingPVCs(
 	pvcs []corev1.PersistentVolumeClaim,
 ) (ctrl.Result, error) {
 	var result ctrl.Result
+	largestRequests := getLargestRequests(pvcs)
 	for idx := range runningInstances {
 		serial, err := specs.GetNodeSerial(runningInstances[idx].ObjectMeta)
 		if err != nil {
 			return ctrl.Result{}, err
 		}
-		res, err := reconcileSingleInstanceMissingPVCs(ctx, c, cluster, serial, pvcs, nil)
+		res, err := reconcileSingleInstanceMissingPVCs(ctx, c, cluster, serial, pvcs, largestRequests, nil)
 		if err != nil {
 			return res, err
 		}
@@ -72,13 +85,16 @@ func reconcileMultipleInstancesMissingPVCs(
 	return result, nil
 }
 
-// reconcileSingleInstanceMissingPVCs reconcile an instance missing PVCs
+// reconcileSingleInstanceMissingPVCs reconcile an instance missing PVCs. A
+// missing PVC is created with the largest request of the existing PVCs of
+// its volume, when it is above the size in the cluster specification.
 func reconcileSingleInstanceMissingPVCs(
 	ctx context.Context,
 	c client.Client,
 	cluster *apiv1.Cluster,
 	serial int,
 	pvcs []corev1.PersistentVolumeClaim,
+	largestRequests map[pvcGroup]resource.Quantity,
 	source *StorageSource,
 ) (ctrl.Result, error) {
 	var shouldReconcile bool
@@ -93,6 +109,7 @@ func reconcileSingleInstanceMissingPVCs(
 		if err != nil {
 			return ctrl.Result{}, err
 		}
+		conf = withGroupSize(conf, pvcGroupFromLabels(expectedPVC.calculator.GetLabels(instanceName)), largestRequests)
 
 		pvcSource, err := expectedPVC.calculator.GetSource(source)
 		if err != nil {

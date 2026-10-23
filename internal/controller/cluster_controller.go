@@ -532,7 +532,7 @@ func (r *ClusterReconciler) reconcile(ctx context.Context, cluster *apiv1.Cluste
 		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
 	}
 
-	if res, err := r.ensureNoFailoverOnFullDisk(ctx, cluster, instancesStatus); err != nil || !res.IsZero() {
+	if res, err := r.ensureNoFailoverOnFullDisk(ctx, cluster, resources, instancesStatus); err != nil || !res.IsZero() {
 		return res, err
 	}
 
@@ -604,6 +604,10 @@ func (r *ClusterReconciler) reconcile(ctx context.Context, cluster *apiv1.Cluste
 		// the refused expansion did not stop this pass, nothing else
 		// would retry it
 		return ctrl.Result{RequeueAfter: persistentvolumeclaim.VolumeExpansionRetryInterval}, nil
+	}
+	if err == nil && final.IsZero() && persistentvolumeclaim.HasAutoGrow(cluster) {
+		// a volume filling up changes nothing the operator watches
+		return ctrl.Result{RequeueAfter: persistentvolumeclaim.AutoGrowCheckInterval}, nil
 	}
 	return final, err
 }
@@ -699,13 +703,14 @@ func (r *ClusterReconciler) evaluatePodReadinessGuards(
 func (r *ClusterReconciler) ensureNoFailoverOnFullDisk(
 	ctx context.Context,
 	cluster *apiv1.Cluster,
+	resources *managedResources,
 	instances postgres.PostgresqlStatusList,
 ) (ctrl.Result, error) {
 	contextLogger := log.FromContext(ctx).WithName("ensure_sufficient_disk_space")
 
 	var instanceNames []string
 	for _, state := range instances.Items {
-		if !isWALSpaceAvailableOnPod(state.Pod) {
+		if !specs.IsWALSpaceAvailableOnPod(state.Pod) {
 			instanceNames = append(instanceNames, state.Pod.Name)
 		}
 	}
@@ -717,6 +722,15 @@ func (r *ClusterReconciler) ensureNoFailoverOnFullDisk(
 	contextLogger.Warning(
 		"Insufficient disk space detected in a pod. PostgreSQL cannot proceed until the PVC group is enlarged",
 	)
+
+	// the rest of the reconciliation is skipped, but the PVCs are still
+	// resized: a larger size, from the cluster or from autoGrow, is the way
+	// out for the instances
+	if _, err := persistentvolumeclaim.ReconcileExisting(
+		ctx, r.Client, r.Recorder, cluster, resources.pvcs.Items, instances,
+	); err != nil {
+		return ctrl.Result{}, err
+	}
 
 	reason := "Insufficient disk space detected in one or more pods is preventing PostgreSQL from running." +
 		"Please verify your storage settings. Further information inside .status.instancesReportedState"
@@ -999,6 +1013,7 @@ func (r *ClusterReconciler) reconcileResources(
 		cluster,
 		resources.instances.Items,
 		resources.pvcs.Items,
+		instancesStatus,
 	); err != nil || !res.IsZero() {
 		return res, err
 	}

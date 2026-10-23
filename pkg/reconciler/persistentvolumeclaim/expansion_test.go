@@ -38,6 +38,7 @@ import (
 
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
 	"github.com/cloudnative-pg/cloudnative-pg/internal/scheme"
+	"github.com/cloudnative-pg/cloudnative-pg/pkg/postgres"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -119,7 +120,7 @@ var _ = Describe("Refused volume expansion", func() {
 		// The StorageClass forbids the expansion: the reconciliation goes on,
 		// and the cluster says why
 		refusal = forbiddenPVC(pvc.Name, storageClassRefusal)
-		res, err := Reconcile(ctx, cli, recorder, cluster, nil, pvcs())
+		res, err := Reconcile(ctx, cli, recorder, cluster, nil, pvcs(), postgres.PostgresqlStatusList{})
 		Expect(err).ToNot(HaveOccurred())
 		Expect(res.IsZero()).To(BeTrue())
 		Expect(IsVolumeExpansionRefused(cluster)).To(BeTrue())
@@ -139,7 +140,7 @@ var _ = Describe("Refused volume expansion", func() {
 			"Warning StorageClassForbidsExpansion " + refused.Message)))
 
 		// The same refusal on the next pass: no new Event
-		_, err = Reconcile(ctx, cli, recorder, cluster, nil, pvcs())
+		_, err = Reconcile(ctx, cli, recorder, cluster, nil, pvcs(), postgres.PostgresqlStatusList{})
 		Expect(err).ToNot(HaveOccurred())
 		Expect(condition().Message).To(Equal(refused.Message))
 		Expect(recorder.Events).ToNot(Receive())
@@ -147,7 +148,7 @@ var _ = Describe("Refused volume expansion", func() {
 		// The StorageClass now allows it: the condition turns False, with
 		// one Normal Event
 		refusal = nil
-		_, err = Reconcile(ctx, cli, recorder, cluster, nil, pvcs())
+		_, err = Reconcile(ctx, cli, recorder, cluster, nil, pvcs(), postgres.PostgresqlStatusList{})
 		Expect(err).ToNot(HaveOccurred())
 		accepted := condition()
 		Expect(accepted.Status).To(Equal(metav1.ConditionFalse))
@@ -156,7 +157,7 @@ var _ = Describe("Refused volume expansion", func() {
 		Expect(IsVolumeExpansionRefused(cluster)).To(BeFalse())
 
 		// Nothing more to say on the next clean pass
-		_, err = Reconcile(ctx, cli, recorder, cluster, nil, pvcs())
+		_, err = Reconcile(ctx, cli, recorder, cluster, nil, pvcs(), postgres.PostgresqlStatusList{})
 		Expect(err).ToNot(HaveOccurred())
 		Expect(condition().Status).To(Equal(metav1.ConditionFalse))
 		Expect(recorder.Events).ToNot(Receive())
@@ -190,7 +191,7 @@ var _ = Describe("Refused volume expansion", func() {
 		})
 
 		claims := []corev1.PersistentVolumeClaim{second, pvc}
-		refusals, err := reconcileExistingPVCs(ctx, cli, cluster, claims)
+		refusals, err := reconcileExistingPVCs(ctx, cli, cluster, claims, nil)
 		Expect(err).ToNot(HaveOccurred())
 		Expect(refused).To(Equal(2))
 		Expect(refusals).To(HaveLen(2))
@@ -209,7 +210,8 @@ var _ = Describe("Refused volume expansion", func() {
 	})
 
 	It("adds no condition to a cluster that never had a refusal", func() {
-		_, err := Reconcile(ctx, cli, recorder, cluster, nil, []corev1.PersistentVolumeClaim{pvc})
+		_, err := Reconcile(ctx, cli, recorder, cluster, nil,
+			[]corev1.PersistentVolumeClaim{pvc}, postgres.PostgresqlStatusList{})
 		Expect(err).ToNot(HaveOccurred())
 		Expect(condition()).To(BeNil())
 		Expect(recorder.Events).ToNot(Receive())
@@ -217,7 +219,8 @@ var _ = Describe("Refused volume expansion", func() {
 
 	It("reports nothing for an error that is not a refusal", func() {
 		refusal = apierrs.NewInvalid(schema.GroupKind{Kind: "PersistentVolumeClaim"}, pvc.Name, nil)
-		_, err := Reconcile(ctx, cli, recorder, cluster, nil, []corev1.PersistentVolumeClaim{pvc})
+		_, err := Reconcile(ctx, cli, recorder, cluster, nil,
+			[]corev1.PersistentVolumeClaim{pvc}, postgres.PostgresqlStatusList{})
 		Expect(err).To(MatchError(ContainSubstring("error while changing PVC storage requirement")))
 		Expect(condition()).To(BeNil())
 		Expect(recorder.Events).ToNot(Receive())

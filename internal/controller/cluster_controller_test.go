@@ -1936,3 +1936,39 @@ var _ = Describe("mapClusterOwnedResourceToCluster", func() {
 		Expect(mapClusterOwnedResourceToCluster(ctx, &corev1.Secret{})).To(BeNil())
 	})
 })
+
+// Until this change, a full WAL disk ended the reconciliation before the PVCs
+// were resized: raising the storage size did not free the instance
+var _ = Describe("ensureNoFailoverOnFullDisk", func() {
+	It("still resizes the PVCs while an instance is stopped for lack of WAL space", func(ctx SpecContext) {
+		env := buildTestEnvironment()
+		namespace := newFakeNamespace(env.client)
+		cluster := newFakeCNPGCluster(env.client, namespace)
+		pvcs := generateClusterPVC(env.client, cluster, persistentvolumeclaim.StatusReady)
+		cluster.Spec.StorageConfiguration.Size = "2G"
+
+		full := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: cluster.Name + "-1", Namespace: namespace},
+			Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{{
+				Name: specs.PostgresContainerName,
+				State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{
+					ExitCode: apiv1.MissingWALDiskSpaceExitCode,
+				}},
+			}}},
+		}
+		resources := &managedResources{pvcs: corev1.PersistentVolumeClaimList{Items: pvcs}}
+
+		res, err := env.clusterReconciler.ensureNoFailoverOnFullDisk(ctx, cluster, resources,
+			postgres.PostgresqlStatusList{Items: []postgres.PostgresqlStatus{{Pod: full}}})
+		Expect(err).ToNot(HaveOccurred())
+		Expect(res.RequeueAfter).To(BeNumerically(">", 0))
+		Expect(cluster.Status.Phase).To(Equal("Not enough disk space"))
+
+		for _, pvc := range pvcs {
+			var stored corev1.PersistentVolumeClaim
+			Expect(env.client.Get(ctx, types.NamespacedName{Name: pvc.Name, Namespace: namespace}, &stored)).
+				To(Succeed())
+			Expect(stored.Spec.Resources.Requests.Storage().String()).To(Equal("2G"))
+		}
+	})
+})

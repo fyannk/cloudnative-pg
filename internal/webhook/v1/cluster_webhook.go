@@ -1877,6 +1877,51 @@ func validateStorageConfigurationSize(
 			"Size not configured. Please add it, or a storage request in the pvcTemplate."))
 	}
 
+	return append(result, validateStorageConfigurationAutoGrow(structPath, storageConfiguration)...)
+}
+
+func validateStorageConfigurationAutoGrow(
+	structPath field.Path,
+	storageConfiguration apiv1.StorageConfiguration,
+) field.ErrorList {
+	autoGrow := storageConfiguration.AutoGrow
+	if autoGrow == nil {
+		return nil
+	}
+
+	var result field.ErrorList
+	autoGrowPath := structPath.Child("autoGrow")
+
+	if !storageConfiguration.ShouldResizeInUseVolumes() {
+		result = append(result, field.Invalid(
+			structPath.Child("resizeInUseVolumes"),
+			false,
+			"autoGrow grows the existing PVCs, it requires resizeInUseVolumes"))
+	}
+
+	maxSize, err := autoGrow.GetMaxSize()
+	switch {
+	case err != nil:
+		result = append(result, field.Invalid(
+			autoGrowPath.Child("maxSize"),
+			autoGrow.MaxSize,
+			"maxSize value isn't valid"))
+	case storageConfiguration.GetSizeOrNil() != nil && maxSize.Cmp(*storageConfiguration.GetSizeOrNil()) < 0:
+		result = append(result, field.Invalid(
+			autoGrowPath.Child("maxSize"),
+			autoGrow.MaxSize,
+			"maxSize can't be smaller than the size"))
+	}
+
+	if size := storageConfiguration.GetSizeOrNil(); size != nil {
+		if _, err := autoGrow.GetStep(*size); err != nil {
+			result = append(result, field.Invalid(
+				autoGrowPath.Child("step"),
+				autoGrow.Step,
+				err.Error()))
+		}
+	}
+
 	return result
 }
 
