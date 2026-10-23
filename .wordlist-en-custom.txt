@@ -106,6 +106,7 @@ ClusterIsNotReady
 ClusterList
 ClusterMonitoringTLSConfiguration
 ClusterRole
+ClusterRoles
 ClusterServiceVersion
 ClusterSpec
 ClusterStatus
