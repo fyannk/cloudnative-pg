@@ -14,3 +14,8 @@ resources:
 - publication_viewer_role.yaml
 - database_editor_role.yaml
 - database_viewer_role.yaml
+# Roles for the scale and status subresources, granted to nobody until bound
+# or labelled for aggregation (see the "Roles for the subresources" section of
+# docs/src/security.md).
+- scale_editor_role.yaml
+- cluster_status_editor_role.yaml

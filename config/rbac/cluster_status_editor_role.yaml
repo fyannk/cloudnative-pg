@@ -1,0 +1,19 @@
+# permissions to write the status of clusters, as `kubectl cnpg promote` and
+# the in-place restart of the primary do, aggregated to the built-in admin
+# role once labelled (see the "Roles for the subresources" section of
+# security.md)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/name: cloudnative-pg-kubebuilderv4
+    app.kubernetes.io/managed-by: kustomize
+  name: cluster-status-editor-role
+rules:
+- apiGroups:
+  - postgresql.cnpg.io
+  resources:
+  - clusters/status
+  verbs:
+  - patch
+  - update
