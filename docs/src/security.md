@@ -337,6 +337,39 @@ multi-tenant deployments, isolate tenants in separate namespaces and scope it
 per namespace with Kubernetes RBAC, relying on
 [Namespace Isolation](#namespace-isolation) to bound the impact.
 
+##### Roles for the subresources
+
+Granting a namespace-level role on `clusters` and `poolers`, directly or
+through roles aggregated to the built-in `edit` and `admin` ClusterRoles,
+gives no access to their subresources: a rule on a resource never matches its
+subresources. Two ClusterRoles cover the subresources that `kubectl` and the
+plugin write:
+
+| ClusterRole | Rules | Enables |
+|:------------|:------|:--------|
+| `cnpg-scale-editor-role` | `clusters/scale`, `poolers/scale`: `get`, `patch`, `update` | `kubectl scale cluster` and `kubectl scale pooler` |
+| `cnpg-cluster-status-editor-role` | `clusters/status`: `patch`, `update` | `kubectl cnpg promote`, and `kubectl cnpg restart` of the primary instance |
+
+Both are installed with the operator and grant nothing until they are bound,
+or aggregated to the built-in roles by a label. Following the Kubernetes
+built-in roles, which put the writes of `*/scale` in `edit` and keep the
+writes of `*/status` out of it, the scale role fits `edit` and `admin`, and
+the status role `admin` only:
+
+```sh
+kubectl label clusterrole cnpg-scale-editor-role \
+  rbac.authorization.k8s.io/aggregate-to-edit=true \
+  rbac.authorization.k8s.io/aggregate-to-admin=true
+kubectl label clusterrole cnpg-cluster-status-editor-role \
+  rbac.authorization.k8s.io/aggregate-to-admin=true
+```
+
+A label applies to every binding of the built-in role in every namespace.
+A write of the status bypasses the checks of the plugin (the target instance
+exists and is not fenced) and can change any status field, which is why it
+stays in a separate role. A write of the scale is validated by the operator
+webhook like a write of the spec.
+
 The RBAC discussed here governs access to CloudNativePG's own custom resources.
 The next section covers the complementary side: the RBAC that the operator
 itself relies on to manage Kubernetes resources on your behalf.
