@@ -13,6 +13,10 @@ webhooks:
   - clientConfig:
       service:
         containerPort: 9443
+    name: vclusterscale.cnpg.io
+  - clientConfig:
+      service:
+        containerPort: 9443
     name: vbackup.cnpg.io
   - clientConfig:
       service:
