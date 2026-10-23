@@ -403,6 +403,16 @@ func (s *StorageConfiguration) GetSizeOrNil() *resource.Quantity {
 	return nil
 }
 
+// ShouldResizeInUseVolumes is true when the PVCs already created with this
+// storage configuration should be resized to its size
+func (s *StorageConfiguration) ShouldResizeInUseVolumes() bool {
+	if s.ResizeInUseVolumes == nil {
+		return true
+	}
+
+	return *s.ResizeInUseVolumes
+}
+
 // AreDefaultQueriesDisabled checks whether default monitoring queries should be disabled
 func (m *MonitoringConfiguration) AreDefaultQueriesDisabled() bool {
 	return m != nil && m.DisableDefaultQueries != nil && *m.DisableDefaultQueries
@@ -890,11 +900,7 @@ func (cluster *Cluster) IsInstanceFenced(instance string) bool {
 // ShouldResizeInUseVolumes is true when we should resize PVC we already
 // created
 func (cluster *Cluster) ShouldResizeInUseVolumes() bool {
-	if cluster.Spec.StorageConfiguration.ResizeInUseVolumes == nil {
-		return true
-	}
-
-	return *cluster.Spec.StorageConfiguration.ResizeInUseVolumes
+	return cluster.Spec.StorageConfiguration.ShouldResizeInUseVolumes()
 }
 
 // ShouldCreateApplicationSecret returns true if for this cluster,
