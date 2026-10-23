@@ -1201,6 +1201,11 @@ const (
 	// or .spec.postgresql.synchronous.nodeFailureDomainKeys.
 	// Only set when one of those fields is configured.
 	ConditionSyncReplicationTopologySatisfied ClusterConditionType = "SyncReplicationTopologySatisfied"
+
+	// ConditionVolumeExpansionRefused is True while the API server refuses
+	// to expand at least one PVC to the size requested by the cluster, and
+	// False once every PVC accepts it. Only set after a first refusal.
+	ConditionVolumeExpansionRefused ClusterConditionType = "VolumeExpansionRefused"
 )
 
 // ConditionStatus defines conditions of resources
@@ -1270,6 +1275,22 @@ const (
 	// are set but no synchronous replica in a different failure domain than
 	// the primary exists.
 	ConditionReasonInsufficientCrossDomainReplicas ConditionReason = "InsufficientCrossDomainReplicas"
+
+	// ConditionReasonStorageClassForbidsExpansion means the API server refused
+	// a PVC expansion because its StorageClass does not allow it
+	ConditionReasonStorageClassForbidsExpansion ConditionReason = "StorageClassForbidsExpansion"
+
+	// ConditionReasonQuotaExceeded means the API server refused a PVC
+	// expansion because of a ResourceQuota
+	ConditionReasonQuotaExceeded ConditionReason = "QuotaExceeded"
+
+	// ConditionReasonExpansionForbidden means the API server refused a PVC
+	// expansion for another reason, such as an admission webhook
+	ConditionReasonExpansionForbidden ConditionReason = "Forbidden"
+
+	// ConditionReasonVolumeExpansionAccepted means every PVC accepts the size
+	// requested by the cluster again
+	ConditionReasonVolumeExpansionAccepted ConditionReason = "VolumeExpansionAccepted"
 )
 
 // EmbeddedObjectMetadata contains metadata to be inherited by all resources related to a Cluster
