@@ -479,8 +479,13 @@ usage to prevent it from becoming full.
 
 The same applies to CloudNativePG and Kubernetes as well: the
 ["Monitoring" section](monitoring.md#predefined-set-of-metrics)
-provides details on checking the disk space used by WAL segments and standard
-metrics on disk usage exported to Prometheus.
+provides details on checking the disk space used by WAL segments, and the
+`cnpg_disk_*` metrics, which report the bytes and the inodes left on each
+volume of the instance.
+
+A volume can run out of inodes while it still has free bytes. PostgreSQL then
+fails to create files with `No space left on device`, while `df -h` shows free
+space: `cnpg_disk_inodes_free` tells this case from a volume without free bytes.
 
 :::info[Important]
     In a production system, it is critical to monitor the database
@@ -499,13 +504,13 @@ stored, PostgreSQL will stop working. CloudNativePG correctly detects this issue
 by verifying that there is enough space to store the next WAL segment,
 and avoids triggering a failover, which could complicate recovery.
 
-That allows a human administrator to address the root cause.
+That allows the root cause to be addressed.
 
 In such a case, if supported by the storage class, the quickest course of action
-is currently to:
-
-1. Expand the storage size of the full PVC
-2. Increase the size in the `Cluster` resource to the same value
+is to increase the size in the `Cluster` resource: the operator still resizes
+the PVCs while the instance is stopped. A storage section with
+[`autoGrow`](storage.md#growing-the-volumes-automatically) is grown by the
+operator, before it is full or once the instance is stopped.
 
 Once the issue is resolved and there is sufficient free space for WAL segments,
 the Pod will restart and the cluster will become healthy.

@@ -6235,6 +6235,33 @@ spec:
               storage:
                 description: Configuration of the storage of the instances
                 properties:
+                  autoGrow:
+                    description: |-
+                      AutoGrow grows the PVCs of this volume when their filesystem is
+                      almost full, up to a maximum size, without changing the size in
+                      the specification. Requires resizeInUseVolumes.
+                    properties:
+                      maxSize:
+                        description: MaxSize is the size the PVCs are never grown
+                          beyond
+                        type: string
+                      step:
+                        default: 20%
+                        description: |-
+                          Step is how much the PVCs are grown at a time: a percentage of their
+                          current size, like "20%", or a quantity, like "5Gi". Defaults to "20%"
+                        type: string
+                      threshold:
+                        default: 80
+                        description: |-
+                          Threshold is the percentage of the filesystem used, on any instance,
+                          above which the PVCs are grown, defaults to 80
+                        maximum: 95
+                        minimum: 50
+                        type: integer
+                    required:
+                    - maxSize
+                    type: object
                   pvcTemplate:
                     description: Template to be used to generate the Persistent Volume
                       Claim
@@ -6486,6 +6513,33 @@ spec:
                     storage:
                       description: The storage configuration for the tablespace
                       properties:
+                        autoGrow:
+                          description: |-
+                            AutoGrow grows the PVCs of this volume when their filesystem is
+                            almost full, up to a maximum size, without changing the size in
+                            the specification. Requires resizeInUseVolumes.
+                          properties:
+                            maxSize:
+                              description: MaxSize is the size the PVCs are never
+                                grown beyond
+                              type: string
+                            step:
+                              default: 20%
+                              description: |-
+                                Step is how much the PVCs are grown at a time: a percentage of their
+                                current size, like "20%", or a quantity, like "5Gi". Defaults to "20%"
+                              type: string
+                            threshold:
+                              default: 80
+                              description: |-
+                                Threshold is the percentage of the filesystem used, on any instance,
+                                above which the PVCs are grown, defaults to 80
+                              maximum: 95
+                              minimum: 50
+                              type: integer
+                          required:
+                          - maxSize
+                          type: object
                         pvcTemplate:
                           description: Template to be used to generate the Persistent
                             Volume Claim
@@ -6897,6 +6951,33 @@ spec:
                 description: Configuration of the storage for PostgreSQL WAL (Write-Ahead
                   Log)
                 properties:
+                  autoGrow:
+                    description: |-
+                      AutoGrow grows the PVCs of this volume when their filesystem is
+                      almost full, up to a maximum size, without changing the size in
+                      the specification. Requires resizeInUseVolumes.
+                    properties:
+                      maxSize:
+                        description: MaxSize is the size the PVCs are never grown
+                          beyond
+                        type: string
+                      step:
+                        default: 20%
+                        description: |-
+                          Step is how much the PVCs are grown at a time: a percentage of their
+                          current size, like "20%", or a quantity, like "5Gi". Defaults to "20%"
+                        type: string
+                      threshold:
+                        default: 80
+                        description: |-
+                          Threshold is the percentage of the filesystem used, on any instance,
+                          above which the PVCs are grown, defaults to 80
+                        maximum: 95
+                        minimum: 50
+                        type: integer
+                    required:
+                    - maxSize
+                    type: object
                   pvcTemplate:
                     description: Template to be used to generate the Persistent Volume
                       Claim

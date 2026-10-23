@@ -55,6 +55,28 @@ _Appears in:_
 | `additionalPodAffinity` _[PodAffinity](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.34/#podaffinity-v1-core)_ | AdditionalPodAffinity allows to specify pod affinity terms to be passed to all the cluster's pods. |  |  |  |
 
 
+#### AutoGrowConfiguration
+
+
+
+AutoGrowConfiguration tells when and how much the PVCs of a volume are
+grown. The size of the PVCs of a volume is the largest of the size in the
+specification and of the requests of its existing PVCs: they are the
+record of the growth, so the specification is never changed.
+
+
+
+_Appears in:_
+
+- [StorageConfiguration](#storageconfiguration)
+
+| Field | Description | Required | Default | Validation |
+| --- | --- | --- | --- | --- |
+| `maxSize` _string_ | MaxSize is the size the PVCs are never grown beyond | True |  |  |
+| `threshold` _integer_ | Threshold is the percentage of the filesystem used, on any instance,<br />above which the PVCs are grown, defaults to 80 |  | 80 | Maximum: 95 <br />Minimum: 50 <br /> |
+| `step` _string_ | Step is how much the PVCs are grown at a time: a percentage of their<br />current size, like "20%", or a quantity, like "5Gi". Defaults to "20%" |  | 20% |  |
+
+
 #### AvailableArchitecture
 
 
@@ -3017,6 +3039,7 @@ _Appears in:_
 | `size` _string_ | Size of the storage. Required if not already specified in the PVC template.<br />Changes to this field are automatically reapplied to the created PVCs.<br />Size cannot be decreased. |  |  |  |
 | `resizeInUseVolumes` _boolean_ | Resize existent PVCs, defaults to true |  | true |  |
 | `pvcTemplate` _[PersistentVolumeClaimSpec](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.34/#persistentvolumeclaimspec-v1-core)_ | Template to be used to generate the Persistent Volume Claim |  |  |  |
+| `autoGrow` _[AutoGrowConfiguration](#autogrowconfiguration)_ | AutoGrow grows the PVCs of this volume when their filesystem is<br />almost full, up to a maximum size, without changing the size in<br />the specification. Requires resizeInUseVolumes. |  |  |  |
 
 
 #### Subscription

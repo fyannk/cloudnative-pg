@@ -21,10 +21,13 @@ package persistentvolumeclaim
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/cloudnative-pg/machinery/pkg/log"
 	corev1 "k8s.io/api/core/v1"
+	apierrs "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -40,32 +43,25 @@ type reconciliationUnit func(
 	pvc *corev1.PersistentVolumeClaim,
 ) error
 
-// reconcileExistingPVCs align the existing pvcs to the desired state
+// reconcileExistingPVCs align the existing pvcs to the desired state. A PVC
+// whose expansion the API server refuses does not stop the loop: the refusals
+// are returned, so that every PVC is attempted and reported. The volumes in
+// sizes, the ones with autoGrow, are resized to the size given there instead
+// of the one in the specification.
 func reconcileExistingPVCs(
 	ctx context.Context,
 	c client.Client,
 	cluster *apiv1.Cluster,
 	pvcs []corev1.PersistentVolumeClaim,
-) error {
+	sizes map[pvcGroup]resource.Quantity,
+) ([]*volumeExpansionRefusal, error) {
 	if len(pvcs) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	contextLogger := log.FromContext(ctx)
 
-	var reconciliationUnits []reconciliationUnit
-
-	if cluster.ShouldResizeInUseVolumes() {
-		reconciliationUnits = append(reconciliationUnits, reconcilePVCQuantity)
-	}
-	if cluster.Spec.StorageConfiguration.PersistentVolumeClaimTemplate != nil {
-		reconciliationUnits = append(reconciliationUnits, reconcileVolumeAttributeClass)
-	}
-
-	if len(reconciliationUnits) == 0 {
-		return nil
-	}
-
+	var refusals []*volumeExpansionRefusal
 	for idx := range pvcs {
 		pvc := &pvcs[idx]
 
@@ -75,7 +71,7 @@ func reconcileExistingPVCs(
 				"encountered an error while trying to get pvc role from label",
 				"role", pvc.Labels[utils.PvcRoleLabelName],
 			)
-			return err
+			return nil, err
 		}
 
 		storageConfiguration, err := pvcRole.GetStorageConfiguration(cluster)
@@ -85,17 +81,43 @@ func reconcileExistingPVCs(
 				"role", pvc.Labels[utils.PvcRoleLabelName],
 				"pvcName", pvc.Name,
 			)
-			return err
+			return nil, err
 		}
 
-		for _, reconciler := range reconciliationUnits {
-			if err := reconciler(ctx, c, &storageConfiguration, pvc); err != nil {
-				return err
+		if size, ok := sizes[pvcGroupFromLabels(pvc.Labels)]; ok {
+			storageConfiguration.Size = size.String()
+		}
+
+		for _, reconciler := range getReconciliationUnits(&storageConfiguration) {
+			err := reconciler(ctx, c, &storageConfiguration, pvc)
+			var refusal *volumeExpansionRefusal
+			if errors.As(err, &refusal) {
+				refusals = append(refusals, refusal)
+				continue
+			}
+			if err != nil {
+				return nil, err
 			}
 		}
 	}
 
-	return nil
+	return refusals, nil
+}
+
+// getReconciliationUnits returns the reconciliation units enabled by the
+// storage configuration of a PVC role: each PVC follows the configuration of
+// its own role, not the one of the PGDATA volume
+func getReconciliationUnits(storageConfiguration *apiv1.StorageConfiguration) []reconciliationUnit {
+	var reconciliationUnits []reconciliationUnit
+
+	if storageConfiguration.ShouldResizeInUseVolumes() {
+		reconciliationUnits = append(reconciliationUnits, reconcilePVCQuantity)
+	}
+	if storageConfiguration.PersistentVolumeClaimTemplate != nil {
+		reconciliationUnits = append(reconciliationUnits, reconcileVolumeAttributeClass)
+	}
+
+	return reconciliationUnits
 }
 
 func reconcileVolumeAttributeClass(
@@ -158,6 +180,12 @@ func reconcilePVCQuantity(
 			"pvc", pvc,
 			"requests", pvc.Spec.Resources.Requests,
 			"oldRequests", oldPVC.Spec.Resources.Requests)
+		if apierrs.IsForbidden(err) {
+			// the builder changed the PVC in place: the rest of the
+			// reconciliation must see the size it still has
+			pvc.Spec.Resources.Requests = oldPVC.Spec.Resources.Requests
+			return newVolumeExpansionRefusal(pvc, *parsedSize, err)
+		}
 		return fmt.Errorf("error while changing PVC storage requirement: %w", err)
 	}
 

@@ -4401,6 +4401,51 @@ var _ = Describe("Storage configuration validation", func() {
 	})
 })
 
+var _ = Describe("autoGrow validation", func() {
+	storage := func(autoGrow *apiv1.AutoGrowConfiguration) apiv1.StorageConfiguration {
+		return apiv1.StorageConfiguration{Size: "10Gi", AutoGrow: autoGrow}
+	}
+
+	It("accepts a storage configuration without autoGrow or with a valid one", func() {
+		Expect(validateStorageConfigurationAutoGrow(*field.NewPath("spec", "storage"), storage(nil))).To(BeEmpty())
+		Expect(validateStorageConfigurationAutoGrow(*field.NewPath("spec", "storage"), storage(
+			&apiv1.AutoGrowConfiguration{MaxSize: "10Gi", Step: "5Gi"}))).To(BeEmpty())
+	})
+
+	DescribeTable("refuses an invalid autoGrow",
+		func(configuration apiv1.StorageConfiguration, path string) {
+			result := validateStorageConfigurationAutoGrow(*field.NewPath("spec", "walStorage"), configuration)
+			Expect(result).To(HaveLen(1))
+			Expect(result[0].Field).To(Equal(path))
+		},
+		Entry("an invalid maxSize",
+			storage(&apiv1.AutoGrowConfiguration{MaxSize: "lots"}), "spec.walStorage.autoGrow.maxSize"),
+		Entry("a maxSize below the size",
+			storage(&apiv1.AutoGrowConfiguration{MaxSize: "5Gi"}), "spec.walStorage.autoGrow.maxSize"),
+		Entry("an invalid step",
+			storage(&apiv1.AutoGrowConfiguration{MaxSize: "20Gi", Step: "200%"}), "spec.walStorage.autoGrow.step"),
+		Entry("resizeInUseVolumes disabled",
+			apiv1.StorageConfiguration{
+				Size:               "10Gi",
+				ResizeInUseVolumes: ptr.To(false),
+				AutoGrow:           &apiv1.AutoGrowConfiguration{MaxSize: "20Gi"},
+			}, "spec.walStorage.resizeInUseVolumes"),
+	)
+
+	It("validates autoGrow in every storage section", func() {
+		v := &ClusterCustomValidator{}
+		invalid := &apiv1.AutoGrowConfiguration{MaxSize: "1Gi"}
+		cluster := &apiv1.Cluster{Spec: apiv1.ClusterSpec{
+			StorageConfiguration: storage(invalid),
+			WalStorage:           ptr.To(storage(invalid)),
+			Tablespaces:          []apiv1.TablespaceConfiguration{{Name: "alpha", Storage: storage(invalid)}},
+		}}
+		Expect(v.validateStorageSize(cluster)).To(HaveLen(1))
+		Expect(v.validateWalStorageSize(cluster)).To(HaveLen(1))
+		Expect(v.validateTablespaceStorageSize(cluster)).To(HaveLen(1))
+	})
+})
+
 var _ = Describe("Ephemeral volume configuration validation", func() {
 	var v *ClusterCustomValidator
 	BeforeEach(func() {

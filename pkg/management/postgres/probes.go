@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/cloudnative-pg/machinery/pkg/fileutils"
 	"github.com/cloudnative-pg/machinery/pkg/log"
@@ -32,6 +33,7 @@ import (
 
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/executablehash"
+	"github.com/cloudnative-pg/cloudnative-pg/pkg/management/postgres/volumeusage"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/postgres"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/specs"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/versions"
@@ -118,6 +120,14 @@ func (instance *Instance) GetStatus() (result *postgres.PostgresqlStatus, err er
 
 	result.IsInstanceManagerUpgrading = instance.InstanceManagerIsUpgrading.Load()
 	result.SessionID = instance.SessionID
+
+	// a volume that cannot be read is only missing from the usages: it
+	// must not hide the rest of the status from the operator
+	var usageErr error
+	result.VolumeUsages, usageErr = volumeusage.Get(volumeusage.DefaultPaths, syscall.Statfs)
+	if usageErr != nil {
+		log.Warning("Cannot read the usage of the volumes of the instance", "err", usageErr)
+	}
 
 	return result, nil
 }

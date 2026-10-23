@@ -26,6 +26,7 @@ import (
 	"fmt"
 	"regexp"
 	"strconv"
+	"syscall"
 	"time"
 
 	"github.com/cloudnative-pg/machinery/pkg/log"
@@ -35,6 +36,7 @@ import (
 	"github.com/cloudnative-pg/cloudnative-pg/internal/management/cache"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/management/postgres"
 	m "github.com/cloudnative-pg/cloudnative-pg/pkg/management/postgres/metrics"
+	"github.com/cloudnative-pg/cloudnative-pg/pkg/management/postgres/volumeusage"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/management/postgres/webserver/client/local"
 	postgresconf "github.com/cloudnative-pg/cloudnative-pg/pkg/postgres"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/specs"
@@ -58,6 +60,10 @@ type Exporter struct {
 
 	// pluginCollector is used to collect metrics from plugins
 	pluginCollector m.PluginCollector
+
+	// diskPaths and statfs are used to read the filesystems of the volumes
+	diskPaths volumeusage.Paths
+	statfs    volumeusage.Statfs
 }
 
 // metrics here are related to the exporter itself, which is instrumented to
@@ -80,6 +86,7 @@ type metrics struct {
 	FencingOn                    prometheus.Gauge
 	PgStatWalMetrics             PgStatWalMetrics
 	NodesUsed                    prometheus.Gauge
+	Disk                         diskMetrics
 }
 
 // PgStatWalMetrics is available from PG14+
@@ -102,6 +109,8 @@ func NewExporter(instance *postgres.Instance, pluginCollector m.PluginCollector)
 		Metrics:         newMetrics(),
 		getCluster:      clusterGetter,
 		pluginCollector: pluginCollector,
+		diskPaths:       volumeusage.DefaultPaths,
+		statfs:          syscall.Statfs,
 	}
 }
 
@@ -213,6 +222,7 @@ func newMetrics() *metrics {
 				"implying the absence of High Availability (HA). Ideally this value " +
 				"should match the number of instances in the cluster.",
 		}),
+		Disk: newDiskMetrics(),
 		PgStatWalMetrics: PgStatWalMetrics{
 			WalRecords: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 				Namespace: PrometheusNamespace,
@@ -292,6 +302,7 @@ func (e *Exporter) Describe(ch chan<- *prometheus.Desc) {
 	e.Metrics.LastFailedBackupTimestamp.Describe(ch)
 	e.Metrics.LastAvailableBackupTimestamp.Describe(ch)
 	e.Metrics.NodesUsed.Describe(ch)
+	e.Metrics.Disk.describe(ch)
 
 	if e.queries != nil {
 		e.queries.Describe(ch)
@@ -320,6 +331,7 @@ func (e *Exporter) Describe(ch chan<- *prometheus.Desc) {
 func (e *Exporter) Collect(ch chan<- prometheus.Metric) {
 	log.Debug("collecting Postgres instance metrics")
 	e.updateInstanceMetrics()
+	e.updateDiskMetrics()
 	e.collectInstanceMetrics(ch)
 
 	if e.queries != nil {
@@ -375,6 +387,7 @@ func (e *Exporter) collectInstanceMetrics(ch chan<- prometheus.Metric) {
 	e.Metrics.LastFailedBackupTimestamp.Collect(ch)
 	e.Metrics.LastAvailableBackupTimestamp.Collect(ch)
 	e.Metrics.NodesUsed.Collect(ch)
+	e.Metrics.Disk.collect(ch)
 
 	if version, _ := e.instance.GetPgVersion(); version.Major() >= 14 {
 		e.Metrics.PgStatWalMetrics.WalRecords.Collect(ch)

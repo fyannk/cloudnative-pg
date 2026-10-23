@@ -1201,6 +1201,17 @@ const (
 	// or .spec.postgresql.synchronous.nodeFailureDomainKeys.
 	// Only set when one of those fields is configured.
 	ConditionSyncReplicationTopologySatisfied ClusterConditionType = "SyncReplicationTopologySatisfied"
+
+	// ConditionVolumeExpansionRefused is True while the API server refuses
+	// to expand at least one PVC to the size requested by the cluster, and
+	// False once every PVC accepts it. Only set after a first refusal.
+	ConditionVolumeExpansionRefused ClusterConditionType = "VolumeExpansionRefused"
+
+	// ConditionVolumeAutoGrowStopped is True while a volume with autoGrow
+	// is above its threshold and is not grown, because it reached its
+	// maxSize or because its growth would hide failing WAL archiving, and
+	// False once no volume is in that case. Only set after a first stop.
+	ConditionVolumeAutoGrowStopped ClusterConditionType = "VolumeAutoGrowStopped"
 )
 
 // ConditionStatus defines conditions of resources
@@ -1270,6 +1281,35 @@ const (
 	// are set but no synchronous replica in a different failure domain than
 	// the primary exists.
 	ConditionReasonInsufficientCrossDomainReplicas ConditionReason = "InsufficientCrossDomainReplicas"
+
+	// ConditionReasonStorageClassForbidsExpansion means the API server refused
+	// a PVC expansion because its StorageClass does not allow it
+	ConditionReasonStorageClassForbidsExpansion ConditionReason = "StorageClassForbidsExpansion"
+
+	// ConditionReasonQuotaExceeded means the API server refused a PVC
+	// expansion because of a ResourceQuota
+	ConditionReasonQuotaExceeded ConditionReason = "QuotaExceeded"
+
+	// ConditionReasonExpansionForbidden means the API server refused a PVC
+	// expansion for another reason, such as an admission webhook
+	ConditionReasonExpansionForbidden ConditionReason = "Forbidden"
+
+	// ConditionReasonVolumeExpansionAccepted means every PVC accepts the size
+	// requested by the cluster again
+	ConditionReasonVolumeExpansionAccepted ConditionReason = "VolumeExpansionAccepted"
+
+	// ConditionReasonMaxSizeReached means a volume above its autoGrow
+	// threshold already has the autoGrow maxSize
+	ConditionReasonMaxSizeReached ConditionReason = "MaxSizeReached"
+
+	// ConditionReasonWALArchivingFailing means a volume holding the WAL files
+	// is above its autoGrow threshold while the WAL archiving is failing:
+	// growing it would hide the failure
+	ConditionReasonWALArchivingFailing ConditionReason = "WALArchivingFailing"
+
+	// ConditionReasonVolumeAutoGrowResumed means no volume above its autoGrow
+	// threshold is stopped anymore
+	ConditionReasonVolumeAutoGrowResumed ConditionReason = "VolumeAutoGrowResumed"
 )
 
 // EmbeddedObjectMetadata contains metadata to be inherited by all resources related to a Cluster
@@ -2377,6 +2417,35 @@ type StorageConfiguration struct {
 	// Template to be used to generate the Persistent Volume Claim
 	// +optional
 	PersistentVolumeClaimTemplate *corev1.PersistentVolumeClaimSpec `json:"pvcTemplate,omitempty"`
+
+	// AutoGrow grows the PVCs of this volume when their filesystem is
+	// almost full, up to a maximum size, without changing the size in
+	// the specification. Requires resizeInUseVolumes.
+	// +optional
+	AutoGrow *AutoGrowConfiguration `json:"autoGrow,omitempty"`
+}
+
+// AutoGrowConfiguration tells when and how much the PVCs of a volume are
+// grown. The size of the PVCs of a volume is the largest of the size in the
+// specification and of the requests of its existing PVCs: they are the
+// record of the growth, so the specification is never changed.
+type AutoGrowConfiguration struct {
+	// MaxSize is the size the PVCs are never grown beyond
+	MaxSize string `json:"maxSize"`
+
+	// Threshold is the percentage of the filesystem used, on any instance,
+	// above which the PVCs are grown, defaults to 80
+	// +kubebuilder:validation:Minimum=50
+	// +kubebuilder:validation:Maximum=95
+	// +kubebuilder:default:=80
+	// +optional
+	Threshold int `json:"threshold,omitempty"`
+
+	// Step is how much the PVCs are grown at a time: a percentage of their
+	// current size, like "20%", or a quantity, like "5Gi". Defaults to "20%"
+	// +kubebuilder:default:="20%"
+	// +optional
+	Step string `json:"step,omitempty"`
 }
 
 // TablespaceConfiguration is the configuration of a tablespace, and includes

@@ -20,6 +20,8 @@ ArgoCD
 Armando
 AuthQuery
 AuthQuerySecret
+AutoGrow
+AutoGrowConfiguration
 AutomountServiceAccountToken
 Autoscaler
 AvailableArchitecture
@@ -302,6 +304,7 @@ ManagedService
 ManagedServices
 MaxItems
 MaxLength
+MaxSize
 MetricDescription
 MetricName
 MetricType
@@ -685,6 +688,7 @@ authQuerySecret
 authn
 authz
 autocompletion
+autogrowconfiguration
 automounted
 autoscaler
 autoscalers
@@ -1066,6 +1070,8 @@ initDB
 initdb
 initialDelaySeconds
 initializingPVC
+inode
+inodes
 inplace
 installModes
 installplans
