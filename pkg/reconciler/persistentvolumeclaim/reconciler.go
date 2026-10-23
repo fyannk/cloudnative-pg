@@ -21,7 +21,6 @@ package persistentvolumeclaim
 
 import (
 	"context"
-	"errors"
 	"time"
 
 	"github.com/cloudnative-pg/machinery/pkg/log"
@@ -49,25 +48,19 @@ func Reconcile(
 		return res, err
 	}
 
-	if err := reconcileExistingPVCs(ctx, c, cluster, pvcs); err != nil {
+	refusals, err := reconcileExistingPVCs(ctx, c, cluster, pvcs)
+	if err != nil {
 		if apierrs.IsConflict(err) {
 			contextLogger.Debug("Conflict error while reconciling PVCs", "error", err)
 			return ctrl.Result{RequeueAfter: time.Second}, nil
 		}
 
-		var refusal *volumeExpansionRefusal
-		if errors.As(err, &refusal) {
-			if reportErr := reportVolumeExpansion(
-				ctx, c, recorder, cluster, []*volumeExpansionRefusal{refusal},
-			); reportErr != nil {
-				contextLogger.Error(reportErr, "while reporting a refused volume expansion")
-			}
-		}
-
 		return ctrl.Result{}, err
 	}
 
-	if err := reportVolumeExpansion(ctx, c, recorder, cluster, nil); err != nil {
+	// a refused expansion is reported and does not stop the reconciliation:
+	// the cluster requeues itself to retry it, see VolumeExpansionRetryInterval
+	if err := reportVolumeExpansion(ctx, c, recorder, cluster, refusals); err != nil {
 		return ctrl.Result{}, err
 	}
 
