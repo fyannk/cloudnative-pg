@@ -116,12 +116,13 @@ var _ = Describe("Refused volume expansion", func() {
 			return list.Items
 		}
 
-		// The StorageClass forbids the expansion: the reconciliation still
-		// fails, and the cluster now says why
+		// The StorageClass forbids the expansion: the reconciliation goes on,
+		// and the cluster says why
 		refusal = forbiddenPVC(pvc.Name, storageClassRefusal)
-		_, err := Reconcile(ctx, cli, recorder, cluster, nil, pvcs())
-		Expect(err).To(MatchError(ContainSubstring(storageClassRefusal)))
-		Expect(apierrs.IsForbidden(err)).To(BeTrue())
+		res, err := Reconcile(ctx, cli, recorder, cluster, nil, pvcs())
+		Expect(err).ToNot(HaveOccurred())
+		Expect(res.IsZero()).To(BeTrue())
+		Expect(IsVolumeExpansionRefused(cluster)).To(BeTrue())
 
 		refused := condition()
 		Expect(refused).ToNot(BeNil())
@@ -139,7 +140,7 @@ var _ = Describe("Refused volume expansion", func() {
 
 		// The same refusal on the next pass: no new Event
 		_, err = Reconcile(ctx, cli, recorder, cluster, nil, pvcs())
-		Expect(err).To(HaveOccurred())
+		Expect(err).ToNot(HaveOccurred())
 		Expect(condition().Message).To(Equal(refused.Message))
 		Expect(recorder.Events).ToNot(Receive())
 
@@ -152,12 +153,59 @@ var _ = Describe("Refused volume expansion", func() {
 		Expect(accepted.Status).To(Equal(metav1.ConditionFalse))
 		Expect(accepted.Reason).To(Equal(string(apiv1.ConditionReasonVolumeExpansionAccepted)))
 		Expect(recorder.Events).To(Receive(HavePrefix("Normal VolumeExpansionAccepted ")))
+		Expect(IsVolumeExpansionRefused(cluster)).To(BeFalse())
 
 		// Nothing more to say on the next clean pass
 		_, err = Reconcile(ctx, cli, recorder, cluster, nil, pvcs())
 		Expect(err).ToNot(HaveOccurred())
 		Expect(condition().Status).To(Equal(metav1.ConditionFalse))
 		Expect(recorder.Events).ToNot(Receive())
+	})
+
+	// Before this change the first refused PVC ended the loop: the next PVCs
+	// and the other reconciliation units were never attempted
+	It("attempts every PVC and every reconciliation unit", func() {
+		cluster.Spec.StorageConfiguration.PersistentVolumeClaimTemplate = &corev1.PersistentVolumeClaimSpec{
+			VolumeAttributesClassName: ptr.To("fast"),
+		}
+		second := makePVC(clusterName, "2", "2", NewPgDataCalculator(), false)
+		second.Namespace = "default"
+		second.Spec.Resources.Requests = corev1.ResourceList{"storage": resource.MustParse("1Gi")}
+		Expect(cli.Create(ctx, &second)).To(Succeed())
+
+		// the size patches are refused, the volume attributes class ones
+		// are accepted
+		refused := 0
+		cli = interceptor.NewClient(cli.(client.WithWatch), interceptor.Funcs{
+			Patch: func(ctx context.Context, c client.WithWatch, obj client.Object,
+				patch client.Patch, opts ...client.PatchOption,
+			) error {
+				claim := obj.(*corev1.PersistentVolumeClaim)
+				if claim.Spec.Resources.Requests.Storage().Cmp(resource.MustParse("2Gi")) == 0 {
+					refused++
+					return forbiddenPVC(claim.Name, storageClassRefusal)
+				}
+				return c.Patch(ctx, obj, patch, opts...)
+			},
+		})
+
+		claims := []corev1.PersistentVolumeClaim{second, pvc}
+		refusals, err := reconcileExistingPVCs(ctx, cli, cluster, claims)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(refused).To(Equal(2))
+		Expect(refusals).To(HaveLen(2))
+		Expect(volumeExpansionRefusedCondition(refusals).Message).To(ContainSubstring(
+			"refused to expand 2 PVC(s) to the size requested by the cluster: " +
+				`cluster-expansion-1 to 2Gi (StorageClass "local-path"), ` +
+				"cluster-expansion-2 to 2Gi (the default StorageClass)"))
+
+		for idx := range claims {
+			// the in-memory request is the size the PVC still has
+			Expect(claims[idx].Spec.Resources.Requests.Storage().String()).To(Equal("1Gi"))
+			var stored corev1.PersistentVolumeClaim
+			Expect(cli.Get(ctx, client.ObjectKeyFromObject(&claims[idx]), &stored)).To(Succeed())
+			Expect(stored.Spec.VolumeAttributesClassName).To(HaveValue(Equal("fast")))
+		}
 	})
 
 	It("adds no condition to a cluster that never had a refusal", func() {

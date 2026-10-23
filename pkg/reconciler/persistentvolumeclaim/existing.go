@@ -21,6 +21,7 @@ package persistentvolumeclaim
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/cloudnative-pg/machinery/pkg/log"
@@ -41,15 +42,17 @@ type reconciliationUnit func(
 	pvc *corev1.PersistentVolumeClaim,
 ) error
 
-// reconcileExistingPVCs align the existing pvcs to the desired state
+// reconcileExistingPVCs align the existing pvcs to the desired state. A PVC
+// whose expansion the API server refuses does not stop the loop: the refusals
+// are returned, so that every PVC is attempted and reported.
 func reconcileExistingPVCs(
 	ctx context.Context,
 	c client.Client,
 	cluster *apiv1.Cluster,
 	pvcs []corev1.PersistentVolumeClaim,
-) error {
+) ([]*volumeExpansionRefusal, error) {
 	if len(pvcs) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	contextLogger := log.FromContext(ctx)
@@ -64,9 +67,10 @@ func reconcileExistingPVCs(
 	}
 
 	if len(reconciliationUnits) == 0 {
-		return nil
+		return nil, nil
 	}
 
+	var refusals []*volumeExpansionRefusal
 	for idx := range pvcs {
 		pvc := &pvcs[idx]
 
@@ -76,7 +80,7 @@ func reconcileExistingPVCs(
 				"encountered an error while trying to get pvc role from label",
 				"role", pvc.Labels[utils.PvcRoleLabelName],
 			)
-			return err
+			return nil, err
 		}
 
 		storageConfiguration, err := pvcRole.GetStorageConfiguration(cluster)
@@ -86,17 +90,23 @@ func reconcileExistingPVCs(
 				"role", pvc.Labels[utils.PvcRoleLabelName],
 				"pvcName", pvc.Name,
 			)
-			return err
+			return nil, err
 		}
 
 		for _, reconciler := range reconciliationUnits {
-			if err := reconciler(ctx, c, &storageConfiguration, pvc); err != nil {
-				return err
+			err := reconciler(ctx, c, &storageConfiguration, pvc)
+			var refusal *volumeExpansionRefusal
+			if errors.As(err, &refusal) {
+				refusals = append(refusals, refusal)
+				continue
+			}
+			if err != nil {
+				return nil, err
 			}
 		}
 	}
 
-	return nil
+	return refusals, nil
 }
 
 func reconcileVolumeAttributeClass(
@@ -160,6 +170,9 @@ func reconcilePVCQuantity(
 			"requests", pvc.Spec.Resources.Requests,
 			"oldRequests", oldPVC.Spec.Resources.Requests)
 		if apierrs.IsForbidden(err) {
+			// the builder changed the PVC in place: the rest of the
+			// reconciliation must see the size it still has
+			pvc.Spec.Resources.Requests = oldPVC.Spec.Resources.Requests
 			return newVolumeExpansionRefusal(pvc, *parsedSize, err)
 		}
 		return fmt.Errorf("error while changing PVC storage requirement: %w", err)
