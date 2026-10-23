@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/cloudnative-pg/machinery/pkg/log"
 	corev1 "k8s.io/api/core/v1"
@@ -37,6 +38,17 @@ import (
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
 	resourcestatus "github.com/cloudnative-pg/cloudnative-pg/pkg/resources/status"
 )
+
+// VolumeExpansionRetryInterval is how often a cluster whose volume
+// expansion is refused is reconciled again, to retry the expansion once the
+// StorageClass, the quota or the admission policy allows it
+const VolumeExpansionRetryInterval = time.Minute
+
+// IsVolumeExpansionRefused tells whether the cluster reports a refused
+// volume expansion
+func IsVolumeExpansionRefused(cluster *apiv1.Cluster) bool {
+	return meta.IsStatusConditionTrue(cluster.Status.Conditions, string(apiv1.ConditionVolumeExpansionRefused))
+}
 
 // maxListedRefusals is the number of refused PVCs named in the condition
 // message, the others are counted

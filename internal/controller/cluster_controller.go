@@ -599,7 +599,13 @@ func (r *ClusterReconciler) reconcile(ctx context.Context, cluster *apiv1.Cluste
 
 	// Run plugin post-reconcile hooks, sync per-plugin statuses, and
 	// register PhaseHealthy as the LAST status mutation. See #8582.
-	return r.finalizeReconciliation(ctx, cnpgiClient.GetPluginClientFromContext(ctx), cluster)
+	final, err := r.finalizeReconciliation(ctx, cnpgiClient.GetPluginClientFromContext(ctx), cluster)
+	if err == nil && final.IsZero() && persistentvolumeclaim.IsVolumeExpansionRefused(cluster) {
+		// the refused expansion did not stop this pass, nothing else
+		// would retry it
+		return ctrl.Result{RequeueAfter: persistentvolumeclaim.VolumeExpansionRetryInterval}, nil
+	}
+	return final, err
 }
 
 // evaluatePodReadinessGuards short-circuits the reconciliation loop with a

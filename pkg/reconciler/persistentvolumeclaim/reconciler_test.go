@@ -166,13 +166,14 @@ var _ = Describe("Reconcile resource requests", func() {
 	cluster := &apiv1.Cluster{}
 
 	It("Reconcile resources with empty PVCs shouldn't fail", func() {
-		err := reconcileExistingPVCs(
+		refusals, err := reconcileExistingPVCs(
 			context.Background(),
 			cli,
 			cluster,
 			[]corev1.PersistentVolumeClaim{},
 		)
 		Expect(err).ToNot(HaveOccurred())
+		Expect(refusals).To(BeEmpty())
 	})
 
 	It("Reconcile resources with resize in use and empty PVCs shouldn't fail", func() {
@@ -183,13 +184,14 @@ var _ = Describe("Reconcile resource requests", func() {
 		}
 
 		cli := fake.NewClientBuilder().WithScheme(scheme.BuildWithAllKnownScheme()).WithObjects(cluster).Build()
-		err := reconcileExistingPVCs(
+		refusals, err := reconcileExistingPVCs(
 			context.Background(),
 			cli,
 			cluster,
 			[]corev1.PersistentVolumeClaim{},
 		)
 		Expect(err).ToNot(HaveOccurred())
+		Expect(refusals).To(BeEmpty())
 	})
 })
 
