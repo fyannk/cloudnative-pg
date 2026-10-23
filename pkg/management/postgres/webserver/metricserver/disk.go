@@ -20,16 +20,10 @@ SPDX-License-Identifier: Apache-2.0
 package metricserver
 
 import (
-	"errors"
-	"fmt"
-	"os"
-	"path/filepath"
-	"syscall"
-
 	"github.com/cloudnative-pg/machinery/pkg/log"
 	"github.com/prometheus/client_golang/prometheus"
 
-	"github.com/cloudnative-pg/cloudnative-pg/pkg/specs"
+	"github.com/cloudnative-pg/cloudnative-pg/pkg/management/postgres/volumeusage"
 )
 
 // diskMetrics are the gauges describing the filesystems of the volumes
@@ -40,26 +34,6 @@ type diskMetrics struct {
 	UsedBytes      *prometheus.GaugeVec
 	Inodes         *prometheus.GaugeVec
 	InodesFree     *prometheus.GaugeVec
-}
-
-// diskPaths are the mount points of the volumes of the instance
-type diskPaths struct {
-	pgData      string
-	walVolume   string
-	tablespaces string
-}
-
-// defaultDiskPaths are the mount points used by the instance Pods
-var defaultDiskPaths = diskPaths{
-	pgData:      specs.PgDataVolumePath,
-	walVolume:   specs.PgWalVolumePath,
-	tablespaces: specs.PgTablespaceVolumePath,
-}
-
-// diskVolume is a volume of the instance, as reported in the "volume" label
-type diskVolume struct {
-	name string
-	path string
 }
 
 func newDiskMetrics() diskMetrics {
@@ -124,36 +98,6 @@ func (d diskMetrics) reset() {
 	d.InodesFree.Reset()
 }
 
-// listDiskVolumes returns the volumes mounted in the instance: PGDATA,
-// the WAL volume when there is one, and one volume per tablespace
-func listDiskVolumes(paths diskPaths) ([]diskVolume, error) {
-	volumes := []diskVolume{{name: "pgdata", path: paths.pgData}}
-	var errs []error
-
-	switch _, err := os.Stat(paths.walVolume); {
-	case err == nil:
-		volumes = append(volumes, diskVolume{name: "wal", path: paths.walVolume})
-	case !errors.Is(err, os.ErrNotExist):
-		errs = append(errs, err)
-	}
-
-	entries, err := os.ReadDir(paths.tablespaces)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		errs = append(errs, err)
-	}
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		volumes = append(volumes, diskVolume{
-			name: "tbs-" + entry.Name(),
-			path: filepath.Join(paths.tablespaces, entry.Name()),
-		})
-	}
-
-	return volumes, errors.Join(errs...)
-}
-
 // updateDiskMetrics updates the disk metrics. It runs apart from the instance
 // metrics, which are skipped while the instance is fenced or PostgreSQL is
 // down: a full volume is one of the causes.
@@ -166,35 +110,20 @@ func (e *Exporter) updateDiskMetrics() {
 }
 
 // collectDiskMetrics reads the filesystem of each volume of the instance.
-// It only reads the mount points, so it works while PostgreSQL is down.
 // A volume that cannot be read is left out, and the others are reported.
 func collectDiskMetrics(e *Exporter) error {
 	e.Metrics.Disk.reset()
 
-	volumes, err := listDiskVolumes(e.diskPaths)
-	errs := []error{err}
-	for _, volume := range volumes {
-		var stat syscall.Statfs_t
-		if err := e.statfs(volume.path, &stat); err != nil {
-			errs = append(errs, fmt.Errorf("volume %s: %w", volume.name, err))
-			continue
-		}
-
-		blockSize := float64(stat.Bsize)
-		e.Metrics.Disk.TotalBytes.WithLabelValues(volume.name).Set(float64(stat.Blocks) * blockSize)
-		e.Metrics.Disk.AvailableBytes.WithLabelValues(volume.name).Set(float64(stat.Bavail) * blockSize)
-		used := 0.0
-		if stat.Blocks > stat.Bfree {
-			used = float64(stat.Blocks-stat.Bfree) * blockSize
-		}
-		e.Metrics.Disk.UsedBytes.WithLabelValues(volume.name).Set(used)
-
-		// statfs sets the fields a filesystem does not support to 0
-		if stat.Files > 0 {
-			e.Metrics.Disk.Inodes.WithLabelValues(volume.name).Set(float64(stat.Files))
-			e.Metrics.Disk.InodesFree.WithLabelValues(volume.name).Set(float64(stat.Ffree))
+	usages, err := volumeusage.Get(e.diskPaths, e.statfs)
+	for _, usage := range usages {
+		e.Metrics.Disk.TotalBytes.WithLabelValues(usage.Volume).Set(float64(usage.TotalBytes))
+		e.Metrics.Disk.AvailableBytes.WithLabelValues(usage.Volume).Set(float64(usage.AvailableBytes))
+		e.Metrics.Disk.UsedBytes.WithLabelValues(usage.Volume).Set(float64(usage.UsedBytes))
+		if usage.Inodes > 0 {
+			e.Metrics.Disk.Inodes.WithLabelValues(usage.Volume).Set(float64(usage.Inodes))
+			e.Metrics.Disk.InodesFree.WithLabelValues(usage.Volume).Set(float64(usage.InodesFree))
 		}
 	}
 
-	return errors.Join(errs...)
+	return err
 }
