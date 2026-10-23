@@ -25,6 +25,7 @@ import (
 
 	"github.com/cloudnative-pg/machinery/pkg/log"
 	corev1 "k8s.io/api/core/v1"
+	apierrs "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -158,6 +159,9 @@ func reconcilePVCQuantity(
 			"pvc", pvc,
 			"requests", pvc.Spec.Resources.Requests,
 			"oldRequests", oldPVC.Spec.Resources.Requests)
+		if apierrs.IsForbidden(err) {
+			return newVolumeExpansionRefusal(pvc, *parsedSize, err)
+		}
 		return fmt.Errorf("error while changing PVC storage requirement: %w", err)
 	}
 
