@@ -280,6 +280,13 @@ kubectl get cluster cluster-example \
 kubectl get events --field-selector involvedObject.name=cluster-example,type=Warning
 ```
 
+A refused expansion does not stop the management of the `Cluster`: every PVC
+is attempted, and the reconciliation goes on with the instances (scaling,
+rolling updates, re-creation of a missing instance). The refused PVCs keep
+their size, while the PVCs created from then on get the requested one. The
+operator retries the expansion every minute, so a `StorageClass` or a quota
+fixed in the meantime is picked up without any change to the `Cluster`.
+
 The size of the `Cluster` storage cannot be lowered back below the size
 already requested, so the ways out are:
 
