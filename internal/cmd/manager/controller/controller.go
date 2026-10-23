@@ -112,6 +112,8 @@ func RunController(
 		"version", versions.Version,
 		"build", versions.Info)
 
+	logOperatorNamespace(conf.DiscoverOperatorNamespace(configuration.ServiceAccountNamespaceFile), conf)
+
 	managerOptions := ctrl.Options{
 		Scheme:           scheme,
 		Metrics:          buildMetricsOpts(metricsAddr, conf),
@@ -159,9 +161,8 @@ func RunController(
 	// The restriction is only applied when the operator namespace is known: an
 	// empty namespace key is interpreted by controller-runtime as "all
 	// namespaces", which would silently widen the cache instead of narrowing
-	// it. When the namespace is unknown (e.g. local development without
-	// OPERATOR_NAMESPACE set) we simply fall back to the default (unrestricted)
-	// EndpointSlice caching.
+	// it. When the namespace is unknown (e.g. local development outside a
+	// Pod, without OPERATOR_NAMESPACE) the EndpointSlices are not watched.
 	if conf.OperatorNamespace != "" {
 		cacheFilters[&discoveryv1.EndpointSlice{}] = cache.ByObject{
 			Namespaces: map[string]cache.Config{
@@ -169,7 +170,7 @@ func RunController(
 			},
 		}
 	} else {
-		setupLog.Info("Plugin EndpointSlice watch disabled: OPERATOR_NAMESPACE not set")
+		setupLog.Info("Plugin EndpointSlice watch disabled: the operator namespace is unknown")
 	}
 
 	managerOptions.Cache = cache.Options{ByObject: cacheFilters}
@@ -473,12 +474,31 @@ func loadConfiguration(
 		}
 	}
 
-	// Finally, read the config if it was provided
+	// Finally, read the config if it was provided. Reading it sets every
+	// field again, from the environment, the data or the defaults: the
+	// namespace found without OPERATOR_NAMESPACE must be kept.
 	if len(configData) > 0 {
+		operatorNamespace := conf.OperatorNamespace
 		conf.ReadConfigMap(configData)
+		if conf.OperatorNamespace == "" {
+			conf.OperatorNamespace = operatorNamespace
+		}
 	}
 
 	return nil
+}
+
+// logOperatorNamespace tells where the operator namespace comes from, and
+// what is not done when it is unknown
+func logOperatorNamespace(source configuration.OperatorNamespaceSource, conf *configuration.Data) {
+	if source == configuration.OperatorNamespaceUnknown {
+		setupLog.Warning("The operator namespace is unknown: OPERATOR_NAMESPACE is not set and " +
+			"no service account namespace is mounted. The operator configuration ConfigMap and Secret " +
+			"are not read, and the operator pull secret is not copied to Clusters and Poolers")
+		return
+	}
+
+	setupLog.Info("Operator namespace", "namespace", conf.OperatorNamespace, "source", string(source))
 }
 
 // readinessProbeHandler is used to implement the readiness probe handler
