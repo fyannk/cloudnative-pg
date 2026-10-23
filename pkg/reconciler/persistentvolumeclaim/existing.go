@@ -53,19 +53,6 @@ func reconcileExistingPVCs(
 
 	contextLogger := log.FromContext(ctx)
 
-	var reconciliationUnits []reconciliationUnit
-
-	if cluster.ShouldResizeInUseVolumes() {
-		reconciliationUnits = append(reconciliationUnits, reconcilePVCQuantity)
-	}
-	if cluster.Spec.StorageConfiguration.PersistentVolumeClaimTemplate != nil {
-		reconciliationUnits = append(reconciliationUnits, reconcileVolumeAttributeClass)
-	}
-
-	if len(reconciliationUnits) == 0 {
-		return nil
-	}
-
 	for idx := range pvcs {
 		pvc := &pvcs[idx]
 
@@ -88,7 +75,7 @@ func reconcileExistingPVCs(
 			return err
 		}
 
-		for _, reconciler := range reconciliationUnits {
+		for _, reconciler := range getReconciliationUnits(&storageConfiguration) {
 			if err := reconciler(ctx, c, &storageConfiguration, pvc); err != nil {
 				return err
 			}
@@ -96,6 +83,22 @@ func reconcileExistingPVCs(
 	}
 
 	return nil
+}
+
+// getReconciliationUnits returns the reconciliation units enabled by the
+// storage configuration of a PVC role: each PVC follows the configuration of
+// its own role, not the one of the PGDATA volume
+func getReconciliationUnits(storageConfiguration *apiv1.StorageConfiguration) []reconciliationUnit {
+	var reconciliationUnits []reconciliationUnit
+
+	if storageConfiguration.ShouldResizeInUseVolumes() {
+		reconciliationUnits = append(reconciliationUnits, reconcilePVCQuantity)
+	}
+	if storageConfiguration.PersistentVolumeClaimTemplate != nil {
+		reconciliationUnits = append(reconciliationUnits, reconcileVolumeAttributeClass)
+	}
+
+	return reconciliationUnits
 }
 
 func reconcileVolumeAttributeClass(

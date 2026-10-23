@@ -327,6 +327,13 @@ $ kubectl delete pvc/cluster-example-3 pod/cluster-example-3
     `.spec.walStorage` section.
 :::
 
+:::note
+    `resizeInUseVolumes` applies to the volumes of its own section only:
+    `.spec.storage` for the PGDATA volumes, `.spec.walStorage` for the WAL
+    volumes, and the `storage` of each tablespace for its volumes. The same
+    holds for the `volumeAttributesClassName` of each `pvcTemplate`.
+:::
+
 For example, if a PVC dedicated to WAL storage is present:
 
 ```
