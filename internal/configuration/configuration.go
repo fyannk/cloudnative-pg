@@ -22,6 +22,7 @@ SPDX-License-Identifier: Apache-2.0
 package configuration
 
 import (
+	"os"
 	"path"
 	"strings"
 	"time"
@@ -196,6 +197,48 @@ type Data struct {
 
 // Current is the configuration used by the operator
 var Current = NewConfiguration()
+
+// ServiceAccountNamespaceFile is where Kubernetes mounts the namespace of a
+// Pod, next to its service account token
+const ServiceAccountNamespaceFile = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
+
+// OperatorNamespaceSource tells where the operator namespace comes from
+type OperatorNamespaceSource string
+
+const (
+	// OperatorNamespaceFromEnvironment means OPERATOR_NAMESPACE gave the
+	// operator namespace
+	OperatorNamespaceFromEnvironment OperatorNamespaceSource = "OPERATOR_NAMESPACE"
+
+	// OperatorNamespaceFromServiceAccount means the namespace of the service
+	// account of the operator Pod gave the operator namespace
+	OperatorNamespaceFromServiceAccount OperatorNamespaceSource = ServiceAccountNamespaceFile
+
+	// OperatorNamespaceUnknown means nothing gave the operator namespace, as
+	// when the operator runs outside a Pod
+	OperatorNamespaceUnknown OperatorNamespaceSource = ""
+)
+
+// DiscoverOperatorNamespace sets the operator namespace from the namespace
+// file of the service account, when OPERATOR_NAMESPACE did not set it, and
+// tells where the namespace comes from
+func (config *Data) DiscoverOperatorNamespace(namespaceFile string) OperatorNamespaceSource {
+	if config.OperatorNamespace != "" {
+		return OperatorNamespaceFromEnvironment
+	}
+
+	content, err := os.ReadFile(namespaceFile) // #nosec G304 -- the path is a constant outside tests
+	if err != nil {
+		return OperatorNamespaceUnknown
+	}
+	namespace := strings.TrimSpace(string(content))
+	if namespace == "" {
+		return OperatorNamespaceUnknown
+	}
+
+	config.OperatorNamespace = namespace
+	return OperatorNamespaceFromServiceAccount
+}
 
 // newDefaultConfig creates a configuration holding the defaults
 func newDefaultConfig() *Data {

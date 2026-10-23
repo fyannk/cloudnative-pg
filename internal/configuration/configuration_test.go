@@ -20,6 +20,8 @@ SPDX-License-Identifier: Apache-2.0
 package configuration
 
 import (
+	"os"
+	"path/filepath"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -194,5 +196,39 @@ var _ = Describe("Webhook configuration names", func() {
 		config := &Data{EnableWebhookNamespaceSuffix: true}
 		Expect(config.GetMutatingWebhookConfigurationName()).To(Equal(DefaultMutatingWebhookConfigurationName))
 		Expect(config.GetValidatingWebhookConfigurationName()).To(Equal(DefaultValidatingWebhookConfigurationName))
+	})
+})
+
+var _ = Describe("Operator namespace discovery", func() {
+	var namespaceFile string
+
+	BeforeEach(func() {
+		namespaceFile = filepath.Join(GinkgoT().TempDir(), "namespace")
+	})
+
+	It("keeps OPERATOR_NAMESPACE when it is set", func() {
+		Expect(os.WriteFile(namespaceFile, []byte("other"), 0o600)).To(Succeed())
+		config := &Data{OperatorNamespace: "cnpg-system"}
+
+		Expect(config.DiscoverOperatorNamespace(namespaceFile)).To(Equal(OperatorNamespaceFromEnvironment))
+		Expect(config.OperatorNamespace).To(Equal("cnpg-system"))
+	})
+
+	It("reads the namespace of the service account otherwise", func() {
+		Expect(os.WriteFile(namespaceFile, []byte("cnpg-system\n"), 0o600)).To(Succeed())
+		config := &Data{}
+
+		Expect(config.DiscoverOperatorNamespace(namespaceFile)).To(Equal(OperatorNamespaceFromServiceAccount))
+		Expect(config.OperatorNamespace).To(Equal("cnpg-system"))
+	})
+
+	It("leaves the namespace unknown outside a Pod or with an empty file", func() {
+		config := &Data{}
+		Expect(config.DiscoverOperatorNamespace(namespaceFile)).To(Equal(OperatorNamespaceUnknown))
+		Expect(config.OperatorNamespace).To(BeEmpty())
+
+		Expect(os.WriteFile(namespaceFile, []byte(" \n"), 0o600)).To(Succeed())
+		Expect(config.DiscoverOperatorNamespace(namespaceFile)).To(Equal(OperatorNamespaceUnknown))
+		Expect(config.OperatorNamespace).To(BeEmpty())
 	})
 })
