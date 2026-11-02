@@ -1,0 +1,38 @@
+flowchart TD
+    S3[("S3 bucket<br/>postgres-data/ base + wals<br/>PG 16 physical backup")]
+    PROD[("Prod cluster<br/>PG 16 running, ~1 TiB")]
+
+    S3 -->|"bootstrap.recovery<br/>same major only"| R16["Restored cluster<br/>PG 16"]
+
+    R16 --> CHOICE{"How to reach<br/>PG 18 ?"}
+    PROD -.->|"or use prod<br/>directly as source"| CHOICE
+
+    CHOICE -->|"1"| A["1 - Logical dump / restore<br/>bootstrap.initdb.import<br/>pg_dump → pg_restore"]
+    CHOICE -->|"2"| B["2 - Logical replication<br/>publication / subscription<br/>blue/green"]
+    CHOICE -->|"3"| C["3 - In-place pg_upgrade --link<br/>imageName 16 → 18<br/>★ RECOMMENDED"]
+
+    A --> A1["⏱ many hours<br/>💾 +~1 TiB dump space<br/>🔒 offline: writes stopped"]
+    B --> B1["⏱ hours of initial sync<br/>💾 second 1 TiB+ cluster<br/>🟢 near-zero downtime"]
+    C --> C1["⏱ minutes + replica re-clone<br/>💾 ~no extra space<br/>🔒 offline: short stop"]
+
+    A1 --> PG18[("New cluster<br/>PG 18")]
+    B1 --> PG18
+    C1 --> PG18
+
+    PG18 --> BK["📦 New base backup<br/>to a NEW serverName / path"]
+
+    classDef store fill:#1e3a5f,stroke:#4a90d9,color:#fff,stroke-width:2px
+    classDef pg16 fill:#3d5a80,stroke:#98c1d9,color:#fff
+    classDef decision fill:#f4a261,stroke:#e76f51,color:#000,stroke-width:2px
+    classDef slow fill:#e76f51,stroke:#9d0208,color:#fff
+    classDef mid fill:#e9c46a,stroke:#b08900,color:#000
+    classDef best fill:#2a9d8f,stroke:#1b5e57,color:#fff,stroke-width:3px
+    classDef final fill:#264653,stroke:#2a9d8f,color:#fff,stroke-width:2px
+
+    class S3,PROD store
+    class R16 pg16
+    class CHOICE decision
+    class A,A1 slow
+    class B,B1 mid
+    class C,C1 best
+    class PG18,BK final
