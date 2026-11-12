@@ -256,6 +256,7 @@ var _ = Describe("object metadata test", func() {
 			labels := map[string]string{
 				utils.InstanceNameLabelName: instanceName,
 				utils.PodRoleLabelName:      string(utils.PodRoleInstance),
+				utils.ReconcileLabelName:    "true",
 			}
 			instance := &corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{
@@ -589,6 +590,7 @@ var _ = Describe("metadata update functions", func() {
 			Expect(instance.Labels).To(Equal(map[string]string{
 				utils.PodRoleLabelName:      string(utils.PodRoleInstance),
 				utils.InstanceNameLabelName: "pod1",
+				utils.ReconcileLabelName:    "true",
 			}))
 		})
 

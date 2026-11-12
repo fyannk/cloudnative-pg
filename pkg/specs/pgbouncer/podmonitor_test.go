@@ -91,6 +91,7 @@ var _ = Describe("PoolerPodMonitorManager", func() {
 			Expect(podMonitor.Name).To(Equal(pooler.Name))
 			Expect(podMonitor.Labels).To(Equal(map[string]string{
 				utils.PgbouncerNameLabel:              pooler.Name,
+				utils.ReconcileLabelName:              "true",
 				utils.PodRoleLabelName:                string(utils.PodRolePooler),
 				utils.KubernetesAppLabelName:          utils.AppName,
 				utils.KubernetesAppInstanceLabelName:  pooler.Name,

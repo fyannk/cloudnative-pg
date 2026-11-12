@@ -473,6 +473,7 @@ RestoreJobHookCapabilities
 RetentionPolicy
 RevokeUsageSpecType
 RoleBinding
+RoleBindings
 RoleConfiguration
 RoleStatus
 RoleStatusNotManaged

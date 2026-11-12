@@ -93,12 +93,12 @@ type BackupReconciler struct {
 // NewBackupReconciler properly initializes the BackupReconciler
 func NewBackupReconciler(
 	mgr manager.Manager,
+	cli client.Client,
 	discoveryClient discovery.DiscoveryInterface,
 	plugins repository.Interface,
 	operatorClientCert *tls.Certificate,
 	admission *guard.Admission[*apiv1.Backup],
 ) *BackupReconciler {
-	cli := mgr.GetClient()
 	recorder := mgr.GetEventRecorderFor("cloudnative-pg-backup") //nolint:staticcheck
 	return &BackupReconciler{
 		Client:               cli,

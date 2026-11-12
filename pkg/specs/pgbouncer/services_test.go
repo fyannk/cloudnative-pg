@@ -79,6 +79,7 @@ var _ = Describe("Pooler Service", func() {
 			Expect(service.Namespace).To(Equal(pooler.Namespace))
 			Expect(service.Labels).To(BeEquivalentTo(map[string]string{
 				utils.ClusterLabelName:                cluster.Name,
+				utils.ReconcileLabelName:              "true",
 				utils.PgbouncerNameLabel:              pooler.Name,
 				utils.PodRoleLabelName:                string(utils.PodRolePooler),
 				utils.KubernetesAppLabelName:          utils.AppName,

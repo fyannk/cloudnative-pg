@@ -66,11 +66,12 @@ type PluginReconciler struct {
 // NewPluginReconciler creates a new PluginReconciler initializing it
 func NewPluginReconciler(
 	mgr manager.Manager,
+	c client.Client,
 	operatorNamespace string,
 	plugins repository.Interface,
 ) *PluginReconciler {
 	return &PluginReconciler{
-		Client:            mgr.GetClient(),
+		Client:            c,
 		Scheme:            mgr.GetScheme(),
 		Recorder:          mgr.GetEventRecorderFor("cloudnative-pg-plugin"), //nolint:staticcheck
 		Plugins:           plugins,

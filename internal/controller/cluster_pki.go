@@ -180,6 +180,10 @@ func (r *ClusterReconciler) ensureCASecret(ctx context.Context, cluster *apiv1.C
 	var secret corev1.Secret
 	err := r.Get(ctx, client.ObjectKey{Namespace: cluster.GetNamespace(), Name: secretName}, &secret)
 	if err == nil {
+		if err := ensureReconcileLabel(ctx, r.Client, &secret); err != nil {
+			return nil, err
+		}
+
 		// Verify the validity of this CA and renew it if needed
 		err = r.renewCASecret(ctx, &secret)
 		if err != nil {
@@ -198,6 +202,7 @@ func (r *ClusterReconciler) ensureCASecret(ctx context.Context, cluster *apiv1.C
 
 	derivedCaSecret := caPair.GenerateCASecret(cluster.Namespace, secretName)
 	utils.SetAsOwnedBy(&derivedCaSecret.ObjectMeta, cluster.ObjectMeta, cluster.TypeMeta)
+	utils.LabelReconciled(&derivedCaSecret.ObjectMeta)
 	err = r.Create(ctx, derivedCaSecret)
 
 	return derivedCaSecret, err
@@ -337,6 +342,9 @@ func (r *ClusterReconciler) ensureLeafCertificate(
 	err := r.Get(ctx, secretName, &secret)
 	switch {
 	case err == nil:
+		if err := ensureReconcileLabel(ctx, r.Client, &secret); err != nil {
+			return err
+		}
 		return r.renewAndUpdateCertificate(ctx, caSecret, &secret, altDNSNames)
 	case apierrors.IsNotFound(err):
 		serverSecret, err := generateCertificateFromCA(caSecret, commonName, usage, altDNSNames, secretName)
@@ -345,6 +353,7 @@ func (r *ClusterReconciler) ensureLeafCertificate(
 		}
 
 		utils.SetAsOwnedBy(&serverSecret.ObjectMeta, cluster.ObjectMeta, cluster.TypeMeta)
+		utils.LabelReconciled(&serverSecret.ObjectMeta)
 		for k, v := range additionalLabels {
 			if serverSecret.Labels == nil {
 				serverSecret.Labels = make(map[string]string)

@@ -453,6 +453,14 @@ operator resolves into up-to-date IP addresses.
    instance manager expands each reference into individual CIDR entries
    (`/32` for IPv4, `/128` for IPv6) within `pg_hba.conf`.
 
+:::warning
+When the operator runs with a filtered cache (`FILTERED_CACHE_MODE` set to
+`strict` or `reload`, see [Operator cache](operator_conf.md#operator-cache)),
+only the Pods carrying the `cnpg.io/reconcile=true` label are visible to it:
+add that label to the pod template of the applications you select, or their
+IPs resolve to nothing.
+:::
+
 #### Configuration Example
 
 The following snippet defines selectors for application and monitoring pods,
