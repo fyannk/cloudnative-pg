@@ -154,7 +154,18 @@ func (r *ClusterReconciler) ensureFailoverQuorumObjectExists(ctx context.Context
 	}
 	cluster.SetInheritedDataAndOwnership(&failoverQuorum.ObjectMeta)
 
-	err := r.Create(ctx, &failoverQuorum)
+	// Under a ResourceQuota, creating an object that already exists consumes
+	// quota, or is rejected when the quota is full: only create it when missing
+	var existing apiv1.FailoverQuorum
+	err := r.Get(ctx, client.ObjectKeyFromObject(&failoverQuorum), &existing)
+	if err == nil {
+		return nil
+	}
+	if !apierrs.IsNotFound(err) {
+		return err
+	}
+
+	err = r.Create(ctx, &failoverQuorum)
 	if err != nil && !apierrs.IsAlreadyExists(err) {
 		log.FromContext(ctx).Error(err, "Unable to create the FailoverQuorum", "object", failoverQuorum)
 		return err
