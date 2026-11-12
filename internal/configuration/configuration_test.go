@@ -285,3 +285,56 @@ var _ = Describe("Proxy propagation setting", func() {
 		Expect(config.PropagateProxyEnv).To(BeTrue())
 	})
 })
+
+var _ = Describe("Operator Deployment identity", func() {
+	It("derives operator object names from the Deployment", func() {
+		config := &Data{OperatorDeploymentName: "cnpg-toto"}
+		Expect(config.GetCaSecretName()).To(Equal("cnpg-toto-ca-secret"))
+		Expect(config.GetWebhookSecretName()).To(Equal("cnpg-toto-webhook-cert"))
+		Expect(config.GetWebhookServiceName()).To(Equal("cnpg-toto-webhook-service"))
+		Expect(config.GetLeaderElectionID()).To(Equal("cnpg-toto.cnpg.io"))
+		Expect(config.GetMutatingWebhookConfigurationName()).To(Equal("cnpg-toto-mutating-webhook-configuration"))
+		Expect(config.GetValidatingWebhookConfigurationName()).To(Equal("cnpg-toto-validating-webhook-configuration"))
+	})
+
+	It("keeps explicit names and applies suffixes only to derived names", func() {
+		config := &Data{
+			OperatorDeploymentName:           "cnpg-toto",
+			EnableWebhookNamespaceSuffix:     true,
+			OperatorNamespace:                "operators",
+			MutatingWebhookConfigurationName: "custom-mutating",
+		}
+		Expect(config.GetMutatingWebhookConfigurationName()).To(Equal("custom-mutating"))
+		Expect(config.GetValidatingWebhookConfigurationName()).
+			To(Equal("cnpg-toto-validating-webhook-configuration-operators"))
+	})
+
+	DescribeTable("returns webhook Service SAN candidates in precedence order",
+		func(config Data, expected []string) {
+			Expect(config.GetWebhookServiceNames()).To(Equal(expected))
+		},
+		Entry("historical name", Data{}, []string{"cnpg-webhook-service"}),
+		Entry("derived then historical", Data{OperatorDeploymentName: "cnpg-toto"},
+			[]string{"cnpg-toto-webhook-service", "cnpg-webhook-service"}),
+		Entry("explicit then derived then historical", Data{
+			OperatorDeploymentName: "cnpg-toto", WebhookServiceName: "custom-webhook",
+		}, []string{"custom-webhook", "cnpg-toto-webhook-service", "cnpg-webhook-service"}),
+	)
+
+	It("reads identity and overrides from operator configuration", func() {
+		config := newDefaultConfig()
+		config.ReadConfigMap(map[string]string{
+			"OPERATOR_DEPLOYMENT_NAME":              "cnpg-toto",
+			"CA_SECRET_NAME":                        "custom-ca",
+			"WEBHOOK_SERVICE_NAME":                  "custom-webhook",
+			"LEADER_ELECTION_ID":                    "custom-lease",
+			"MUTATING_WEBHOOK_CONFIGURATION_NAME":   "custom-mutating",
+			"VALIDATING_WEBHOOK_CONFIGURATION_NAME": "custom-validating",
+		})
+		Expect(config.GetCaSecretName()).To(Equal("custom-ca"))
+		Expect(config.GetWebhookServiceName()).To(Equal("custom-webhook"))
+		Expect(config.GetLeaderElectionID()).To(Equal("custom-lease"))
+		Expect(config.GetMutatingWebhookConfigurationName()).To(Equal("custom-mutating"))
+		Expect(config.GetValidatingWebhookConfigurationName()).To(Equal("custom-validating"))
+	})
+})

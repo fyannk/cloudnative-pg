@@ -25,8 +25,10 @@ import (
 
 	"github.com/cloudnative-pg/machinery/pkg/log"
 	appsv1 "k8s.io/api/apps/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/utils"
@@ -39,31 +41,54 @@ import (
 func SetAsOwnedByOperatorDeployment(ctx context.Context,
 	kubeClient client.Client,
 	controlled *metav1.ObjectMeta,
+	operatorDeploymentName string,
 	operatorLabelSelector string,
 ) error {
-	deployment, err := GetOperatorDeployment(ctx, kubeClient, controlled.Namespace, operatorLabelSelector)
+	deployment, err := GetOperatorDeployment(ctx, kubeClient, controlled.Namespace,
+		operatorDeploymentName, operatorLabelSelector)
 	if err != nil {
 		return err
 	}
 
+	setAsOwnedByDeployment(controlled, deployment)
+	return nil
+}
+
+// setAsOwnedByDeployment sets the controlled object as owned by the given deployment
+func setAsOwnedByDeployment(controlled *metav1.ObjectMeta, deployment *appsv1.Deployment) {
 	// The deployment typeMeta is empty (kubernetes bug), so we need to explicitly populate it.
 	typeMeta := metav1.TypeMeta{
 		Kind:       "Deployment",
 		APIVersion: "apps/v1",
 	}
 	utils.SetAsOwnedBy(controlled, deployment.ObjectMeta, typeMeta)
-
-	return nil
 }
 
-// GetOperatorDeployment find the operator deployment using labels
-// and then return the deployment object, in case we can't find a deployment
-// or we find more than one, we just return an error.
+// GetOperatorDeployment returns the operator deployment. When its name is
+// known, the deployment is fetched by name and a missing one is an error
+// explaining where the name comes from. Otherwise the deployment is searched
+// by label, then by the OLM label; no match or more than one match is an
+// error.
 func GetOperatorDeployment(
 	ctx context.Context,
 	kubeClient client.Client,
-	namespace, operatorLabelSelector string,
+	namespace, operatorDeploymentName, operatorLabelSelector string,
 ) (*appsv1.Deployment, error) {
+	if operatorDeploymentName != "" {
+		deployment := &appsv1.Deployment{}
+		err := kubeClient.Get(ctx, types.NamespacedName{Namespace: namespace, Name: operatorDeploymentName}, deployment)
+		if apierrors.IsNotFound(err) {
+			return nil, fmt.Errorf(
+				"operator deployment %q not found in namespace %q: "+
+					"OPERATOR_DEPLOYMENT_NAME must be the name of the Deployment running the operator: %w",
+				operatorDeploymentName, namespace, err)
+		}
+		if err != nil {
+			return nil, err
+		}
+		return deployment, nil
+	}
+
 	labelMap, err := labels.ConvertSelectorToLabelsMap(operatorLabelSelector)
 	if err != nil {
 		return nil, err

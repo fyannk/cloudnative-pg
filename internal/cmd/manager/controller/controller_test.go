@@ -72,3 +72,18 @@ var _ = Describe("Webhook server options", func() {
 		Expect(err).To(MatchError(ContainSubstring("no webhook certificate pair")))
 	})
 })
+
+var _ = Describe("Operator identity", func() {
+	It("accepts an absent Deployment name", func() {
+		Expect(validateOperatorIdentity(&configuration.Data{})).To(Succeed())
+	})
+
+	It("accepts a Deployment name that can name Kubernetes objects", func() {
+		Expect(validateOperatorIdentity(&configuration.Data{OperatorDeploymentName: "cnpg-toto"})).To(Succeed())
+	})
+
+	It("refuses a Deployment name that cannot name Kubernetes objects", func() {
+		err := validateOperatorIdentity(&configuration.Data{OperatorDeploymentName: "CNPG_toto"})
+		Expect(err).To(MatchError(ContainSubstring("OPERATOR_DEPLOYMENT_NAME")))
+	})
+})
