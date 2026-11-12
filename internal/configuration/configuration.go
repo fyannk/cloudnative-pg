@@ -260,6 +260,13 @@ type Data struct {
 	// API, to detect drained nodes and to resolve node labels in the
 	// instance topology, with the same rules as APIPodMonitorEnabled
 	APINodeEnabled bool `json:"apiNodeEnabled" env:"API_NODE_ENABLED"`
+
+	// PropagateProxyEnv is true when the proxy settings of the operator
+	// (HTTP_PROXY, HTTPS_PROXY and NO_PROXY, read from its environment) are
+	// set on the workloads it creates, in both the upper and the lower case
+	// spelling, unless the resource defines any of them itself. Enabled by
+	// default, as the OLM bundle declares the operator proxy-aware.
+	PropagateProxyEnv bool `json:"propagateProxyEnv" env:"PROPAGATE_PROXY_ENV"`
 }
 
 // Current is the configuration used by the operator
@@ -286,6 +293,7 @@ func newDefaultConfig() *Data {
 		APIClusterImageCatalogEnabled: true,
 		APINodeEnabled:                true,
 		ScheduledBackupCronFormat:     string(utils.CronFormatSeconds),
+		PropagateProxyEnv:             true,
 	}
 }
 
