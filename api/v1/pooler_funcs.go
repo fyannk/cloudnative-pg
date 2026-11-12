@@ -24,7 +24,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/cloudnative-pg/cloudnative-pg/internal/configuration"
+	"github.com/cloudnative-pg/cloudnative-pg/pkg/management/url"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/metadatarules"
+	"github.com/cloudnative-pg/cloudnative-pg/pkg/monitoringdiscovery"
 )
 
 // IsPaused returns whether all database should be paused or not.
@@ -136,6 +138,19 @@ func (in *Pooler) IsMetricsTLSEnabled() bool {
 	}
 
 	return false
+}
+
+// GetMonitoringDiscoveryAnnotations gets the annotations telling monitoring
+// agents how to collect the metrics and the logs of the Pooler Pods, for the
+// families of MONITORING_DISCOVERY_ANNOTATIONS. Nil when there is none
+func (in *Pooler) GetMonitoringDiscoveryAnnotations() map[string]string {
+	return monitoringdiscovery.Annotations(configuration.Current.MonitoringDiscoveryFamilies(),
+		monitoringdiscovery.Endpoint{
+			MetricsPort:   url.PgBouncerMetricsPort,
+			MetricsTLS:    in.IsMetricsTLSEnabled(),
+			JobName:       "cloudnative-pg-pooler",
+			LogsContainer: "pgbouncer",
+		})
 }
 
 // SetAdmissionError sets the admission error status on the Pooler resource
