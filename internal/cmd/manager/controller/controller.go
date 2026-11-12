@@ -197,8 +197,16 @@ func RunController(
 	}
 
 	if conf.EnableWebhookNamespaceSuffix && conf.OperatorNamespace == "" {
-		return fmt.Errorf("ENABLE_WEBHOOK_NAMESPACE_SUFFIX requires OPERATOR_NAMESPACE to be set " +
+		err := fmt.Errorf("ENABLE_WEBHOOK_NAMESPACE_SUFFIX requires OPERATOR_NAMESPACE to be set " +
 			"as a pod environment variable (typically via the Downward API fieldRef.fieldPath = metadata.namespace)")
+		setupLog.Error(err, "invalid webhook configuration")
+		return err
+	}
+	if conf.EnableWebhookNamespaceSuffix &&
+		(conf.MutatingWebhookConfigurationName != "" || conf.ValidatingWebhookConfigurationName != "") {
+		setupLog.Info("Explicit webhook configuration names are used as given, ENABLE_WEBHOOK_NAMESPACE_SUFFIX does not apply to them",
+			"mutatingWebhookConfigurationName", conf.GetMutatingWebhookConfigurationName(),
+			"validatingWebhookConfigurationName", conf.GetValidatingWebhookConfigurationName())
 	}
 
 	if format := conf.GetScheduledBackupCronFormat(); !format.IsValid() {
@@ -239,6 +247,11 @@ func RunController(
 		"availableArchitectures", utils.GetAvailableArchitectures(),
 	)
 
+	webhookOptions, err := buildWebhookOptions(port, conf)
+	if err != nil {
+		return err
+	}
+
 	managerOptions := ctrl.Options{
 		Scheme:           scheme,
 		Metrics:          buildMetricsOpts(metricsAddr, conf),
@@ -246,10 +259,7 @@ func RunController(
 		LeaseDuration:    &leaderConfig.leaseDuration,
 		RenewDeadline:    &leaderConfig.renewDeadline,
 		LeaderElectionID: LeaderElectionID,
-		WebhookServer: webhook.NewServer(webhook.Options{
-			Port:    port,
-			CertDir: defaultWebhookCertDir,
-		}),
+		WebhookServer:    webhook.NewServer(webhookOptions),
 		PprofBindAddress: getPprofServerAddress(pprofDebug),
 		// LeaderElectionReleaseOnCancel defines if the leader should step down voluntarily
 		// when the Manager ends. This requires the binary to immediately end when the
@@ -293,12 +303,6 @@ func RunController(
 		setupLog.Info("Listening for changes on all namespaces")
 	}
 
-	if conf.WebhookCertDir != "" {
-		// If OLM will generate certificates for us, let's just
-		// use those
-		managerOptions.WebhookServer.(*webhook.DefaultServer).Options.CertDir = conf.WebhookCertDir
-	}
-
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), managerOptions)
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")
@@ -315,15 +319,6 @@ func RunController(
 	}
 
 	webhookServer := mgr.GetWebhookServer().(*webhook.DefaultServer)
-	if conf.WebhookCertDir != "" {
-		// Use certificate names compatible with OLM
-		webhookServer.Options.CertName = "apiserver.crt"
-		webhookServer.Options.KeyName = "apiserver.key"
-	} else {
-		webhookServer.Options.CertName = "tls.crt"
-		webhookServer.Options.KeyName = "tls.key"
-	}
-
 	if err := ensurePKI(ctx, kubeClient, webhookServer.Options.CertDir, conf); err != nil {
 		return err
 	}
@@ -535,6 +530,31 @@ func buildMetricsOpts(metricsAddr string, conf *configuration.Data) server.Optio
 	setupLog.Info("Metrics server enabled with TLS", "certDir", conf.MetricsCertDir)
 
 	return metricsOptions
+}
+
+func buildWebhookOptions(port int, conf *configuration.Data) (webhook.Options, error) {
+	options := webhook.Options{
+		Port:     port,
+		CertDir:  defaultWebhookCertDir,
+		CertName: certs.TLSCertKey,
+		KeyName:  certs.TLSPrivateKeyKey,
+	}
+	if conf.WebhookCertDir == "" {
+		return options, nil
+	}
+
+	files, err := certs.FindServingCertificate(conf.WebhookCertDir)
+	if err != nil {
+		setupLog.Error(err, "unable to use the webhook certificate directory", "certDir", conf.WebhookCertDir)
+		return options, err
+	}
+	setupLog.Info("Serving the webhooks with an externally provided certificate",
+		"certDir", conf.WebhookCertDir, "certName", files.CertName, "keyName", files.KeyName)
+
+	options.CertDir = conf.WebhookCertDir
+	options.CertName = files.CertName
+	options.KeyName = files.KeyName
+	return options, nil
 }
 
 // registerCacheMetrics registers the metrics of the operator cache. They count

@@ -55,7 +55,7 @@ Name | Description
 `DEFAULT_METADATA` | YAML list of rules putting labels and annotations on the objects of every `Cluster`, `Pooler`, `ScheduledBackup`, and `Backup`, or of the kinds of resources a rule names, when the resource does not set the key. See [Default and mandatory labels and annotations](labels_annotations.md#default-and-mandatory-labels-and-annotations).
 `DRAIN_TAINTS` | Specifies the taint keys that should be interpreted as indicators of node drain. By default, it includes the taints commonly applied by [kubectl](https://kubernetes.io/docs/concepts/scheduling-eviction/taint-and-toleration/), [Cluster Autoscaler](https://github.com/kubernetes/autoscaler), and [Karpenter](https://github.com/aws/karpenter-provider-aws): `node.kubernetes.io/unschedulable`, `ToBeDeletedByClusterAutoscaler`, `karpenter.sh/disrupted`, `karpenter.sh/disruption`.
 `ENABLE_INSTANCE_MANAGER_INPLACE_UPDATES` | When set to `true`, enables in-place updates of the instance manager after an update of the operator, avoiding rolling updates of the cluster (default `false`)
-`ENABLE_WEBHOOK_NAMESPACE_SUFFIX` | When set to `true`, the operator looks up its `MutatingWebhookConfiguration` and `ValidatingWebhookConfiguration` under names suffixed with `-<OPERATOR_NAMESPACE>` (e.g. `cnpg-mutating-webhook-configuration-cnpg-team-a` and `cnpg-validating-webhook-configuration-cnpg-team-a`). Use this when running multiple namespaced operator instances on the same cluster to avoid name collisions. The operator does not create the suffixed configurations; you must create them before starting the operator with this flag enabled. If `OPERATOR_NAMESPACE` is not set when this flag is enabled, the operator will refuse to start. Default is `false`.
+`ENABLE_WEBHOOK_NAMESPACE_SUFFIX` | When set to `true`, the operator looks up its `MutatingWebhookConfiguration` and `ValidatingWebhookConfiguration` under names suffixed with `-<OPERATOR_NAMESPACE>` (e.g. `cnpg-mutating-webhook-configuration-cnpg-team-a` and `cnpg-validating-webhook-configuration-cnpg-team-a`). Use this when running multiple namespaced operator instances on the same cluster to avoid name collisions. The operator does not create the suffixed configurations; you must create them before starting the operator with this flag enabled. If `OPERATOR_NAMESPACE` is not set when this flag is enabled, the operator will refuse to start. An explicit `MUTATING_WEBHOOK_CONFIGURATION_NAME` or `VALIDATING_WEBHOOK_CONFIGURATION_NAME` is used as given, without the suffix. Default is `false`.
 `EXPIRING_CHECK_THRESHOLD` | Determines the threshold, in days, for identifying a certificate as expiring. Default is 7.
 `INCLUDE_PLUGINS` | A comma-separated list of plugins to be always included in the Cluster's reconciliation.
 `INHERITED_ANNOTATIONS` | List of annotation names that, when defined in a `Cluster` metadata, will be inherited by all the generated resources, including pods
@@ -66,6 +66,7 @@ Name | Description
 `MANAGE_WEBHOOK_CONFIGURATIONS` | When set to `true` (default), the operator injects its CA bundle into the `MutatingWebhookConfiguration` and `ValidatingWebhookConfiguration`. Set to `false` when the CA bundle is injected externally, for example by cert-manager's CA injector or by GitOps. This is independent of the webhook serving certificate, which the operator always manages when it owns its PKI.
 `METRICS_CERT_DIR` | The directory where TLS certificates for the operator metrics server are stored. When set, enables TLS for the metrics endpoint on port 8080. The directory must contain `tls.crt` and `tls.key` files following standard Kubernetes TLS secret conventions. If not set, the metrics server operates without TLS (default behavior).
 `MONITORING_DISCOVERY_ANNOTATIONS` | Comma-separated list of the families of annotations telling monitoring agents how to collect the metrics and the logs of the instance and pooler pods: `prometheus`, `opentelemetry`. Empty by default. See [Collecting metrics and logs without the Prometheus Operator](monitoring.md#collecting-metrics-and-logs-without-the-prometheus-operator).
+`MUTATING_WEBHOOK_CONFIGURATION_NAME` | The name of the `MutatingWebhookConfiguration` the operator injects its CA bundle into, used as given. When unset, `cnpg-mutating-webhook-configuration`, with the namespace suffix when `ENABLE_WEBHOOK_NAMESPACE_SUFFIX` is set. See [Webhook certificates and configurations](#webhook-certificates-and-configurations).
 `MONITORING_QUERIES_CONFIGMAP` | The name of a ConfigMap in the operator's namespace with a set of default queries (to be specified under the key `queries`) to be applied to all created Clusters
 `MONITORING_QUERIES_SECRET` | The name of a Secret in the operator's namespace with a set of default queries (to be specified under the key `queries`) to be applied to all created Clusters
 `OPERATOR_IMAGE_NAME` | The name of the operator image used to bootstrap Pods. Defaults to the image specified during installation.
@@ -76,7 +77,9 @@ Name | Description
 `PULL_SECRET_NAME` | Name of an additional pull secret to be defined in the operator's namespace and to be used to download images
 `SCHEDULED_BACKUP_CRON_FORMAT` | How the `schedule` of a `ScheduledBackup` is read when it has five fields, the standard cron format, instead of the six fields with seconds described in [Backup](backup.md#cron-schedule). `seconds` (default): the five fields are read with the seconds field first, with an admission warning and a `ScheduleFieldCount` Warning event on the object. `seconds-strict`: a five-field schedule is rejected when the `ScheduledBackup` is created, with its six-field equivalent in the message; existing objects can still be updated. `standard`: the five fields are read as standard cron, with the minute field first. Six-field schedules and descriptors such as `@daily` are read the same way whatever the value.
 `STANDBY_TCP_USER_TIMEOUT` | Defines the [`TCP_USER_TIMEOUT` socket option](https://www.postgresql.org/docs/current/runtime-config-connection.html#GUC-TCP-USER-TIMEOUT) in milliseconds for replication connections from standby instances to the primary. Default is 5000 (5 seconds). Set to `0` to use the system's default.
+`VALIDATING_WEBHOOK_CONFIGURATION_NAME` | The name of the `ValidatingWebhookConfiguration` the operator injects its CA bundle into, used as given. When unset, `cnpg-validating-webhook-configuration`, with the namespace suffix when `ENABLE_WEBHOOK_NAMESPACE_SUFFIX` is set. See [Webhook certificates and configurations](#webhook-certificates-and-configurations).
 `WATCH_NAMESPACE` | Specifies the namespace(s) where the operator should watch for resources. Multiple namespaces can be specified separated by commas. If not set, the operator watches all namespaces (cluster-wide mode).
+`WEBHOOK_CERT_DIR` | The directory holding an externally provided certificate for the webhook server, as `apiserver.crt`/`apiserver.key` (what OLM writes) or `tls.crt`/`tls.key` (a Kubernetes TLS Secret, for example from cert-manager). When set, the operator serves the webhooks with that certificate, manages no certificate of its own and leaves the webhook configurations untouched; it refuses to start when the directory holds no complete, readable pair. When unset, the operator manages its own PKI. See [Webhook certificates and configurations](#webhook-certificates-and-configurations).
 
 :::warning
     CloudNativePG does NOT currently support running multiple operators on
@@ -211,6 +214,81 @@ Keep in mind:
   `spec.env` override with a Secret for those clusters.
 - At startup, the operator logs the settings it propagates, without the
   credentials of the URLs, and warns when a value is not a valid URL.
+
+## Webhook certificates and configurations
+
+The admission webhooks of the operator are served over TLS, through the
+`cnpg-webhook-service` Service of the operator namespace, and reached by the API
+server through a `MutatingWebhookConfiguration` and a
+`ValidatingWebhookConfiguration`, two cluster-scoped objects whose `caBundle`
+must trust the serving certificate. The operator supports three ways to run
+them.
+
+**The operator manages its PKI and the CA bundle (default).** The operator
+generates a CA, stored in the `cnpg-ca-secret` Secret, and a serving
+certificate, stored in the `cnpg-webhook-cert` Secret, both in its namespace,
+renews them, and injects the CA bundle into the two webhook configurations. It
+needs `get` and `patch` on the webhook configurations, which it looks up under
+`cnpg-mutating-webhook-configuration` and `cnpg-validating-webhook-configuration`,
+suffixed with the operator namespace when `ENABLE_WEBHOOK_NAMESPACE_SUFFIX` is
+set, or under the names given by `MUTATING_WEBHOOK_CONFIGURATION_NAME` and
+`VALIDATING_WEBHOOK_CONFIGURATION_NAME` when the configurations follow another
+naming convention. When a configuration is not found, the operator does not
+start: either create it, point the setting at the name in use, or set
+`MANAGE_WEBHOOK_CONFIGURATIONS=false` when the CA bundle is injected by
+something else.
+
+**The operator manages its PKI, something else injects the CA bundle.** With
+`MANAGE_WEBHOOK_CONFIGURATIONS=false`, the operator still generates and renews
+its certificates but leaves the webhook configurations untouched: the `caBundle`
+is set by the installation, for example by cert-manager's CA injector or by a
+GitOps tool. The operator needs no right on the webhook configurations.
+
+**An external certificate (`WEBHOOK_CERT_DIR`).** The serving certificate is
+issued outside the operator and mounted in its Pod; the operator manages no
+certificate, touches no webhook configuration, and reloads the files when they
+change. The directory may hold `apiserver.crt`/`apiserver.key`, the names OLM
+writes, or `tls.crt`/`tls.key`, the names of a Kubernetes TLS Secret. The
+operator refuses to start, with a message naming the directory and the two
+conventions, when neither pair is complete and readable. This is the mode of
+an installation where the operator has no cluster-wide right and the webhook
+configurations belong to the cluster administration. With cert-manager:
+
+```yaml
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: cnpg-webhook
+  namespace: cnpg-system
+spec:
+  secretName: cnpg-webhook-cert-manager
+  dnsNames:
+  - cnpg-webhook-service.cnpg-system.svc
+  - cnpg-webhook-service.cnpg-system.svc.cluster.local
+  issuerRef:
+    name: <issuer>
+    kind: Issuer
+```
+
+The operator Deployment mounts the Secret and points `WEBHOOK_CERT_DIR` at it:
+
+```yaml
+        env:
+        - name: WEBHOOK_CERT_DIR
+          value: /run/secrets/webhook
+        volumeMounts:
+        - name: webhook-certificate
+          mountPath: /run/secrets/webhook
+          readOnly: true
+      volumes:
+      - name: webhook-certificate
+        secret:
+          secretName: cnpg-webhook-cert-manager
+```
+
+The two webhook configurations carry the CA injector annotation
+`cert-manager.io/inject-ca-from: cnpg-system/cnpg-webhook`, so that their
+`caBundle` follows the certificate.
 
 ## Defining an operator config map
 

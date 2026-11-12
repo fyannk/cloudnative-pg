@@ -27,6 +27,7 @@ import (
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -425,5 +426,41 @@ var _ = Describe("Webhook environment creation", func() {
 			&updatedValidatingWebhook)
 		Expect(err).ToNot(HaveOccurred())
 		Expect(updatedValidatingWebhook.Webhooks[0].ClientConfig.CABundle).To(BeEmpty())
+	})
+})
+
+// Goal: a webhook configuration missing under the name the operator looks up
+// is explained, with the ways out, instead of a bare not-found
+var _ = Describe("Missing webhook configurations", func() {
+	pki := pkiEnvironmentTemplate
+	pki.MutatingWebhookConfigurationName = "platform-cnpg-mutating"
+	pki.ValidatingWebhookConfigurationName = "platform-cnpg-validating"
+
+	ca, _ := CreateRootCA("ca-secret-name", operatorNamespaceName)
+	webhookPair, _ := ca.CreateAndSignPair("pki-service.operator-namespace.svc", CertTypeServer, nil)
+	webhookSecret := webhookPair.GenerateCertificateSecret(pki.OperatorNamespace, pki.SecretName)
+
+	It("explains a missing mutating webhook configuration, keeping the not-found nature", func(ctx SpecContext) {
+		err := pki.injectPublicKeyIntoMutatingWebhook(ctx, generateFakeClient(), webhookSecret)
+		Expect(err).To(MatchError(ContainSubstring(`MutatingWebhookConfiguration "platform-cnpg-mutating" not found`)))
+		Expect(err).To(MatchError(ContainSubstring("MANAGE_WEBHOOK_CONFIGURATIONS=false")))
+		Expect(apierrors.IsNotFound(err)).To(BeTrue(), "the setup retry still recognises a not-found")
+	})
+
+	It("explains a missing validating webhook configuration", func(ctx SpecContext) {
+		err := pki.injectPublicKeyIntoValidatingWebhook(ctx, generateFakeClient(), webhookSecret)
+		Expect(err).To(MatchError(ContainSubstring(`ValidatingWebhookConfiguration "platform-cnpg-validating" not found`)))
+	})
+
+	It("injects into configurations under the names given", func(ctx SpecContext) {
+		kubeClient := generateFakeClient()
+		mutating := mutatingWebhookTemplate
+		mutating.Name = pki.MutatingWebhookConfigurationName
+		Expect(kubeClient.Create(ctx, &mutating)).To(Succeed())
+
+		Expect(pki.injectPublicKeyIntoMutatingWebhook(ctx, kubeClient, webhookSecret)).To(Succeed())
+		updated := admissionregistrationv1.MutatingWebhookConfiguration{}
+		Expect(kubeClient.Get(ctx, client.ObjectKey{Name: "platform-cnpg-mutating"}, &updated)).To(Succeed())
+		Expect(updated.Webhooks[0].ClientConfig.CABundle).To(Equal(webhookSecret.Data["tls.crt"]))
 	})
 })

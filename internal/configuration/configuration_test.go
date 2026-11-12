@@ -172,6 +172,51 @@ var _ = Describe("Annotation and label inheritance", func() {
 	})
 })
 
+// Goal: an explicit webhook configuration name is used as given, and the
+// default name with its optional namespace suffix applies otherwise
+var _ = Describe("Explicit webhook configuration names", func() {
+	DescribeTable("resolve",
+		func(config Data, mutating, validating string) {
+			Expect(config.GetMutatingWebhookConfigurationName()).To(Equal(mutating))
+			Expect(config.GetValidatingWebhookConfigurationName()).To(Equal(validating))
+		},
+		Entry("to the defaults when nothing is set",
+			Data{},
+			DefaultMutatingWebhookConfigurationName, DefaultValidatingWebhookConfigurationName),
+		Entry("to the explicit names when set",
+			Data{
+				MutatingWebhookConfigurationName:   "platform-cnpg-mutating",
+				ValidatingWebhookConfigurationName: "platform-cnpg-validating",
+			},
+			"platform-cnpg-mutating", "platform-cnpg-validating"),
+		Entry("to the explicit names as given, suffix or not",
+			Data{
+				MutatingWebhookConfigurationName:   "platform-cnpg-mutating",
+				ValidatingWebhookConfigurationName: "platform-cnpg-validating",
+				EnableWebhookNamespaceSuffix:       true,
+				OperatorNamespace:                  "cnpg-team-a",
+			},
+			"platform-cnpg-mutating", "platform-cnpg-validating"),
+		Entry("one explicit, the other suffixed",
+			Data{
+				MutatingWebhookConfigurationName: "platform-cnpg-mutating",
+				EnableWebhookNamespaceSuffix:     true,
+				OperatorNamespace:                "cnpg-team-a",
+			},
+			"platform-cnpg-mutating", DefaultValidatingWebhookConfigurationName+"-cnpg-team-a"),
+	)
+
+	It("are read from the operator configuration", func() {
+		config := newDefaultConfig()
+		config.ReadConfigMap(map[string]string{
+			"MUTATING_WEBHOOK_CONFIGURATION_NAME":   "platform-cnpg-mutating",
+			"VALIDATING_WEBHOOK_CONFIGURATION_NAME": "platform-cnpg-validating",
+		})
+		Expect(config.GetMutatingWebhookConfigurationName()).To(Equal("platform-cnpg-mutating"))
+		Expect(config.GetValidatingWebhookConfigurationName()).To(Equal("platform-cnpg-validating"))
+	})
+})
+
 var _ = Describe("Webhook configuration names", func() {
 	It("uses default names when suffix is disabled", func() {
 		config := &Data{}
