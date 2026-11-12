@@ -109,6 +109,59 @@ type PostgresqlStatus struct {
 	//
 	// This field is never populated in the instance manager.
 	IsFenced bool `json:"isFenced,omitempty"`
+
+	// VolumeUsages are the space and the inodes of the filesystem of each
+	// volume of the instance
+	VolumeUsages []VolumeUsage `json:"volumeUsages,omitempty"`
+}
+
+const (
+	// PgDataVolumeName is the name of the PGDATA volume in VolumeUsage
+	PgDataVolumeName = "pgdata"
+
+	// WalVolumeName is the name of the WAL volume in VolumeUsage
+	WalVolumeName = "wal"
+
+	// TablespaceVolumePrefix prefixes the name of a tablespace to form the
+	// name of its volume in VolumeUsage
+	TablespaceVolumePrefix = "tbs-"
+)
+
+// VolumeUsage is the space and the inodes of the filesystem of a volume of
+// the instance, as read by statfs
+type VolumeUsage struct {
+	// Volume is PgDataVolumeName, WalVolumeName, or TablespaceVolumePrefix
+	// followed by the name of the tablespace
+	Volume string `json:"volume"`
+
+	// TotalBytes is the size of the filesystem
+	TotalBytes uint64 `json:"totalBytes"`
+
+	// AvailableBytes are the bytes available to PostgreSQL, reserved blocks
+	// excluded
+	AvailableBytes uint64 `json:"availableBytes"`
+
+	// UsedBytes are the bytes used in the filesystem
+	UsedBytes uint64 `json:"usedBytes"`
+
+	// Inodes is the number of inodes of the filesystem, 0 when the
+	// filesystem does not report inodes
+	Inodes uint64 `json:"inodes,omitempty"`
+
+	// InodesFree is the number of free inodes of the filesystem
+	InodesFree uint64 `json:"inodesFree,omitempty"`
+}
+
+// UsedPercent is the share of the filesystem not available to PostgreSQL,
+// reserved blocks included, from 0 to 100
+func (usage VolumeUsage) UsedPercent() float64 {
+	if usage.TotalBytes == 0 {
+		return 0
+	}
+	if usage.AvailableBytes >= usage.TotalBytes {
+		return 0
+	}
+	return float64(usage.TotalBytes-usage.AvailableBytes) * 100 / float64(usage.TotalBytes)
 }
 
 // PgStatReplication contains the replications of replicas as reported by the primary instance

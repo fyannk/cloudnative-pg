@@ -30,6 +30,7 @@ import (
 
 	"github.com/cloudnative-pg/cloudnative-pg/internal/management/cache"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/management/postgres"
+	"github.com/cloudnative-pg/cloudnative-pg/pkg/management/postgres/volumeusage"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -82,12 +83,12 @@ var _ = Describe("disk metrics", func() {
 		cache.Delete(cache.ClusterKey)
 		exporter = NewExporter(postgres.NewInstance(), fakePluginCollector{})
 		root = GinkgoT().TempDir()
-		exporter.diskPaths = diskPaths{
-			pgData:      filepath.Join(root, "data"),
-			walVolume:   filepath.Join(root, "wal"),
-			tablespaces: filepath.Join(root, "tablespaces"),
+		exporter.diskPaths = volumeusage.Paths{
+			PgData:      filepath.Join(root, "data"),
+			WalVolume:   filepath.Join(root, "wal"),
+			Tablespaces: filepath.Join(root, "tablespaces"),
 		}
-		Expect(os.Mkdir(exporter.diskPaths.pgData, 0o700)).To(Succeed())
+		Expect(os.Mkdir(exporter.diskPaths.PgData, 0o700)).To(Succeed())
 	})
 
 	It("reports only PGDATA when there is no WAL volume and no tablespace", func() {
@@ -98,10 +99,10 @@ var _ = Describe("disk metrics", func() {
 	})
 
 	It("reports the WAL volume and one volume per tablespace, read from the real filesystem", func() {
-		Expect(os.Mkdir(exporter.diskPaths.walVolume, 0o700)).To(Succeed())
-		Expect(os.MkdirAll(filepath.Join(exporter.diskPaths.tablespaces, "beta"), 0o700)).To(Succeed())
-		Expect(os.MkdirAll(filepath.Join(exporter.diskPaths.tablespaces, "alpha"), 0o700)).To(Succeed())
-		Expect(os.WriteFile(filepath.Join(exporter.diskPaths.tablespaces, "not-a-volume"), nil, 0o600)).To(Succeed())
+		Expect(os.Mkdir(exporter.diskPaths.WalVolume, 0o700)).To(Succeed())
+		Expect(os.MkdirAll(filepath.Join(exporter.diskPaths.Tablespaces, "beta"), 0o700)).To(Succeed())
+		Expect(os.MkdirAll(filepath.Join(exporter.diskPaths.Tablespaces, "alpha"), 0o700)).To(Succeed())
+		Expect(os.WriteFile(filepath.Join(exporter.diskPaths.Tablespaces, "not-a-volume"), nil, 0o600)).To(Succeed())
 
 		Expect(collectDiskMetrics(exporter)).To(Succeed())
 
@@ -121,7 +122,7 @@ var _ = Describe("disk metrics", func() {
 
 	It("computes the bytes from the blocks and reports the inodes", func() {
 		exporter.statfs = fakeStatfs(map[string]syscall.Statfs_t{
-			exporter.diskPaths.pgData: {Bsize: 4096, Blocks: 100, Bfree: 40, Bavail: 30, Files: 50, Ffree: 10},
+			exporter.diskPaths.PgData: {Bsize: 4096, Blocks: 100, Bfree: 40, Bavail: 30, Files: 50, Ffree: 10},
 		}, nil)
 
 		Expect(collectDiskMetrics(exporter)).To(Succeed())
@@ -137,7 +138,7 @@ var _ = Describe("disk metrics", func() {
 
 	It("does not report inodes for a filesystem that reports none", func() {
 		exporter.statfs = fakeStatfs(map[string]syscall.Statfs_t{
-			exporter.diskPaths.pgData: {Bsize: 4096, Blocks: 100, Bfree: 40, Bavail: 40},
+			exporter.diskPaths.PgData: {Bsize: 4096, Blocks: 100, Bfree: 40, Bavail: 40},
 		}, nil)
 
 		Expect(collectDiskMetrics(exporter)).To(Succeed())
@@ -149,7 +150,7 @@ var _ = Describe("disk metrics", func() {
 
 	It("does not underflow when more blocks are free than the filesystem has", func() {
 		exporter.statfs = fakeStatfs(map[string]syscall.Statfs_t{
-			exporter.diskPaths.pgData: {Bsize: 4096, Blocks: 100, Bfree: 120, Bavail: 100},
+			exporter.diskPaths.PgData: {Bsize: 4096, Blocks: 100, Bfree: 120, Bavail: 100},
 		}, nil)
 
 		Expect(collectDiskMetrics(exporter)).To(Succeed())
@@ -158,16 +159,16 @@ var _ = Describe("disk metrics", func() {
 	})
 
 	It("reports the other volumes when one cannot be read, and drops its old series", func() {
-		Expect(os.Mkdir(exporter.diskPaths.walVolume, 0o700)).To(Succeed())
+		Expect(os.Mkdir(exporter.diskPaths.WalVolume, 0o700)).To(Succeed())
 		values := map[string]syscall.Statfs_t{
-			exporter.diskPaths.pgData:    {Bsize: 4096, Blocks: 100, Bfree: 40, Bavail: 30, Files: 50, Ffree: 10},
-			exporter.diskPaths.walVolume: {Bsize: 4096, Blocks: 200, Bfree: 40, Bavail: 30, Files: 50, Ffree: 10},
+			exporter.diskPaths.PgData:    {Bsize: 4096, Blocks: 100, Bfree: 40, Bavail: 30, Files: 50, Ffree: 10},
+			exporter.diskPaths.WalVolume: {Bsize: 4096, Blocks: 200, Bfree: 40, Bavail: 30, Files: 50, Ffree: 10},
 		}
 		exporter.statfs = fakeStatfs(values, nil)
 		Expect(collectDiskMetrics(exporter)).To(Succeed())
 		Expect(diskSeries(exporter.Metrics.Disk.TotalBytes)).To(ConsistOf("pgdata", "wal"))
 
-		exporter.statfs = fakeStatfs(values, map[string]error{exporter.diskPaths.walVolume: syscall.EIO})
+		exporter.statfs = fakeStatfs(values, map[string]error{exporter.diskPaths.WalVolume: syscall.EIO})
 		err := collectDiskMetrics(exporter)
 
 		Expect(err).To(MatchError(ContainSubstring("volume wal")))
@@ -177,7 +178,7 @@ var _ = Describe("disk metrics", func() {
 	})
 
 	It("counts a failed read as a collection error", func() {
-		exporter.statfs = fakeStatfs(nil, map[string]error{exporter.diskPaths.pgData: syscall.EIO})
+		exporter.statfs = fakeStatfs(nil, map[string]error{exporter.diskPaths.PgData: syscall.EIO})
 
 		exporter.updateDiskMetrics()
 
@@ -189,7 +190,7 @@ var _ = Describe("disk metrics", func() {
 	It("is collected while the instance is fenced, when the other instance metrics are skipped", func() {
 		exporter.instance.SetFencing(true)
 		exporter.statfs = fakeStatfs(map[string]syscall.Statfs_t{
-			exporter.diskPaths.pgData: {Bsize: 4096, Blocks: 100, Bfree: 100, Bavail: 100, Files: 50, Ffree: 0},
+			exporter.diskPaths.PgData: {Bsize: 4096, Blocks: 100, Bfree: 100, Bavail: 100, Files: 50, Ffree: 0},
 		}, nil)
 
 		registry := prometheus.NewRegistry()

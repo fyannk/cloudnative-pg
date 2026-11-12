@@ -45,7 +45,6 @@ import (
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/reconciler/hibernation"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/reconciler/persistentvolumeclaim"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/resources/status"
-	"github.com/cloudnative-pg/cloudnative-pg/pkg/specs"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/utils"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/versions"
 )
@@ -961,45 +960,4 @@ func (r *ClusterReconciler) updateTopologyAvailability(
 	if !meta.IsStatusConditionTrue(previous, string(apiv1.ConditionTopologyUnavailable)) && r.Recorder != nil {
 		r.Recorder.Event(cluster, corev1.EventTypeWarning, string(apiv1.ConditionTopologyUnavailable), message)
 	}
-}
-
-// isWALSpaceAvailableOnPod check if a Pod terminated because it has no
-// disk space for WALs
-func isWALSpaceAvailableOnPod(pod *corev1.Pod) bool {
-	isTerminatedForMissingWALDiskSpace := func(state *corev1.ContainerState) bool {
-		return state.Terminated != nil && state.Terminated.ExitCode == apiv1.MissingWALDiskSpaceExitCode
-	}
-	// Return true if WAL space IS available (i.e., NOT terminated for missing disk space)
-	return !hasPostgresContainerTerminationReason(pod, isTerminatedForMissingWALDiskSpace)
-}
-
-func hasPostgresContainerTerminationReason(pod *corev1.Pod, reason func(state *corev1.ContainerState) bool) bool {
-	var pgContainerStatus *corev1.ContainerStatus
-	for i := range pod.Status.ContainerStatuses {
-		status := pod.Status.ContainerStatuses[i]
-		if status.Name == specs.PostgresContainerName {
-			pgContainerStatus = &pod.Status.ContainerStatuses[i]
-			break
-		}
-	}
-
-	// This is not an instance Pod as there's no PostgreSQL
-	// container
-	if pgContainerStatus == nil {
-		return false
-	}
-
-	// If the Pod was terminated with the specified reason,
-	// then return true
-	if reason(&pgContainerStatus.State) {
-		return true
-	}
-
-	// The container is not ready and was last terminated with the specified reason.
-	// Return true to indicate the termination reason was found
-	if !pgContainerStatus.Ready && reason(&pgContainerStatus.LastTerminationState) {
-		return true
-	}
-
-	return false
 }

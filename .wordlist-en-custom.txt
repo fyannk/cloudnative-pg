@@ -20,6 +20,8 @@ ArgoCD
 Armando
 AuthQuery
 AuthQuerySecret
+AutoGrow
+AutoGrowConfiguration
 Autoscaler
 AvailableArchitecture
 AvailableArchitectures
@@ -301,6 +303,7 @@ ManagedService
 ManagedServices
 MaxItems
 MaxLength
+MaxSize
 MetadataPropagationRule
 MetadataPropagationTarget
 MetricDescription
@@ -685,6 +688,7 @@ authQuerySecret
 authn
 authz
 autocompletion
+autogrowconfiguration
 autoscaler
 autoscalers
 autovacuum

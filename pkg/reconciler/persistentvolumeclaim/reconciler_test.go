@@ -171,6 +171,7 @@ var _ = Describe("Reconcile resource requests", func() {
 			cli,
 			cluster,
 			[]corev1.PersistentVolumeClaim{},
+			nil,
 		)
 		Expect(err).ToNot(HaveOccurred())
 		Expect(refusals).To(BeEmpty())
@@ -189,6 +190,7 @@ var _ = Describe("Reconcile resource requests", func() {
 			cli,
 			cluster,
 			[]corev1.PersistentVolumeClaim{},
+			nil,
 		)
 		Expect(err).ToNot(HaveOccurred())
 		Expect(refusals).To(BeEmpty())
@@ -719,7 +721,7 @@ var _ = Describe("Reconcile existing PVCs with the storage configuration of thei
 		}
 		cli := fake.NewClientBuilder().WithScheme(scheme.BuildWithAllKnownScheme()).WithObjects(objects...).Build()
 
-		refusals, err := reconcileExistingPVCs(context.Background(), cli, cluster, pvcs)
+		refusals, err := reconcileExistingPVCs(context.Background(), cli, cluster, pvcs, nil)
 		Expect(err).ToNot(HaveOccurred())
 		Expect(refusals).To(BeEmpty())
 
