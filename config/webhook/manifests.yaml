@@ -136,6 +136,25 @@ webhooks:
     service:
       name: webhook-service
       namespace: system
+      path: /validate-postgresql-cnpg-io-v1-cluster-scale
+  failurePolicy: Fail
+  name: vclusterscale.cnpg.io
+  rules:
+  - apiGroups:
+    - postgresql.cnpg.io
+    apiVersions:
+    - v1
+    operations:
+    - UPDATE
+    resources:
+    - clusters/scale
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
       path: /validate-postgresql-cnpg-io-v1-database
   failurePolicy: Fail
   name: vdatabase.cnpg.io
