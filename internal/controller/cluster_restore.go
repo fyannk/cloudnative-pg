@@ -34,6 +34,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
+	"github.com/cloudnative-pg/cloudnative-pg/pkg/metadatarules"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/reconciler/persistentvolumeclaim"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/specs"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/utils"
@@ -340,7 +341,7 @@ func restoreOrphanPVCs(
 		}
 
 		pvcOrig := pvc.DeepCopy()
-		cluster.SetInheritedDataAndOwnership(&pvc.ObjectMeta)
+		cluster.SetInheritedDataAndOwnershipFor(&pvc.ObjectMeta, metadatarules.PersistentVolumeClaims)
 		pvc.Annotations[utils.PVCStatusAnnotationName] = persistentvolumeclaim.StatusReady
 		// we clean hibernation metadata if it exists
 		delete(pvc.Annotations, utils.HibernateClusterManifestAnnotationName)

@@ -587,3 +587,130 @@ var _ = Describe("ensureServiceAccountPullSecret", func() {
 		Expect(remoteSecret).ToNot(BeEquivalentTo(remoteSecretAfter))
 	})
 })
+
+// The pull Secret of a Pooler gets the default and mandatory metadata and
+// the rules of the Pooler for the Secrets, and follows a change of them
+var _ = Describe("The metadata of the pull Secret of a Pooler", func() {
+	var env *testingEnvironment
+
+	BeforeEach(func() {
+		env = buildTestEnvironment()
+		previous := configuration.Current
+		DeferCleanup(func() { configuration.Current = previous })
+	})
+
+	It("follows the settings and the rules for the Secrets", func(ctx SpecContext) {
+		namespace := newFakeNamespace(env.client)
+		conf := configuration.NewConfiguration()
+		conf.OperatorNamespace = namespace
+		conf.OperatorPullSecretName = "operator-pull"
+		configuration.Current = conf
+		Expect(env.client.Create(ctx, &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: "operator-pull", Namespace: namespace},
+			Data:       map[string][]byte{".dockerconfigjson": []byte("{}")},
+			Type:       corev1.SecretTypeDockerConfigJson,
+		})).To(Succeed())
+		cluster := newFakeCNPGCluster(env.client, namespace)
+		pooler := newFakePooler(env.client, cluster)
+
+		pullSecret := func() corev1.Secret {
+			name, err := env.poolerReconciler.ensureServiceAccountPullSecret(ctx, pooler, conf)
+			Expect(err).ToNot(HaveOccurred())
+			var secret corev1.Secret
+			Expect(env.client.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, &secret)).To(Succeed())
+			return secret
+		}
+
+		conf.DefaultMetadata = `[` +
+			`{"targets": ["secrets"], "annotations": {"example.com/owner": "platform"}},` +
+			`{"targets": ["poolerPods"], "annotations": {"example.com/pods": "x"}}` +
+			`]`
+		Expect(conf.ParseDefaultAndMandatoryMetadata()).To(Succeed())
+		created := pullSecret()
+		Expect(created.Annotations).To(HaveKeyWithValue("example.com/owner", "platform"))
+		Expect(created.Annotations).NotTo(HaveKey("example.com/pods"))
+
+		// Up to date: no patch
+		Expect(pullSecret().ResourceVersion).To(Equal(created.ResourceVersion))
+
+		// A rule of the Pooler wins over a default value, and reaches the
+		// existing Secret
+		pooler.Spec.MetadataPropagation = []apiv1.MetadataPropagationRule{{
+			Targets:     []apiv1.MetadataPropagationTarget{"secrets"},
+			Labels:      map[string]string{"example.com/tier": "pooler"},
+			Annotations: map[string]string{"example.com/owner": "pooler"},
+		}}
+		updated := pullSecret()
+		Expect(updated.Labels).To(HaveKeyWithValue("example.com/tier", "pooler"))
+		Expect(updated.Annotations).To(HaveKeyWithValue("example.com/owner", "pooler"))
+
+		// A mandatory value wins over the rule of the Pooler
+		conf.MandatoryMetadata = `[{"targets": ["all"], "annotations": {"example.com/owner": "finance"}}]`
+		Expect(conf.ParseDefaultAndMandatoryMetadata()).To(Succeed())
+		Expect(pullSecret().Annotations).To(HaveKeyWithValue("example.com/owner", "finance"))
+	})
+})
+
+// The ServiceAccount the operator creates for a Pooler follows the rules for
+// every object, as that of a Cluster does; a ServiceAccount named in the
+// Pooler is never changed
+var _ = Describe("The metadata of the ServiceAccount of a Pooler", func() {
+	var env *testingEnvironment
+
+	BeforeEach(func() {
+		env = buildTestEnvironment()
+		previous := configuration.Current
+		configuration.Current = configuration.NewConfiguration()
+		DeferCleanup(func() { configuration.Current = previous })
+	})
+
+	It("follows the rules for all on an existing ServiceAccount", func(ctx SpecContext) {
+		namespace := newFakeNamespace(env.client)
+		cluster := newFakeCNPGCluster(env.client, namespace)
+		pooler := newFakePooler(env.client, cluster)
+		res := &poolerManagedResources{Cluster: cluster}
+		key := types.NamespacedName{Name: pooler.Name, Namespace: namespace}
+
+		Expect(env.poolerReconciler.updateServiceAccount(ctx, pooler, res)).To(Succeed())
+		var created corev1.ServiceAccount
+		Expect(env.client.Get(ctx, key, &created)).To(Succeed())
+		Expect(created.Labels).NotTo(HaveKey("example.com/tier"))
+
+		pooler.Spec.MetadataPropagation = []apiv1.MetadataPropagationRule{{
+			Targets: []apiv1.MetadataPropagationTarget{"all"},
+			Labels:  map[string]string{"example.com/tier": "pooler"},
+		}}
+		res.ServiceAccount = created.DeepCopy()
+		Expect(env.poolerReconciler.updateServiceAccount(ctx, pooler, res)).To(Succeed())
+		var updated corev1.ServiceAccount
+		Expect(env.client.Get(ctx, key, &updated)).To(Succeed())
+		Expect(updated.Labels).To(HaveKeyWithValue("example.com/tier", "pooler"))
+
+		// Up to date: no patch
+		res.ServiceAccount = updated.DeepCopy()
+		Expect(env.poolerReconciler.updateServiceAccount(ctx, pooler, res)).To(Succeed())
+		var again corev1.ServiceAccount
+		Expect(env.client.Get(ctx, key, &again)).To(Succeed())
+		Expect(again.ResourceVersion).To(Equal(updated.ResourceVersion))
+	})
+
+	It("never changes a ServiceAccount named in the Pooler", func(ctx SpecContext) {
+		namespace := newFakeNamespace(env.client)
+		cluster := newFakeCNPGCluster(env.client, namespace)
+		pooler := newFakePooler(env.client, cluster)
+		Expect(env.client.Create(ctx, &corev1.ServiceAccount{
+			ObjectMeta: metav1.ObjectMeta{Name: "custom", Namespace: namespace},
+		})).To(Succeed())
+		pooler.Spec.ServiceAccountName = "custom"
+		pooler.Spec.MetadataPropagation = []apiv1.MetadataPropagationRule{{
+			Targets: []apiv1.MetadataPropagationTarget{"all"},
+			Labels:  map[string]string{"example.com/tier": "pooler"},
+		}}
+
+		Expect(env.poolerReconciler.updateServiceAccount(ctx, pooler, &poolerManagedResources{Cluster: cluster})).
+			To(Succeed())
+		var custom corev1.ServiceAccount
+		Expect(env.client.Get(ctx, types.NamespacedName{Name: "custom", Namespace: namespace}, &custom)).To(Succeed())
+		Expect(custom.Labels).To(BeEmpty())
+	})
+})

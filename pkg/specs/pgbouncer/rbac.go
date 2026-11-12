@@ -25,6 +25,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
+	"github.com/cloudnative-pg/cloudnative-pg/pkg/metadatarules"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/specs"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/utils"
 )
@@ -32,10 +33,13 @@ import (
 // ServiceAccount creates a service account for a given pooler.
 // This is used when the operator manages the ServiceAccount (no custom serviceAccountName specified).
 func ServiceAccount(pooler *apiv1.Pooler) *corev1.ServiceAccount {
-	return &corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{
+	serviceAccount := &corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{
 		Name: pooler.Name, Namespace: pooler.Namespace,
 		Labels: map[string]string{utils.ReconcileLabelName: "true"},
 	}}
+	pooler.ApplyMetadataTo(&serviceAccount.ObjectMeta, metadatarules.All)
+
+	return serviceAccount
 }
 
 // Role creates a role for a given pooler
@@ -59,7 +63,7 @@ func Role(pooler *apiv1.Pooler) *rbacv1.Role {
 		}
 	}
 
-	return &rbacv1.Role{ObjectMeta: metav1.ObjectMeta{
+	role := &rbacv1.Role{ObjectMeta: metav1.ObjectMeta{
 		Name: pooler.Name, Namespace: pooler.Namespace,
 		Labels: map[string]string{utils.ReconcileLabelName: "true"},
 	}, Rules: []rbacv1.PolicyRule{
@@ -109,11 +113,15 @@ func Role(pooler *apiv1.Pooler) *rbacv1.Role {
 			ResourceNames: secretNames,
 		},
 	}}
+	pooler.ApplyMetadataTo(&role.ObjectMeta, metadatarules.All)
+
+	return role
 }
 
 // RoleBinding creates a role binding for a given pooler
 func RoleBinding(pooler *apiv1.Pooler, serviceAccount string) rbacv1.RoleBinding {
 	roleBinding := specs.CreateRoleBinding(pooler.ObjectMeta, serviceAccount)
+	pooler.ApplyMetadataTo(&roleBinding.ObjectMeta, metadatarules.All)
 	utils.LabelReconciled(&roleBinding.ObjectMeta)
 	return roleBinding
 }

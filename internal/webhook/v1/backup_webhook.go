@@ -32,6 +32,7 @@ import (
 
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
 	"github.com/cloudnative-pg/cloudnative-pg/internal/webhook/guard"
+	"github.com/cloudnative-pg/cloudnative-pg/pkg/metadatarules"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/utils"
 )
 
@@ -84,11 +85,13 @@ type BackupCustomValidator struct{}
 func (v *BackupCustomValidator) ValidateCreate(ctx context.Context, backup *apiv1.Backup) (admission.Warnings, error) {
 	backupLog.Info("Validation for Backup upon creation", "name", backup.GetName(), "namespace", backup.GetNamespace())
 
+	warnings := v.getAdmissionWarnings(backup)
 	allErrs := v.validate(backup)
-	var warnings admission.Warnings
 	if !isAdmissionRequest(ctx) {
 		// A stored Backup, validated by the admission guard: unchanged
-		allErrs, warnings = volumeSnapshotMethodOnUpdate(allErrs, backup.Spec.Method, backup.Spec.Method)
+		var methodWarnings admission.Warnings
+		allErrs, methodWarnings = volumeSnapshotMethodOnUpdate(allErrs, backup.Spec.Method, backup.Spec.Method)
+		warnings = append(warnings, methodWarnings...)
 	}
 	if len(allErrs) == 0 {
 		return warnings, nil
@@ -106,7 +109,10 @@ func (v *BackupCustomValidator) ValidateUpdate(
 ) (admission.Warnings, error) {
 	backupLog.Info("Validation for Backup upon update", "name", backup.GetName(), "namespace", backup.GetNamespace())
 
-	allErrs, warnings := volumeSnapshotMethodOnUpdate(v.validate(backup), backup.Spec.Method, oldBackup.Spec.Method)
+	warnings := v.getAdmissionWarnings(backup)
+	allErrs, methodWarnings := volumeSnapshotMethodOnUpdate(
+		v.validate(backup), backup.Spec.Method, oldBackup.Spec.Method)
+	warnings = append(warnings, methodWarnings...)
 	if len(allErrs) == 0 {
 		return warnings, nil
 	}
@@ -165,5 +171,14 @@ func (v *BackupCustomValidator) validate(r *apiv1.Backup) field.ErrorList {
 		}
 	}
 
+	metadataErrs, _ := validateMetadataPropagation(r.Spec.MetadataPropagation, apiv1.BackupMetadataTargets)
+	result = append(result, metadataErrs...)
+
 	return result
+}
+
+func (v *BackupCustomValidator) getAdmissionWarnings(r *apiv1.Backup) admission.Warnings {
+	_, warnings := validateMetadataPropagation(r.Spec.MetadataPropagation, apiv1.BackupMetadataTargets)
+	return append(warnings, getReplacedByMandatoryWarnings(metadatarules.BackupResource, apiv1.BackupMetadataTargets,
+		r.GetBackupLabelsFor, r.GetBackupAnnotationsFor)...)
 }

@@ -28,7 +28,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
-	"github.com/cloudnative-pg/cloudnative-pg/internal/configuration"
+	"github.com/cloudnative-pg/cloudnative-pg/pkg/metadatarules"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/specs"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/utils"
 )
@@ -93,8 +93,7 @@ func updateClusterAnnotations(
 
 	// if all the required annotations are already set and with the correct value,
 	// we are done
-	if utils.IsAnnotationSubset(instance.Annotations, cluster.Annotations, cluster.GetFixedInheritedAnnotations(),
-		configuration.Current) &&
+	if utils.IsMapSubset(instance.Annotations, cluster.GetInheritedAnnotationsFor(metadatarules.PgPods)) &&
 		utils.IsAnnotationAppArmorPresentInObject(&instance.ObjectMeta, &instance.Spec, cluster.Annotations) {
 		// let's create a copy of the pod Annotations without the PodSpec, otherwise
 		// the debug log will get clogged
@@ -116,8 +115,7 @@ func updateClusterAnnotations(
 
 	// otherwise, we add the modified/new annotations to the pod
 	contextLogger.Info("Updating cluster annotations on pod", "pod", instance.Name)
-	utils.InheritAnnotations(&instance.ObjectMeta, cluster.Annotations,
-		cluster.GetFixedInheritedAnnotations(), configuration.Current)
+	utils.SetAnnotations(&instance.ObjectMeta, cluster.GetInheritedAnnotationsFor(metadatarules.PgPods))
 	if utils.IsAnnotationAppArmorPresent(&instance.Spec, cluster.Annotations) {
 		utils.AnnotateAppArmor(&instance.ObjectMeta, &instance.Spec, cluster.Annotations)
 	}
@@ -143,8 +141,7 @@ func updateClusterLabels(
 
 	// if all the required labels are already set and with the correct value,
 	// there's nothing more to do
-	if utils.IsLabelSubset(instance.Labels, cluster.Labels, cluster.GetFixedInheritedLabels(),
-		configuration.Current) {
+	if utils.IsMapSubset(instance.Labels, cluster.GetInheritedLabelsFor(metadatarules.PgPods)) {
 		contextLogger.Trace(
 			"Skipping cluster label reconciliation, because they are already present on pod",
 			"pod", instance.Name,
@@ -156,7 +153,7 @@ func updateClusterLabels(
 
 	// otherwise, we add the modified/new labels to the pod
 	contextLogger.Info("Updating cluster labels on pod", "pod", instance.Name)
-	utils.InheritLabels(&instance.ObjectMeta, cluster.Labels, cluster.GetFixedInheritedLabels(), configuration.Current)
+	utils.SetLabels(&instance.ObjectMeta, cluster.GetInheritedLabelsFor(metadatarules.PgPods))
 	return true
 }
 

@@ -218,6 +218,13 @@ type ClusterSpec struct {
 	// +optional
 	InheritedMetadata *EmbeddedObjectMetadata `json:"inheritedMetadata,omitempty"`
 
+	// Labels and annotations to put on the objects of the Cluster, per kind
+	// of object, on top of inheritedMetadata
+	// +kubebuilder:validation:MaxItems=64
+	// +kubebuilder:validation:XValidation:rule="self.all(r, r.targets.all(t, t in ['all', 'allPods', 'pgPods', 'majorUpgradePods', 'services', 'persistentVolumeClaims', 'secrets', 'podDisruptionBudgets']))",message="a Cluster accepts the targets all, allPods, pgPods, majorUpgradePods, services, persistentVolumeClaims, secrets and podDisruptionBudgets"
+	// +optional
+	MetadataPropagation []MetadataPropagationRule `json:"metadataPropagation,omitempty"`
+
 	// Name of the container image, supporting both tags (`<image>:<tag>`)
 	// and digests for deterministic and repeatable deployments
 	// (`<image>:<tag>@sha256:<digestValue>`)
