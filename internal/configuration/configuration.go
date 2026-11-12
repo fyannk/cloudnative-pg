@@ -31,6 +31,7 @@ import (
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/configparser"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/filteredcache"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/metadatarules"
+	"github.com/cloudnative-pg/cloudnative-pg/pkg/monitoringdiscovery"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/utils"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/versions"
 )
@@ -145,6 +146,16 @@ type Data struct {
 	// two settings above
 	defaultMetadata   metadatarules.Sets
 	mandatoryMetadata metadatarules.Sets
+
+	// MonitoringDiscoveryAnnotations is the list of the families of
+	// annotations telling monitoring agents how to collect the metrics and
+	// the logs of the instance and Pooler Pods: `prometheus` and
+	// `opentelemetry`. Empty by default
+	MonitoringDiscoveryAnnotations []string `json:"monitoringDiscoveryAnnotations" env:"MONITORING_DISCOVERY_ANNOTATIONS"`
+
+	// monitoringDiscoveryFamilies is the parsed form of
+	// MonitoringDiscoveryAnnotations
+	monitoringDiscoveryFamilies []monitoringdiscovery.Family
 
 	// MonitoringQueriesConfigmap is the name of the configmap in the operator namespace which contain
 	// the monitoring queries. The queries will be read from the data key: "queries".
