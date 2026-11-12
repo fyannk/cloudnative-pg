@@ -691,3 +691,98 @@ var _ = Describe("Reconcile Volume Attribute Class", func() {
 		Expect(patchCount).To(Equal(1))
 	})
 })
+
+var _ = Describe("Reconcile existing PVCs with the storage configuration of their role", func() {
+	const (
+		clusterName    = "cluster-per-role"
+		tablespaceName = "tbs1"
+	)
+
+	// reconcile runs reconcileExistingPVCs on a Cluster whose three volumes
+	// (PGDATA, WAL, tablespace) were created with 1Gi and are now requested
+	// with 2Gi, and returns the PVCs as stored afterwards, by role
+	reconcile := func(spec apiv1.ClusterSpec) map[utils.PVCRole]corev1.PersistentVolumeClaim {
+		cluster := &apiv1.Cluster{
+			ObjectMeta: metav1.ObjectMeta{Name: clusterName},
+			Spec:       spec,
+		}
+		pvcs := []corev1.PersistentVolumeClaim{
+			makePVC(clusterName, "1", "1", NewPgDataCalculator(), false),
+			makePVC(clusterName, "1-wal", "1", NewPgWalCalculator(), false),
+			makePVC(clusterName, "1-tbs1", "1", NewPgTablespaceCalculator(tablespaceName), false),
+		}
+		objects := make([]client.Object, 0, 1+len(pvcs))
+		objects = append(objects, cluster)
+		for idx := range pvcs {
+			pvcs[idx].Spec.Resources.Requests = corev1.ResourceList{"storage": resource.MustParse("1Gi")}
+			objects = append(objects, &pvcs[idx])
+		}
+		cli := fake.NewClientBuilder().WithScheme(scheme.BuildWithAllKnownScheme()).WithObjects(objects...).Build()
+
+		refusals, err := reconcileExistingPVCs(context.Background(), cli, cluster, pvcs)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(refusals).To(BeEmpty())
+
+		result := make(map[utils.PVCRole]corev1.PersistentVolumeClaim, len(pvcs))
+		for _, pvc := range pvcs {
+			var stored corev1.PersistentVolumeClaim
+			Expect(cli.Get(context.Background(), client.ObjectKeyFromObject(&pvc), &stored)).To(Succeed())
+			result[utils.PVCRole(stored.Labels[utils.PvcRoleLabelName])] = stored
+		}
+		return result
+	}
+	storage := func(resize *bool) apiv1.StorageConfiguration {
+		return apiv1.StorageConfiguration{Size: "2Gi", ResizeInUseVolumes: resize}
+	}
+	spec := func(data, wal, tablespace apiv1.StorageConfiguration) apiv1.ClusterSpec {
+		return apiv1.ClusterSpec{
+			StorageConfiguration: data,
+			WalStorage:           &wal,
+			Tablespaces:          []apiv1.TablespaceConfiguration{{Name: tablespaceName, Storage: tablespace}},
+		}
+	}
+	size := func(pvc corev1.PersistentVolumeClaim) string {
+		quantity := pvc.Spec.Resources.Requests["storage"]
+		return quantity.String()
+	}
+
+	It("resizes and reconciles the volume attributes class of each PVC as its own role says", func() {
+		By("leaving every flag to its default: every volume is resized")
+		pvcs := reconcile(spec(storage(nil), storage(nil), storage(nil)))
+		Expect(size(pvcs[utils.PVCRolePgData])).To(Equal("2Gi"))
+		Expect(size(pvcs[utils.PVCRolePgWal])).To(Equal("2Gi"))
+		Expect(size(pvcs[utils.PVCRolePgTablespace])).To(Equal("2Gi"))
+
+		By("disabling the resize on spec.storage only: the WAL and tablespace volumes are still resized")
+		pvcs = reconcile(spec(storage(ptr.To(false)), storage(nil), storage(nil)))
+		Expect(size(pvcs[utils.PVCRolePgData])).To(Equal("1Gi"))
+		Expect(size(pvcs[utils.PVCRolePgWal])).To(Equal("2Gi"))
+		Expect(size(pvcs[utils.PVCRolePgTablespace])).To(Equal("2Gi"))
+
+		By("disabling the resize on walStorage only, as the documentation says to re-create the WAL volume")
+		pvcs = reconcile(spec(storage(nil), storage(ptr.To(false)), storage(nil)))
+		Expect(size(pvcs[utils.PVCRolePgData])).To(Equal("2Gi"))
+		Expect(size(pvcs[utils.PVCRolePgWal])).To(Equal("1Gi"))
+		Expect(size(pvcs[utils.PVCRolePgTablespace])).To(Equal("2Gi"))
+
+		By("disabling the resize on the tablespace only")
+		pvcs = reconcile(spec(storage(nil), storage(nil), storage(ptr.To(false))))
+		Expect(size(pvcs[utils.PVCRolePgData])).To(Equal("2Gi"))
+		Expect(size(pvcs[utils.PVCRolePgWal])).To(Equal("2Gi"))
+		Expect(size(pvcs[utils.PVCRolePgTablespace])).To(Equal("1Gi"))
+
+		By("disabling the resize everywhere: no volume is resized")
+		pvcs = reconcile(spec(storage(ptr.To(false)), storage(ptr.To(false)), storage(ptr.To(false))))
+		Expect(size(pvcs[utils.PVCRolePgData])).To(Equal("1Gi"))
+		Expect(size(pvcs[utils.PVCRolePgWal])).To(Equal("1Gi"))
+		Expect(size(pvcs[utils.PVCRolePgTablespace])).To(Equal("1Gi"))
+
+		By("setting a volume attributes class in the pvcTemplate of walStorage only")
+		wal := storage(ptr.To(false))
+		wal.PersistentVolumeClaimTemplate = &corev1.PersistentVolumeClaimSpec{VolumeAttributesClassName: ptr.To("fast")}
+		pvcs = reconcile(spec(storage(ptr.To(false)), wal, storage(ptr.To(false))))
+		Expect(pvcs[utils.PVCRolePgWal].Spec.VolumeAttributesClassName).To(HaveValue(Equal("fast")))
+		Expect(pvcs[utils.PVCRolePgData].Spec.VolumeAttributesClassName).To(BeNil())
+		Expect(pvcs[utils.PVCRolePgTablespace].Spec.VolumeAttributesClassName).To(BeNil())
+	})
+})
