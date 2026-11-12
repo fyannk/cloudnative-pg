@@ -37,6 +37,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
+	"github.com/cloudnative-pg/cloudnative-pg/internal/configuration"
 	schemeBuilder "github.com/cloudnative-pg/cloudnative-pg/internal/scheme"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/utils"
 
@@ -490,6 +491,35 @@ var _ = Describe("scheduledbackup with a five-field schedule", func() {
 			ContainSubstring(`"0 2 * * *" has 5 fields instead of 6`),
 		)))
 	})
+
+	It("reads it as standard cron, without the event, under SCHEDULED_BACKUP_CRON_FORMAT=standard",
+		func(ctx context.Context) {
+			previousFormat := configuration.Current.ScheduledBackupCronFormat
+			configuration.Current.ScheduledBackupCronFormat = string(utils.CronFormatStandard)
+			DeferCleanup(func() { configuration.Current.ScheduledBackupCronFormat = previousFormat })
+
+			cli := newScheduledBackupTestClient()
+			ns := newFakeNamespace(cli)
+			sb := &apiv1.ScheduledBackup{
+				ObjectMeta: metav1.ObjectMeta{Name: "sb-standard", Namespace: ns},
+				Spec: apiv1.ScheduledBackupSpec{
+					Schedule: "0 2 * * *",
+					Cluster:  apiv1.LocalObjectReference{Name: "cluster-x"},
+				},
+			}
+			Expect(cli.Create(ctx, sb)).To(Succeed())
+
+			recorder := record.NewFakeRecorder(10)
+			r := &ScheduledBackupReconciler{Client: cli, Recorder: recorder}
+			result, err := r.reconcileScheduledBackup(ctx, sb)
+			Expect(err).ToNot(HaveOccurred())
+
+			Expect(recorder.Events).ToNot(Receive(ContainSubstring("ScheduleFieldCount")))
+			// the first pass requeues for the first run: daily at 02:00, not hourly at minute 2
+			next := time.Now().Add(result.RequeueAfter).Round(time.Minute)
+			Expect(next.Hour()).To(Equal(2))
+			Expect(next.Minute()).To(Equal(0))
+		})
 
 	It("leaves a descriptor alone", func(ctx context.Context) {
 		cli := newScheduledBackupTestClient()
