@@ -191,6 +191,31 @@ func (list *BackupList) CanExecuteBackup(backupName string) bool {
 	return false
 }
 
+// GetBlockingBackup returns the backup that prevents the given one from
+// executing: the one executing, or the first pending one. It returns nil
+// when nothing blocks it.
+func (list *BackupList) GetBlockingBackup(backupName string) *Backup {
+	if list.CanExecuteBackup(backupName) {
+		return nil
+	}
+
+	for idx := range list.Items {
+		if list.Items[idx].Status.IsExecuting() {
+			return &list.Items[idx]
+		}
+	}
+
+	if pendingBackups := list.GetPendingBackupNames(); len(pendingBackups) > 0 {
+		for idx := range list.Items {
+			if list.Items[idx].Name == pendingBackups[0] {
+				return &list.Items[idx]
+			}
+		}
+	}
+
+	return nil
+}
+
 // SortByName sorts the backup items in alphabetical order
 func (list *BackupList) SortByName() {
 	// Sort the list of backups in alphabetical order

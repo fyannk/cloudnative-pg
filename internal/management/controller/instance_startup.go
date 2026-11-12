@@ -79,7 +79,8 @@ func (r *InstanceReconciler) verifyPgDataCoherenceForPrimary(ctx context.Context
 		// systemInitialization is broadcast and PostgreSQL is allowed to start.
 		if err := r.acquirePrimaryLease(ctx, cluster); err != nil {
 			if errors.Is(err, context.DeadlineExceeded) {
-				contextLogger.Warning("Primary lease not yet acquired, retrying")
+				contextLogger.Warning("Primary lease not yet acquired, retrying",
+					"reason", r.primaryLeaseAcquirer.WaitReason())
 				return controller.ErrNextLoop
 			}
 			return fmt.Errorf("acquiring primary lease: %w", err)

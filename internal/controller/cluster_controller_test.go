@@ -1319,6 +1319,9 @@ var _ = Describe("reconcileResources surfaces a permanently failed instance crea
 
 	It("reports the unrecoverable phase when a job reaches its backoff limit",
 		func(ctx SpecContext) {
+			recorder := record.NewFakeRecorder(10)
+			env.clusterReconciler.Recorder = recorder
+
 			cluster := newFakeCNPGCluster(env.client, namespace)
 			failedJob := recoveryJob(cluster, batchv1.JobStatus{
 				Failed: 7,
@@ -1338,6 +1341,17 @@ var _ = Describe("reconcileResources surfaces a permanently failed instance crea
 				To(Succeed())
 			Expect(updated.Status.Phase).To(Equal(apiv1.PhaseUnrecoverable))
 			Expect(updated.Status.PhaseReason).To(ContainSubstring(failedJob.Name))
+			event := <-recorder.Events
+			Expect(event).To(HavePrefix("Warning InstanceCreationFailed "))
+			Expect(event).To(ContainSubstring(failedJob.Name))
+
+			_, err = env.clusterReconciler.reconcileResources(ctx, &updated, resources, postgres.PostgresqlStatusList{})
+			Expect(err).ToNot(HaveOccurred())
+			select {
+			case event := <-recorder.Events:
+				Fail("unexpected duplicate event: " + event)
+			default:
+			}
 		})
 })
 

@@ -347,6 +347,25 @@ var _ = Describe("Runnable.tryTakeOver", func() {
 			Expect(r.observedRecord).To(BeNil())
 		})
 
+	It("says why the lease is not held yet", func(ctx context.Context) {
+		// The instance manager logs "lease not yet acquired" while waiting;
+		// the cause used to be logged at Debug only
+		kubeClient := fake.NewClientset()
+		r := newRunnable(kubeClient)
+		Expect(r.WaitReason()).To(BeEmpty())
+
+		acquired, err := r.tryTakeOver(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(acquired).To(BeFalse())
+		Expect(r.WaitReason()).To(ContainSubstring("not found"))
+
+		putLease(ctx, kubeClient, otherPod, time.Now(), 15)
+		acquired, err = r.tryTakeOver(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(acquired).To(BeFalse())
+		Expect(r.WaitReason()).To(ContainSubstring(`held by "` + otherPod + `"`))
+	})
+
 	It("returns true and does not write when this pod is already the holder", func(ctx context.Context) {
 		kubeClient := fake.NewClientset()
 		r := newRunnable(kubeClient)

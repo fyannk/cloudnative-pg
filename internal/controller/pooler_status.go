@@ -21,7 +21,10 @@ package controller
 
 import (
 	"context"
+	"fmt"
 
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
@@ -117,6 +120,34 @@ func (r *PoolerReconciler) updatePoolerStatus(
 	if !equality.Semantic.DeepEqual(pooler.Status, *updatedStatus) {
 		pooler.Status = *updatedStatus
 		return r.Status().Update(ctx, pooler)
+	}
+
+	return nil
+}
+
+// updatePoolerPhaseFromDeployment marks the Pooler inactive when its Deployment
+// reports that it cannot run its Pods: ReplicaFailure=True (a Pod creation is
+// rejected, by a quota or an admission policy) or Progressing=False (the
+// rollout exceeded its progress deadline, for example Pods that never become
+// ready). The Deployment's own message is the reason. A Deployment not
+// reporting such a condition leaves the phase computed by updatePoolerStatus.
+func (r *PoolerReconciler) updatePoolerPhaseFromDeployment(
+	ctx context.Context,
+	pooler *apiv1.Pooler,
+	resources *poolerManagedResources,
+) error {
+	if resources.Deployment == nil || pooler.Status.Phase != apiv1.PoolerPhaseActive {
+		return nil
+	}
+
+	for _, condition := range resources.Deployment.Status.Conditions {
+		blocked := (condition.Type == appsv1.DeploymentReplicaFailure && condition.Status == corev1.ConditionTrue) ||
+			(condition.Type == appsv1.DeploymentProgressing && condition.Status == corev1.ConditionFalse)
+		if !blocked {
+			continue
+		}
+		reason := fmt.Sprintf("Deployment %s: %s: %s", resources.Deployment.Name, condition.Reason, condition.Message)
+		return r.setPoolerPhase(ctx, pooler, apiv1.PoolerPhaseInactive, reason)
 	}
 
 	return nil

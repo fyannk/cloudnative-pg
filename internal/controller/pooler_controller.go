@@ -23,6 +23,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/cloudnative-pg/machinery/pkg/log"
@@ -90,15 +91,28 @@ func (r *PoolerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		return ctrl.Result{}, nil
 	}
 
+	// Run the inner reconcile loop, reporting on the Pooler the error that
+	// ends it: the "Reconciler error" log line is in the operator namespace,
+	// which the owner of the Pooler usually cannot read
+	result, err := r.reconcile(ctx, &pooler)
+	if err != nil {
+		recordReconciliationError(r.Recorder, &pooler, err)
+	}
+	return result, err
+}
+
+func (r *PoolerReconciler) reconcile(ctx context.Context, pooler *apiv1.Pooler) (ctrl.Result, error) {
+	contextLogger := log.FromContext(ctx)
+
 	// We make sure that there isn't a cluster with the same name as the pooler
-	conflictingCluster, err := getClusterOrNil(ctx, r.Client, req.NamespacedName)
+	conflictingCluster, err := getClusterOrNil(ctx, r.Client, client.ObjectKeyFromObject(pooler))
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("while getting cluster resource: %w", err)
 	}
 
 	if conflictingCluster != nil {
 		r.Recorder.Event(
-			&pooler,
+			pooler,
 			"Warning",
 			"NameClash",
 			"Name clash between Pooler and Cluster detected, resource reconciliation skipped")
@@ -108,7 +122,7 @@ func (r *PoolerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	if result, err := r.Admission.EnsureResourceIsAdmitted(
 		ctx,
 		guard.AdmissionParams[*apiv1.Pooler]{
-			Object:       &pooler,
+			Object:       pooler,
 			Client:       r.Client,
 			ApplyChanges: true,
 		},
@@ -124,28 +138,28 @@ func (r *PoolerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		return ctrl.Result{}, fmt.Errorf("while getting referenced cluster: %w", err)
 	}
 	if cluster == nil {
-		return *r.markInactiveAndWait(ctx, &pooler,
+		return *r.markInactiveAndWait(ctx, pooler,
 			fmt.Sprintf("Cluster %q not found", pooler.Spec.Cluster.Name)), nil
 	}
 
 	// Get the set of resources we directly manage and their status
-	resources, err := r.getManagedResources(ctx, &pooler, cluster)
+	resources, err := r.getManagedResources(ctx, pooler, cluster)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("while getting managed resources: %w", err)
 	}
 
 	// Early exit if some required prerequisite resources are not yet available
-	if res := r.waitForPrerequisites(ctx, &pooler, resources); res != nil {
+	if res := r.waitForPrerequisites(ctx, pooler, resources); res != nil {
 		return *res, nil
 	}
 
-	if res := r.ensureManagedResourcesAreOwned(ctx, pooler, resources); !res.IsZero() {
+	if res := r.ensureManagedResourcesAreOwned(ctx, *pooler, resources); !res.IsZero() {
 		return res, nil
 	}
 
 	// Update the status of the Pooler resource given what we read
 	// from the controlled resources
-	if err := r.updatePoolerStatus(ctx, &pooler, resources); err != nil {
+	if err := r.updatePoolerStatus(ctx, pooler, resources); err != nil {
 		if apierrs.IsConflict(err) {
 			// Requeue a reconciliation loop since the resource
 			// changed while we were synchronizing it
@@ -160,7 +174,12 @@ func (r *PoolerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	// is a no-op, but service accounts, RBAC, services and PodMonitor are still
 	// reconciled, so drift in those resources is corrected even when the catalog
 	// reference is misconfigured.
-	return ctrl.Result{}, r.updateOwnedObjects(ctx, &pooler, resources)
+	if err := r.updateOwnedObjects(ctx, pooler, resources); err != nil {
+		return ctrl.Result{}, err
+	}
+
+	// What the Deployment reports about its Pods, now that it is up to date
+	return ctrl.Result{}, r.updatePoolerPhaseFromDeployment(ctx, pooler, resources)
 }
 
 // SetupWithManager setup this controller inside the controller manager
@@ -267,20 +286,25 @@ func (r *PoolerReconciler) ensureManagedResourcesAreOwned(
 	contextLogger := log.FromContext(ctx)
 
 	var invalidData []interface{}
+	var notOwned []string
 	if resources.Deployment != nil && !isOwnedByPooler(pooler.Name, resources.Deployment) {
 		invalidData = append(invalidData, "notOwnedDeploymentName", resources.Deployment.Name)
+		notOwned = append(notOwned, "Deployment "+resources.Deployment.Name)
 	}
 
 	if resources.Service != nil && !isOwnedByPooler(pooler.Name, resources.Service) {
 		invalidData = append(invalidData, "notOwnedServiceName", resources.Service.Name)
+		notOwned = append(notOwned, "Service "+resources.Service.Name)
 	}
 
 	if resources.Role != nil && !isOwnedByPooler(pooler.Name, resources.Role) {
 		invalidData = append(invalidData, "notOwnedRoleName", resources.Role.Name)
+		notOwned = append(notOwned, "Role "+resources.Role.Name)
 	}
 
 	if resources.RoleBinding != nil && !isOwnedByPooler(pooler.Name, resources.RoleBinding) {
 		invalidData = append(invalidData, "notOwnedRoleBindingName", resources.RoleBinding.Name)
+		notOwned = append(notOwned, "RoleBinding "+resources.RoleBinding.Name)
 	}
 
 	if len(invalidData) == 0 {
@@ -292,10 +316,10 @@ func (r *PoolerReconciler) ensureManagedResourcesAreOwned(
 		"while ensuring managed resources are owned, requeueing...",
 		invalidData...,
 	)
-	r.Recorder.Event(&pooler,
+	r.Recorder.Eventf(&pooler,
 		"Warning",
 		"InvalidOwnership",
-		"found invalid ownership for managed resources, check logs")
+		"found managed resources not owned by this Pooler: %s", strings.Join(notOwned, ", "))
 
 	return ctrl.Result{RequeueAfter: 120 * time.Second}
 }

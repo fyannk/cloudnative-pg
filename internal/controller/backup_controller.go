@@ -125,8 +125,6 @@ func NewBackupReconciler(
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get
 
 // Reconcile is the main reconciliation loop
-//
-//nolint:gocognit,gocyclo
 func (r *BackupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	contextLogger, ctx := log.SetupLogger(ctx)
 
@@ -159,10 +157,24 @@ func (r *BackupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		return ctrl.Result{}, nil
 	}
 
+	// Run the inner reconcile loop, reporting on the Backup the error that
+	// ends it: the "Reconciler error" log line is in the operator namespace,
+	// which the owner of the Backup usually cannot read
+	result, err := r.reconcile(ctx, &backup)
+	if err != nil {
+		recordReconciliationError(r.Recorder, &backup, err)
+	}
+	return result, err
+}
+
+//nolint:gocognit,gocyclo
+func (r *BackupReconciler) reconcile(ctx context.Context, backup *apiv1.Backup) (ctrl.Result, error) {
+	contextLogger := log.FromContext(ctx)
+
 	if result, err := r.admission.EnsureResourceIsAdmitted(
 		ctx,
 		guard.AdmissionParams[*apiv1.Backup]{
-			Object:       &backup,
+			Object:       backup,
 			Client:       r.Client,
 			ApplyChanges: true,
 		},
@@ -171,7 +183,7 @@ func (r *BackupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	}
 
 	var cluster apiv1.Cluster
-	if res, err := r.getCluster(ctx, &backup, &cluster); err != nil || res != nil {
+	if res, err := r.getCluster(ctx, backup, &cluster); err != nil || res != nil {
 		if res != nil {
 			return *res, err
 		}
@@ -180,7 +192,7 @@ func (r *BackupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 
 	ctx = cluster.SetInContext(ctx)
 
-	if res, err := r.checkPrerequisites(ctx, backup, cluster); err != nil || res != nil {
+	if res, err := r.checkPrerequisites(ctx, *backup, cluster); err != nil || res != nil {
 		if res != nil {
 			return *res, err
 		}
@@ -219,15 +231,15 @@ func (r *BackupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	// preflight checks that AREN'T formal.
 	// We ask questions like: "are there other backups running?", "is the current backup running?",
 	// "is the target instance healthy?"
-	if res, err := r.waitIfOtherBackupsRunning(ctx, &backup, &cluster); err != nil || !res.IsZero() {
+	if res, err := r.waitIfOtherBackupsRunning(ctx, backup, &cluster); err != nil || !res.IsZero() {
 		return res, err
 	}
-	isRunning, err := r.isCurrentBackupRunning(ctx, backup, cluster)
+	isRunning, err := r.isCurrentBackupRunning(ctx, *backup, cluster)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
 
-	if hookResult := preReconcilePluginHooks(ctx, &cluster, &backup); hookResult.StopReconciliation {
+	if hookResult := preReconcilePluginHooks(ctx, &cluster, backup); hookResult.StopReconciliation {
 		return hookResult.Result, hookResult.Err
 	}
 
@@ -238,7 +250,7 @@ func (r *BackupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 
 	switch {
 	case backup.Spec.Method.IsManagedByInstance():
-		res, err := r.startBackupManagedByInstance(ctx, cluster, &backup)
+		res, err := r.startBackupManagedByInstance(ctx, cluster, backup)
 		if err != nil {
 			return ctrl.Result{}, err
 		}
@@ -246,7 +258,7 @@ func (r *BackupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 			return *res, nil
 		}
 	case backup.Spec.Method.IsManagedByOperator():
-		res, err := r.reconcileSnapshotBackup(ctx, &cluster, &backup)
+		res, err := r.reconcileSnapshotBackup(ctx, &cluster, backup)
 		if err != nil {
 			return ctrl.Result{}, err
 		}
@@ -257,7 +269,7 @@ func (r *BackupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		return ctrl.Result{}, fmt.Errorf("unrecognized method: %s", backup.Spec.Method)
 	}
 
-	hookResult := postReconcilePluginHooks(ctx, &cluster, &backup)
+	hookResult := postReconcilePluginHooks(ctx, &cluster, backup)
 	if hookResult.Err != nil || !hookResult.Result.IsZero() {
 		return hookResult.Result, hookResult.Err
 	}
@@ -1193,6 +1205,12 @@ func (r *BackupReconciler) waitIfOtherBackupsRunning(
 			}
 			contextLogger.Error(patchErr, "while setting backup as pending")
 			return ctrl.Result{}, patchErr
+		}
+		// Name the backup this one waits for: a pending backup has no
+		// status.error, and its owner may not know which one is in its way
+		if blocker := clusterBackups.GetBlockingBackup(backup.Name); blocker != nil {
+			r.Recorder.Eventf(backup, "Normal", "BackupPending",
+				"Waiting for backup %s to complete (%s)", blocker.Name, blocker.Status.Phase)
 		}
 		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
 	}

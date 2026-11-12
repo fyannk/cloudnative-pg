@@ -48,6 +48,8 @@ import (
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
 	"github.com/cloudnative-pg/cloudnative-pg/internal/configuration"
 	schemeBuilder "github.com/cloudnative-pg/cloudnative-pg/internal/scheme"
+	"github.com/cloudnative-pg/cloudnative-pg/pkg/postgres"
+	"github.com/cloudnative-pg/cloudnative-pg/pkg/reconciler/persistentvolumeclaim"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/specs"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/utils"
 
@@ -1875,4 +1877,118 @@ var _ = Describe("createPostgresClusterObjects", func() {
 		}
 		Expect(events).To(ContainElement(HavePrefix("Warning DefaultMonitoringQueriesError")))
 	})
+})
+
+var _ = Describe("bootstrapping a Cluster whose creations are rejected", func() {
+	var (
+		env           *testingEnvironment
+		namespace     string
+		rejectCreates bool
+		recorder      *record.FakeRecorder
+	)
+
+	drainEvents := func() []string {
+		var events []string
+		for {
+			select {
+			case event := <-recorder.Events:
+				events = append(events, event)
+			default:
+				return events
+			}
+		}
+	}
+
+	BeforeEach(func() {
+		env = buildTestEnvironment()
+		namespace = newFakeNamespace(env.client)
+		recorder = env.clusterReconciler.Recorder.(*record.FakeRecorder)
+		rejectCreates = false
+		env.clusterReconciler.Client = interceptor.NewClient(env.client, interceptor.Funcs{
+			Create: func(ctx context.Context, cl k8client.WithWatch, obj k8client.Object,
+				opts ...k8client.CreateOption,
+			) error {
+				if rejectCreates {
+					return apierrs.NewForbidden(corev1.Resource("objects"), obj.GetName(),
+						errors.New("exceeded quota"))
+				}
+				return cl.Create(ctx, obj, opts...)
+			},
+		})
+	})
+
+	It("records the instance only after its Pod is created", func(ctx SpecContext) {
+		cluster := newFakeCNPGCluster(env.client, namespace, func(c *apiv1.Cluster) {
+			c.Spec.Instances = 1
+		})
+		cluster.Status.Instances = 0
+		cluster.Status.ReadyInstances = 0
+		cluster.Status.InstanceNames = nil
+		cluster.Status.TargetPrimary = ""
+		cluster.Status.CurrentPrimary = ""
+		drainEvents()
+
+		rejectCreates = true
+		_, err := env.clusterReconciler.createPrimaryInstance(ctx, cluster)
+		Expect(err).To(HaveOccurred())
+		Expect(drainEvents()).ToNot(ContainElement(ContainSubstring("InstanceCreated")))
+
+		rejectCreates = false
+		_, err = env.clusterReconciler.createPrimaryInstance(ctx, cluster)
+		Expect(err).To(MatchError(ErrNextLoop))
+		cluster.TypeMeta = metav1.TypeMeta{Kind: apiv1.ClusterKind, APIVersion: apiv1.SchemeGroupVersion.String()}
+
+		var pvcs corev1.PersistentVolumeClaimList
+		Expect(env.client.List(ctx, &pvcs, k8client.InNamespace(namespace))).To(Succeed())
+		Expect(pvcs.Items).To(HaveLen(1))
+		pvcs.Items[0].Status.Phase = corev1.ClaimBound
+		persistentvolumeclaim.EnrichStatus(ctx, cluster, nil, nil, pvcs.Items)
+		cluster.Status.Instances = 1
+		cluster.Status.InstanceNames = []string{specs.GetInstanceName(cluster.Name, 1)}
+		pvcs.Items[0].Annotations[utils.PVCStatusAnnotationName] = persistentvolumeclaim.StatusReady
+
+		instanceName := specs.GetInstanceName(cluster.Name, 1)
+		completedBootstrapJob := batchv1.Job{
+			ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{
+				utils.InstanceNameLabelName: instanceName,
+				utils.JobRoleLabelName:      "initdb",
+			}},
+			Status: batchv1.JobStatus{Succeeded: 1},
+		}
+		resources := &managedResources{
+			pvcs: pvcs,
+			jobs: batchv1.JobList{Items: []batchv1.Job{completedBootstrapJob}},
+		}
+		rejectCreates = true
+		_, err = env.clusterReconciler.ensureInstancesAreCreated(ctx, cluster, resources, postgres.PostgresqlStatusList{})
+		Expect(err).To(HaveOccurred())
+		Expect(drainEvents()).To(ConsistOf(ContainSubstring("CreatingInstance Primary instance (initdb)")))
+
+		rejectCreates = false
+		_, err = env.clusterReconciler.ensureInstancesAreCreated(ctx, cluster, resources, postgres.PostgresqlStatusList{})
+		Expect(err).ToNot(HaveOccurred())
+		Expect(drainEvents()).To(Equal([]string{
+			"Normal InstanceCreated Created instance " + instanceName + " (initdb)",
+		}))
+	})
+
+	DescribeTable("describes successful Job-based instance creation",
+		func(role, method string) {
+			instanceName := "cluster-1"
+			job := batchv1.Job{
+				ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{
+					utils.InstanceNameLabelName: instanceName,
+					utils.JobRoleLabelName:      role,
+				}},
+				Status: batchv1.JobStatus{Succeeded: 1},
+			}
+			Expect(instanceCreatedEventMessage(instanceName, []batchv1.Job{job})).
+				To(Equal("Created instance " + instanceName + " (" + method + ")"))
+		},
+		Entry("primary bootstrap", "initdb", "initdb"),
+		Entry("replica join", "join", "join"),
+		Entry("physical backup", "pgbasebackup", "from physical backup"),
+		Entry("object-store recovery", "full-recovery", "from backup"),
+		Entry("snapshot recovery", "snapshot-recovery", "from volumeSnapshots"),
+	)
 })

@@ -679,6 +679,10 @@ func (se *Reconciler) handleSnapshotErrors(
 	contextLogger.Error(snapshotErr,
 		"Retryable snapshot provisioning error, trying again",
 	)
+	// The error is on the VolumeSnapshot and the Backup stays "started"
+	// until the deadline: say it on the Backup at the first retry
+	se.recorder.Eventf(backup, "Warning", "VolumeSnapshotError",
+		"VolumeSnapshot %s: %v (retrying until the deadline)", snapshotErr.Name, snapshotErr)
 	return &ctrl.Result{RequeueAfter: 10 * time.Second}, nil
 }
 
