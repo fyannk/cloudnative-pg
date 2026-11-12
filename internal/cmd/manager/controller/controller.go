@@ -73,10 +73,7 @@ const (
 	// WebhookServiceName is the default Service exposing the webhook server.
 	WebhookServiceName = configuration.DefaultWebhookServiceName
 
-	// The name of the directory containing the TLS certificates for webhooks
-	defaultWebhookCertDir = "/run/secrets/cnpg.io/webhook"
-
-	// LeaderElectionID is the default operator leader-election ID.
+	// LeaderElectionID is the default operator Leader Election ID
 	LeaderElectionID = configuration.DefaultLeaderElectionID
 
 	// CaSecretName is the default name of the Secret hosting the operator CA.
@@ -541,7 +538,7 @@ func buildMetricsOpts(metricsAddr string, conf *configuration.Data) server.Optio
 func buildWebhookOptions(port int, conf *configuration.Data) (webhook.Options, error) {
 	options := webhook.Options{
 		Port:     port,
-		CertDir:  defaultWebhookCertDir,
+		CertDir:  certs.DefaultWebhookCertDir,
 		CertName: certs.TLSCertKey,
 		KeyName:  certs.TLSPrivateKeyKey,
 	}

@@ -34,6 +34,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
+// DefaultWebhookCertDir is the directory where the operator manifests mount
+// the webhook serving certificate
+const DefaultWebhookCertDir = "/run/secrets/cnpg.io/webhook"
+
 // operatorDeployment fetches the operator deployment, by name when known, by
 // label otherwise. The error is returned, not logged: the callers decide
 // whether the deployment is required.
@@ -49,15 +53,15 @@ func (pki PublicKeyInfrastructure) operatorDeployment(
 // certificate: the Secret mounted at the certificate directory of the
 // deployment when one is, the configured name otherwise
 func (pki PublicKeyInfrastructure) webhookSecretName(deployment *appsv1.Deployment) string {
-	if name := mountedSecretName(deployment, pki.CertDir); name != "" {
+	if name := MountedSecretName(deployment, pki.CertDir); name != "" {
 		return name
 	}
 	return pki.SecretName
 }
 
-// mountedSecretName returns the name of the Secret a container of the
+// MountedSecretName returns the name of the Secret a container of the
 // deployment mounts at the given directory, or an empty string when none does
-func mountedSecretName(deployment *appsv1.Deployment, mountPath string) string {
+func MountedSecretName(deployment *appsv1.Deployment, mountPath string) string {
 	if deployment == nil || mountPath == "" {
 		return ""
 	}

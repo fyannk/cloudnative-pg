@@ -20,6 +20,8 @@ SPDX-License-Identifier: Apache-2.0
 package configparser
 
 import (
+	"os"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
@@ -170,5 +172,27 @@ var _ = Describe("Data test suite", func() {
 			ReadConfigMap(config, &FakeData{}, nil)
 			Expect(config.OptionalTimeout).To(BeNil())
 		})
+	})
+})
+
+var _ = Describe("ReadData", func() {
+	It("ignores the environment of the process", func() {
+		Expect(os.Setenv("TEST_READ_DATA_SETTING", "from-the-environment")).To(Succeed())
+		DeferCleanup(os.Unsetenv, "TEST_READ_DATA_SETTING")
+
+		type settings struct {
+			Value string `env:"TEST_READ_DATA_SETTING"`
+			Other string `env:"TEST_READ_DATA_OTHER"`
+		}
+		defaults := &settings{Value: "default", Other: "default"}
+
+		fromData := &settings{}
+		ReadData(fromData, defaults, map[string]string{"TEST_READ_DATA_OTHER": "from-the-data"})
+		Expect(fromData.Value).To(Equal("default"))
+		Expect(fromData.Other).To(Equal("from-the-data"))
+
+		fromEnvironment := &settings{}
+		ReadConfigMap(fromEnvironment, defaults, nil)
+		Expect(fromEnvironment.Value).To(Equal("from-the-environment"))
 	})
 })

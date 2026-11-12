@@ -29,9 +29,9 @@ import (
 
 func operatorCmd() *cobra.Command {
 	var (
-		file, output              string
-		stopRedaction             bool
-		includeLogs, logTimeStamp bool
+		file, output, deploymentName string
+		stopRedaction                bool
+		includeLogs, logTimeStamp    bool
 	)
 
 	const filePlaceholder = "report_operator_<timestamp>.zip"
@@ -46,7 +46,7 @@ func operatorCmd() *cobra.Command {
 				file = reportName("operator", now) + ".zip"
 			}
 			return operator(cmd.Context(), plugin.OutputFormat(output),
-				file, stopRedaction, includeLogs, logTimeStamp, now)
+				file, deploymentName, stopRedaction, includeLogs, logTimeStamp, now)
 		},
 	}
 
@@ -56,6 +56,8 @@ func operatorCmd() *cobra.Command {
 		"Output format for manifests (yaml or json)")
 	cmd.Flags().BoolVarP(&stopRedaction, "stopRedaction", "S", false,
 		"Don't redact secrets")
+	cmd.Flags().StringVar(&deploymentName, "deployment-name", "",
+		"Name of the operator Deployment in the namespace; when unset, the only Deployment running the operator")
 	cmd.Flags().BoolVarP(&includeLogs, "logs", "l", false, "include logs")
 	cmd.Flags().BoolVarP(&logTimeStamp, "timestamps", "t", false,
 		"Prepend human-readable timestamp to each log line")
