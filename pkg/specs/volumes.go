@@ -32,6 +32,9 @@ import (
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/postgres"
 )
 
+// PgDataVolumePath is the path used by the PGDATA volume
+const PgDataVolumePath = "/var/lib/postgresql/data"
+
 // PgWalVolumePath is the path used by the WAL volume when present
 const PgWalVolumePath = "/var/lib/postgresql/wal"
 
@@ -239,7 +242,7 @@ func CreatePostgresVolumeMounts(cluster apiv1.Cluster, extensions []apiv1.Extens
 	volumeMounts := []corev1.VolumeMount{
 		{
 			Name:      pgdataVolumeName,
-			MountPath: "/var/lib/postgresql/data",
+			MountPath: PgDataVolumePath,
 		},
 		{
 			Name:      "scratch-data",
