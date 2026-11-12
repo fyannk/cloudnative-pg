@@ -851,9 +851,49 @@ via HTTP on port 8080, named `metrics`.
     section below.
 :::
 
-Currently, the operator exposes default `kubebuilder` metrics. See
+The operator exposes the default `kubebuilder` metrics (see the
 [kubebuilder documentation](https://book.kubebuilder.io/reference/metrics.html)
-for more details.
+for more details), and two families of its own:
+
+- `cnpg_operator_managed_objects{kind, namespace, cluster}`: the number of
+  objects of each CloudNativePG kind the operator manages, per namespace and,
+  for the kinds that reference a Cluster (`Backup`, `ScheduledBackup`,
+  `Pooler`, `Database`, `Publication`, `Subscription`, `DatabaseRole`,
+  `FailoverQuorum`), per Cluster. The `cluster` label is empty for `Cluster`
+  itself and for the image catalogs, the `namespace` label is empty for
+  `ClusterImageCatalog`. A kind without objects has no series.
+- `cnpg_operator_build_info{version, commit, date}`: always `1`, with the
+  build of the running operator in its labels.
+
+Both are computed when scraped, from the operator's cache: with several
+replicas, each one reports its own view.
+
+A third family reports the effective configuration of the operator:
+
+- `cnpg_operator_config_info{name, value}`: always `1`, one series per
+  setting listed in ["Operator configuration"](operator_conf.md), named as
+  its environment variable, with its effective value: defaults included, and
+  for the `API_*_ENABLED` settings the result of the startup probe. Lists are
+  comma-separated and an unset optional value is empty. A setting read from
+  the operator `Secret` is reported with the value `<redacted>`.
+
+```text
+cnpg_operator_config_info{name="API_NODE_ENABLED",value="false"} 1
+cnpg_operator_config_info{name="WATCH_NAMESPACE",value="tenant-a,tenant-b"} 1
+cnpg_operator_config_info{name="PULL_SECRET_NAME",value="<redacted>"} 1
+```
+
+```text
+# HELP cnpg_operator_build_info Build of the running operator
+# TYPE cnpg_operator_build_info gauge
+cnpg_operator_build_info{commit="a1b2c3d",date="2026-10-12T09:00:00Z",version="1.30.1"} 1
+# HELP cnpg_operator_managed_objects Number of objects of each CloudNativePG kind the operator manages, per namespace and, for the kinds that reference one, per Cluster
+# TYPE cnpg_operator_managed_objects gauge
+cnpg_operator_managed_objects{cluster="",kind="Cluster",namespace="tenant-a"} 2
+cnpg_operator_managed_objects{cluster="pg-1",kind="Backup",namespace="tenant-a"} 12
+cnpg_operator_managed_objects{cluster="pg-1",kind="ScheduledBackup",namespace="tenant-a"} 1
+cnpg_operator_managed_objects{cluster="pg-1",kind="Pooler",namespace="tenant-a"} 1
+```
 
 ### Monitoring the operator with Prometheus
 
