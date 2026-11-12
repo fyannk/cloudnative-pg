@@ -82,6 +82,13 @@ type ScheduledBackupSpec struct {
 	// Overrides the default settings specified in the cluster '.backup.volumeSnapshot.onlineConfiguration' stanza
 	// +optional
 	OnlineConfiguration *OnlineConfiguration `json:"onlineConfiguration,omitempty"`
+
+	// Labels and annotations to put on the Backups the ScheduledBackup
+	// creates
+	// +kubebuilder:validation:MaxItems=64
+	// +kubebuilder:validation:XValidation:rule="self.all(r, r.targets.all(t, t in ['backups']))",message="a ScheduledBackup accepts the target backups"
+	// +optional
+	MetadataPropagation []MetadataPropagationRule `json:"metadataPropagation,omitempty"`
 }
 
 // ScheduledBackupStatus defines the observed state of ScheduledBackup

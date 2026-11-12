@@ -300,6 +300,8 @@ ManagedService
 ManagedServices
 MaxItems
 MaxLength
+MetadataPropagationRule
+MetadataPropagationTarget
 MetricDescription
 MetricName
 MetricType
@@ -641,6 +643,7 @@ affinityconfiguration
 aks
 albert
 alex
+allPods
 allTables
 allnamespaces
 alloc
@@ -1162,6 +1165,7 @@ lt
 lz
 mTLS
 macOS
+majorUpgradePods
 majorVersion
 majorVersionUpgradeFromImage
 malcolm
@@ -1187,6 +1191,8 @@ md
 mediatype
 mem
 memstats
+metadatapropagationrule
+metadatapropagationtarget
 metav
 metric's
 metricsQueriesTTL
@@ -1280,6 +1286,7 @@ pgBouncerIntegration
 pgBouncerSecrets
 pgDataImageInfo
 pgDumpExtraOptions
+pgPods
 pgRestoreDataOptions
 pgRestoreExtraOptions
 pgRestorePostdataOptions
@@ -1337,8 +1344,10 @@ podtemplatespec
 podtopologylabels
 poolMode
 pooler
+poolerDeployments
 poolerIntegrations
 poolerName
+poolerPods
 poolerintegrations
 poolermonitoringconfiguration
 poolermonitoringtlsconfiguration

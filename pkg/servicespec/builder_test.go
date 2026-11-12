@@ -145,3 +145,28 @@ var _ = Describe("Service template builder", func() {
 		Expect(svc.Spec.Ports).To(HaveExactElements(expectedPort))
 	})
 })
+
+// The template given to the builder belongs to the caller's object, a
+// Pooler's or a Cluster's spec: building a Service must leave it as it was
+var _ = Describe("Service template builder and the template it starts from", func() {
+	It("never writes into the passed template", func() {
+		template := &apiv1.ServiceTemplateSpec{
+			ObjectMeta: apiv1.Metadata{
+				Labels:      map[string]string{"team": "payments"},
+				Annotations: map[string]string{"note": "x"},
+			},
+			Spec: corev1.ServiceSpec{Ports: []corev1.ServicePort{{Name: "existing", Port: 1}}},
+		}
+		original := template.DeepCopy()
+
+		NewFrom(template).
+			WithLabel(utils.ClusterLabelName, "payments").
+			WithAnnotation("added", "yes").
+			WithServicePortNoOverwrite(&corev1.ServicePort{
+				Name: pgBouncerConfig.PgBouncerPortName, Port: 5432, TargetPort: intstr.FromInt32(5432),
+			}).
+			Build()
+
+		Expect(template).To(Equal(original))
+	})
+})

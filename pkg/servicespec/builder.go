@@ -43,8 +43,9 @@ func NewFrom(serviceTemplate *apiv1.ServiceTemplateSpec) *Builder {
 	if serviceTemplate == nil {
 		serviceTemplate = &apiv1.ServiceTemplateSpec{}
 	}
+	// Work on a copy: the template belongs to the caller's object
 	return &Builder{
-		status: *serviceTemplate,
+		status: *serviceTemplate.DeepCopy(),
 	}
 }
 

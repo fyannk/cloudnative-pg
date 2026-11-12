@@ -41,6 +41,7 @@ import (
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/management/postgres"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/management/postgres/webserver/client/remote"
+	"github.com/cloudnative-pg/cloudnative-pg/pkg/metadatarules"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/reconciler/persistentvolumeclaim"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/utils"
 )
@@ -98,7 +99,12 @@ func (se *Reconciler) enrichSnapshot(
 
 	switch snapshotConfig.SnapshotOwnerReference {
 	case apiv1.SnapshotOwnerReferenceCluster:
-		cluster.SetInheritedDataAndOwnership(&vs.ObjectMeta)
+		// Only the metadata the Cluster sets: the default and mandatory
+		// metadata of the operator come with the rules of the Backup
+		utils.SetAnnotations(&vs.ObjectMeta, cluster.GetClusterAnnotationsFor(metadatarules.All))
+		utils.SetLabels(&vs.ObjectMeta, cluster.GetClusterLabelsFor(metadatarules.All))
+		utils.LabelClusterName(&vs.ObjectMeta, cluster.GetName())
+		utils.SetAsOwnedBy(&vs.ObjectMeta, cluster.ObjectMeta, cluster.TypeMeta)
 	case apiv1.SnapshotOwnerReferenceBackup:
 		utils.SetAsOwnedBy(&vs.ObjectMeta, backup.ObjectMeta, backup.TypeMeta)
 	default:
@@ -506,6 +512,7 @@ func (se *Reconciler) createSnapshot(
 	if err := se.enrichSnapshot(ctx, &snapshot, backup, cluster, targetPod); err != nil {
 		return err
 	}
+	backup.ApplyMetadataTo(&snapshot.ObjectMeta, metadatarules.VolumeSnapshots)
 
 	if err := se.cli.Create(ctx, &snapshot); err != nil {
 		return se.handleSnapshotCreateError(ctx, err, &snapshot, backup)

@@ -159,6 +159,14 @@ type BackupSpec struct {
 	// Overrides the default settings specified in the cluster '.backup.volumeSnapshot.onlineConfiguration' stanza
 	// +optional
 	OnlineConfiguration *OnlineConfiguration `json:"onlineConfiguration,omitempty"`
+
+	// Labels and annotations to put on the VolumeSnapshots of the Backup,
+	// on top of those of their PVC and of the volume snapshot settings of
+	// the Cluster
+	// +kubebuilder:validation:MaxItems=64
+	// +kubebuilder:validation:XValidation:rule="self.all(r, r.targets.all(t, t in ['volumeSnapshots']))",message="a Backup accepts the target volumeSnapshots"
+	// +optional
+	MetadataPropagation []MetadataPropagationRule `json:"metadataPropagation,omitempty"`
 }
 
 // BackupPluginConfiguration contains the backup configuration used by

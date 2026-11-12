@@ -25,6 +25,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
+	config "github.com/cloudnative-pg/cloudnative-pg/internal/configuration"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/utils"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -191,5 +192,52 @@ var _ = Describe("PVC Creation", func() {
 		Expect(err).ToNot(HaveOccurred())
 		Expect(pvc.Spec.AccessModes).To(HaveLen(1))
 		Expect(pvc.Spec.AccessModes).To(ContainElement(corev1.ReadWriteOnce))
+	})
+})
+
+// A new PVC gets the metadata of its kind, objectMetadata and the
+// DEFAULT_* and MANDATORY_* settings for `persistentVolumeClaims`, on top of the
+// labels and annotations the operator sets on it
+var _ = Describe("The metadata of a new PVC", func() {
+	It("comes from its kind, never from the Pods'", func() {
+		previous := config.Current
+		config.Current = config.NewConfiguration()
+		DeferCleanup(func() { config.Current = previous })
+		config.Current.MandatoryMetadata = `[` +
+			`{"targets": ["persistentVolumeClaims"], "labels": {"cost-centre": "storage"}},` +
+			`{"targets": ["pgPods"], "labels": {"tier": "pods"}}` +
+			`]`
+		Expect(config.Current.ParseDefaultAndMandatoryMetadata()).To(Succeed())
+
+		cluster := &apiv1.Cluster{
+			ObjectMeta: metav1.ObjectMeta{Name: "payments", Namespace: "payments"},
+			Spec: apiv1.ClusterSpec{MetadataPropagation: []apiv1.MetadataPropagationRule{
+				{
+					Targets:     []apiv1.MetadataPropagationTarget{"persistentVolumeClaims"},
+					Labels:      map[string]string{"velero.io/exclude-from-backup": "true"},
+					Annotations: map[string]string{"resize.topolvm.io/storage_limit": "200Gi"},
+				},
+				{
+					Targets:     []apiv1.MetadataPropagationTarget{"pgPods"},
+					Annotations: map[string]string{"vault.hashicorp.com/agent-inject": "true"},
+				},
+			}},
+		}
+		pvc, err := Build(cluster, &CreateConfiguration{
+			Status:     StatusInitializing,
+			NodeSerial: 1,
+			Calculator: NewPgDataCalculator(),
+			Storage:    apiv1.StorageConfiguration{Size: "1Gi"},
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(pvc.Labels).To(HaveKeyWithValue("velero.io/exclude-from-backup", "true"))
+		Expect(pvc.Labels).To(HaveKeyWithValue("cost-centre", "storage"))
+		Expect(pvc.Labels).NotTo(HaveKey("tier"))
+		Expect(pvc.Labels).To(HaveKeyWithValue(utils.PvcRoleLabelName, string(utils.PVCRolePgData)))
+		Expect(pvc.Labels).To(HaveKeyWithValue(utils.ClusterLabelName, "payments"))
+		Expect(pvc.Annotations).To(HaveKeyWithValue("resize.topolvm.io/storage_limit", "200Gi"))
+		Expect(pvc.Annotations).To(HaveKeyWithValue(utils.ClusterSerialAnnotationName, "1"))
+		Expect(pvc.Annotations).NotTo(HaveKey("vault.hashicorp.com/agent-inject"))
+		Expect(pvc.OwnerReferences).To(HaveLen(1))
 	})
 })
