@@ -336,6 +336,7 @@ func (r *ClusterReconciler) updateResourceStatus(
 	// to discover the exact version of the operator which worked the last time
 	// on this cluster
 	cluster.Status.CommitHash = versions.Info.Commit
+	cluster.Status.Operator = operatorStatus(configuration.Current)
 
 	if poolerIntegrations, err := r.getPoolerIntegrationsNeeded(ctx, cluster); err == nil {
 		cluster.Status.PoolerIntegrations = poolerIntegrations

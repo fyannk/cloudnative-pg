@@ -27,6 +27,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	goruntime "runtime"
 	"strings"
 	"time"
 
@@ -194,6 +195,10 @@ func RunController(
 	}
 
 	setupLog.Info("Operator configuration loaded", "configuration", conf)
+	if err := conf.ValidateOperatorStatusIdentity(); err != nil {
+		setupLog.Error(err, "invalid operator configuration")
+		return err
+	}
 	if conf.PropagateProxyEnv {
 		logProxyPropagation()
 	}
@@ -306,7 +311,12 @@ func RunController(
 		setupLog.Info("Listening for changes on all namespaces")
 	}
 
-	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), managerOptions)
+	restConfig := ctrl.GetConfigOrDie()
+	if userAgent := operatorUserAgent(conf); userAgent != "" {
+		restConfig.UserAgent = userAgent
+		setupLog.Info("Operator writes are attributed to its Deployment", "userAgent", userAgent)
+	}
+	mgr, err := ctrl.NewManager(restConfig, managerOptions)
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")
 		return err
@@ -640,6 +650,9 @@ func logProxyPropagation() {
 }
 
 func validateOperatorIdentity(conf *configuration.Data) error {
+	if err := conf.ValidateOperatorStatusIdentity(); err != nil {
+		return err
+	}
 	if conf.OperatorDeploymentName == "" {
 		return nil
 	}
@@ -650,6 +663,22 @@ func validateOperatorIdentity(conf *configuration.Data) error {
 	return nil
 }
 
+// operatorUserAgent returns the user agent the operator presents to the API
+// server when its Deployment name is reported: the API server takes the
+// part before the slash as the field manager of every write, so the
+// managedFields of every object the operator writes name the instance.
+// Empty when the name is not reported or not known, which keeps the default
+// user agent and the historical "manager" field manager
+func operatorUserAgent(conf *configuration.Data) string {
+	if !conf.ReportsOperatorName() || conf.OperatorDeploymentName == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s/%s (%s/%s) cloudnative-pg/%s",
+		conf.OperatorDeploymentName, versions.Version, goruntime.GOOS, goruntime.GOARCH, versions.Info.Commit)
+}
+
+// logOwnObjectNames logs the names the operator uses for its own objects when
+// they follow its Deployment
 func logOwnObjectNames(conf *configuration.Data) {
 	if conf.OperatorDeploymentName == "" {
 		return
