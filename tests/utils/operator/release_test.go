@@ -57,6 +57,30 @@ var _ = Describe("Release tag extraction", func() {
 	})
 })
 
+// A fork release manifest, cnpg-1.30.1-1.yaml, holds no X.Y.Z version the
+// helper could read: it left a nil entry among the versions, and sorting
+// them panicked. The fork releases are read now, after the upstream release
+// they are based on, and a manifest whose name holds no version is skipped
+var _ = Describe("Available releases", func() {
+	It("orders the fork releases after their upstream release", func() {
+		releasesDir := GinkgoT().TempDir()
+		for _, name := range []string{
+			"cnpg-1.30.0.yaml", "cnpg-1.30.1-2.yaml", "cnpg-1.30.1-10.yaml",
+			"cnpg-1.30.1.yaml", "cnpg-latest.yaml",
+		} {
+			Expect(os.WriteFile(filepath.Join(releasesDir, name), nil, 0o600)).To(Succeed())
+		}
+
+		versionList, err := GetAvailableReleases(releasesDir)
+		Expect(err).ToNot(HaveOccurred())
+		names := make([]string, 0, len(versionList))
+		for _, version := range versionList {
+			names = append(names, version.String())
+		}
+		Expect(names).To(Equal([]string{"1.30.1-10", "1.30.1-2", "1.30.1", "1.30.0"}))
+	})
+})
+
 var _ = Describe("Most recent tag", func() {
 	It("properly works with release branch", func() {
 		releasesDir, err := filepath.Abs(releaseDirectoryPath)

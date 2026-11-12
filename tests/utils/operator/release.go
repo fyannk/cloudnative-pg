@@ -20,6 +20,7 @@ SPDX-License-Identifier: Apache-2.0
 package operator
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -27,7 +28,7 @@ import (
 	"os/exec"
 	"regexp"
 	"slices"
-	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/Masterminds/semver/v3"
@@ -99,20 +100,23 @@ func GetAvailableReleases(releasesPath string) ([]*semver.Version, error) {
 		}
 	}
 
-	versions := make([]*semver.Version, len(validFiles))
+	versions := make([]*semver.Version, 0, len(validFiles))
 
 	// build the array that contains the versions
-	// found in the releasePath directory
-	for i, file := range validFiles {
+	// found in the releasePath directory, skipping the files whose name
+	// holds no version
+	for _, file := range validFiles {
 		tag, err := extractTag(file.Name())
 		if err != nil {
 			continue
 		}
-		versions[i] = semver.MustParse(tag)
+		versions = append(versions, semver.MustParse(tag))
 	}
 
 	// Sorting version as descending order ([v1.10.0, v1.9.0...])
-	sort.Sort(sort.Reverse(semver.Collection(versions)))
+	slices.SortFunc(versions, func(a, b *semver.Version) int {
+		return compareReleases(b, a)
+	})
 
 	return slices.CompactFunc(versions, func(a, b *semver.Version) bool {
 		return a.Equal(b)
@@ -131,7 +135,33 @@ func isReleasePullRequestBranch() bool {
 	return strings.HasPrefix(branchName, "release/v")
 }
 
-var extractTagRegex = regexp.MustCompile(`-(\d+\.\d+\.\d+).yaml$`)
+// extractTagRegex reads the version of an upstream release manifest,
+// cnpg-X.Y.Z.yaml, and of a fork release manifest, cnpg-X.Y.Z-N.yaml
+var extractTagRegex = regexp.MustCompile(`-(\d+\.\d+\.\d+(?:-\d+)?)\.yaml$`)
+
+// compareReleases orders the releases by their upstream version, then by
+// their fork sequence number: X.Y.Z-N comes after X.Y.Z, where semver
+// would read N as a pre-release
+func compareReleases(a, b *semver.Version) int {
+	if c := upstreamVersion(a).Compare(upstreamVersion(b)); c != 0 {
+		return c
+	}
+	return cmp.Compare(forkSequence(a), forkSequence(b))
+}
+
+// upstreamVersion is the X.Y.Z version a release is based on
+func upstreamVersion(v *semver.Version) *semver.Version {
+	return semver.New(v.Major(), v.Minor(), v.Patch(), "", "")
+}
+
+// forkSequence is the N of a fork release X.Y.Z-N, 0 for an upstream release
+func forkSequence(v *semver.Version) int {
+	n, err := strconv.Atoi(v.Prerelease())
+	if err != nil {
+		return 0
+	}
+	return n
+}
 
 func extractTag(releaseFile string) (string, error) {
 	matches := extractTagRegex.FindStringSubmatch(releaseFile)
