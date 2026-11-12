@@ -686,7 +686,7 @@ func newInstanceForRunningPod(
 		return nil, fmt.Errorf("while getting the pod serial value: %w", err)
 	}
 
-	tlsEnabled := remote.GetStatusSchemeFromPod(pod).IsHTTPS()
+	tlsEnabled := specs.GetStatusSchemeFromPod(pod).IsHTTPS()
 	targetPod, err := specs.NewInstance(ctx, *cluster, serial, tlsEnabled)
 	if err != nil {
 		return nil, fmt.Errorf("while creating a new instance pod: %w", err)

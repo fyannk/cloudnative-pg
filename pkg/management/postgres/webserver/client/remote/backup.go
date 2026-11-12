@@ -30,6 +30,7 @@ import (
 
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/management/postgres/webserver"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/management/url"
+	"github.com/cloudnative-pg/cloudnative-pg/pkg/specs"
 )
 
 // BackupClient is the interface to interact with the backup endpoints
@@ -58,7 +59,7 @@ func (c *backupClientImpl) StatusWithErrors(
 	ctx context.Context,
 	pod *corev1.Pod,
 ) (*webserver.Response[webserver.BackupResultData], error) {
-	scheme := GetStatusSchemeFromPod(pod)
+	scheme := specs.GetStatusSchemeFromPod(pod)
 	httpURL := url.Build(scheme.ToString(), pod.Status.PodIP, url.PathPgModeBackup, url.StatusPort)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, httpURL, nil)
 	if err != nil {
@@ -74,7 +75,7 @@ func (c *backupClientImpl) Start(
 	pod *corev1.Pod,
 	sbq webserver.StartBackupRequest,
 ) (*webserver.Response[webserver.BackupResultData], error) {
-	scheme := GetStatusSchemeFromPod(pod)
+	scheme := specs.GetStatusSchemeFromPod(pod)
 	httpURL := url.Build(scheme.ToString(), pod.Status.PodIP, url.PathPgModeBackup, url.StatusPort)
 
 	// Marshalling the payload to JSON
@@ -98,7 +99,7 @@ func (c *backupClientImpl) Stop(
 	pod *corev1.Pod,
 	sbq webserver.StopBackupRequest,
 ) (*webserver.Response[webserver.BackupResultData], error) {
-	scheme := GetStatusSchemeFromPod(pod)
+	scheme := specs.GetStatusSchemeFromPod(pod)
 	httpURL := url.Build(scheme.ToString(), pod.Status.PodIP, url.PathPgModeBackup, url.StatusPort)
 	// Marshalling the payload to JSON
 	jsonBody, err := json.Marshal(sbq)

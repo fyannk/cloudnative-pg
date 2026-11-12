@@ -34,7 +34,6 @@ import (
 
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
 	"github.com/cloudnative-pg/cloudnative-pg/internal/cmd/plugin"
-	"github.com/cloudnative-pg/cloudnative-pg/internal/controller"
 	"github.com/cloudnative-pg/cloudnative-pg/internal/scheme"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/reconciler/persistentvolumeclaim"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/utils"
@@ -215,7 +214,7 @@ var _ = Describe("Destroy", func() {
 		for _, seeded := range []*corev1.PersistentVolumeClaim{pgData, pgWal} {
 			var updated corev1.PersistentVolumeClaim
 			Expect(plugin.Client.Get(ctx, client.ObjectKeyFromObject(seeded), &updated)).To(Succeed())
-			_, isOwned := controller.IsOwnedByCluster(&updated)
+			_, isOwned := apiv1.IsOwnedByCluster(&updated)
 			Expect(isOwned).To(BeFalse())
 			Expect(updated.Annotations[utils.PVCStatusAnnotationName]).To(Equal(persistentvolumeclaim.StatusDetached))
 			Expect(updated.Labels[utils.InstanceNameLabelName]).To(Equal(instanceName))

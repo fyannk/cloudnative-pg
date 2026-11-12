@@ -377,7 +377,7 @@ func (r *ClusterReconciler) ensureSecretMetadata(
 	cluster *apiv1.Cluster,
 	secret *corev1.Secret,
 ) error {
-	if owner, owned := IsOwnedByCluster(secret); !owned || owner != cluster.Name {
+	if owner, owned := apiv1.IsOwnedByCluster(secret); !owned || owner != cluster.Name {
 		return nil
 	}
 

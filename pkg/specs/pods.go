@@ -658,3 +658,40 @@ func AddBarmanEndpointCAToPodSpec(
 
 	podSpec.Containers[0].Env = append(podSpec.Containers[0].Env, envVars...)
 }
+
+// HTTPScheme identifies a valid scheme: http, https
+type HTTPScheme string
+
+const (
+	schemeHTTP  HTTPScheme = "http"
+	schemeHTTPS HTTPScheme = "https"
+)
+
+// IsHTTPS returns true if schemeHTTPS
+func (h HTTPScheme) IsHTTPS() bool {
+	return h == schemeHTTPS
+}
+
+// ToString returns the scheme as a string value
+func (h HTTPScheme) ToString() string {
+	return string(h)
+}
+
+// GetStatusSchemeFromPod detects if a Pod is exposing the status via HTTP or HTTPS
+func GetStatusSchemeFromPod(pod *corev1.Pod) HTTPScheme {
+	// Fall back to comparing the container environment configuration
+	for _, container := range pod.Spec.Containers {
+		// we go to the next array element if it isn't the postgres container
+		if container.Name != PostgresContainerName {
+			continue
+		}
+
+		if slices.Contains(container.Command, "--status-port-tls") {
+			return schemeHTTPS
+		}
+
+		break
+	}
+
+	return schemeHTTP
+}

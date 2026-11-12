@@ -531,7 +531,7 @@ func (r *ClusterReconciler) getPgbouncerIntegrationStatus(
 		if err != nil {
 			return apiv1.PgBouncerIntegrationStatus{}, fmt.Errorf("while getting secret for pooler integration")
 		}
-		if owner, ok := IsOwnedByCluster(&authQuerySecret); ok && owner == cluster.Name {
+		if owner, ok := apiv1.IsOwnedByCluster(&authQuerySecret); ok && owner == cluster.Name {
 			poolersIntegrations.Secrets = append(poolersIntegrations.Secrets, secretName)
 			continue
 		}

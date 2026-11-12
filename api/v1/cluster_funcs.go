@@ -1844,3 +1844,22 @@ func (cluster *Cluster) SetAdmissionError(msg string) {
 func (cluster *Cluster) GetAdmissionError() string {
 	return ""
 }
+
+// IsOwnedByCluster checks that an object is controlled by a Cluster and
+// returns the name of that Cluster
+func IsOwnedByCluster(obj metav1.Object) (string, bool) {
+	owner := metav1.GetControllerOf(obj)
+	if owner == nil {
+		return "", false
+	}
+
+	if owner.Kind != ClusterKind {
+		return "", false
+	}
+
+	if owner.APIVersion != SchemeGroupVersion.String() {
+		return "", false
+	}
+
+	return owner.Name, true
+}
