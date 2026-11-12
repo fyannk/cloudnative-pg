@@ -1586,6 +1586,12 @@ func (r *InstanceReconciler) shouldRequeueForMissingTopology(
 		return false
 	}
 
+	// The operator declared that it cannot extract the topology, because it
+	// does not read the Node API: waiting for it would requeue forever
+	if cluster.IsTopologyUnavailable() {
+		return false
+	}
+
 	topologyStatus := cluster.Status.Topology
 	if !topologyStatus.SuccessfullyExtracted || len(topologyStatus.Instances) != cluster.Spec.Instances {
 		contextLogger.Info("missing topology information while syncReplicaElectionConstraint are enabled, " +

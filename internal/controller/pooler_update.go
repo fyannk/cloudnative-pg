@@ -63,7 +63,6 @@ func (r *PoolerReconciler) updateOwnedObjects(
 	return createOrPatchPodMonitor(
 		ctx,
 		r.Client,
-		r.DiscoveryClient,
 		pgbouncer.NewPoolerPodMonitorManager(pooler, resources.Cluster),
 	)
 }

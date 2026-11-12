@@ -196,3 +196,24 @@ var _ = Describe("Webhook configuration names", func() {
 		Expect(config.GetValidatingWebhookConfigurationName()).To(Equal(DefaultValidatingWebhookConfigurationName))
 	})
 })
+
+var _ = Describe("Optional APIs", func() {
+	It("are enabled by default and disabled by their settings", func() {
+		config := NewConfiguration()
+		Expect(config.APIPodMonitorEnabled).To(BeTrue())
+		Expect(config.APIVolumeSnapshotEnabled).To(BeTrue())
+		Expect(config.APIClusterImageCatalogEnabled).To(BeTrue())
+		Expect(config.APINodeEnabled).To(BeTrue())
+
+		config.ReadConfigMap(map[string]string{
+			"API_NODE_ENABLED":                  "false",
+			"API_POD_MONITOR_ENABLED":           "false",
+			"API_VOLUME_SNAPSHOT_ENABLED":       "false",
+			"API_CLUSTER_IMAGE_CATALOG_ENABLED": "false",
+		})
+		Expect(config.APIPodMonitorEnabled).To(BeFalse())
+		Expect(config.APIVolumeSnapshotEnabled).To(BeFalse())
+		Expect(config.APIClusterImageCatalogEnabled).To(BeFalse())
+		Expect(config.APINodeEnabled).To(BeFalse())
+	})
+})

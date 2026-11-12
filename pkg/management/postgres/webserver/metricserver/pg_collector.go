@@ -542,7 +542,9 @@ func (e *Exporter) collectNodesUsed() {
 		return
 	}
 
-	if !cluster.Status.Topology.SuccessfullyExtracted {
+	// Without the Node API the topology is not extracted, but the nodes used
+	// are still counted from the instance Pods
+	if !cluster.Status.Topology.SuccessfullyExtracted && !cluster.IsTopologyUnavailable() {
 		e.Metrics.NodesUsed.Set(notExtractedValue)
 		return
 	}

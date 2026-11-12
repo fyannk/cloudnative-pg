@@ -20,6 +20,7 @@ SPDX-License-Identifier: Apache-2.0
 package utils
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -29,9 +30,11 @@ import (
 	"sync"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/version"
 	"k8s.io/client-go/discovery"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/executablehash"
 )
@@ -152,21 +155,47 @@ func HaveSecurityContextConstraints() bool {
 	return haveSCC
 }
 
-// DetectVolumeSnapshotExist connects to the discovery API and find out if
-// the VolumeSnapshot CRD exist in the cluster
-func DetectVolumeSnapshotExist(client discovery.DiscoveryInterface) (err error) {
-	haveVolumeSnapshot, err = resourceExist(client, "snapshot.storage.k8s.io/v1", "volumesnapshots")
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-// SetVolumeSnapshot set the haveVolumeSnapshot variable to a specific value for testing purposes
-// IMPORTANT: use it only in the unit tests
+// SetVolumeSnapshot records whether the operator uses the VolumeSnapshot
+// API, as probed at startup
 func SetVolumeSnapshot(value bool) {
 	haveVolumeSnapshot = value
+}
+
+// ProbeListable reports whether the kind of the given list can be listed in
+// every given namespace, or cluster-wide when no namespace is given: the
+// scope its informer will use. It returns false without error when the
+// operator is forbidden to list the kind or the kind is not installed. Any
+// other error is returned, so that a transient failure does not disable a
+// feature for the life of the process.
+func ProbeListable(
+	ctx context.Context,
+	c client.Reader,
+	list client.ObjectList,
+	namespaces []string,
+) (bool, error) {
+	scopes := namespaces
+	if len(scopes) == 0 {
+		scopes = []string{""}
+	}
+
+	for _, namespace := range scopes {
+		opts := []client.ListOption{client.Limit(1)}
+		if namespace != "" {
+			opts = append(opts, client.InNamespace(namespace))
+		}
+
+		err := c.List(ctx, list, opts...)
+		switch {
+		case err == nil:
+			continue
+		case apierrors.IsForbidden(err), apierrors.IsNotFound(err), meta.IsNoMatchError(err):
+			return false, nil
+		default:
+			return false, err
+		}
+	}
+
+	return true, nil
 }
 
 // HaveVolumeSnapshot returns true if we're running under a system that implements

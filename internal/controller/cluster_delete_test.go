@@ -51,10 +51,9 @@ var _ = Describe("ensures that deleteDanglingMonitoringQueries works correctly",
 				Client:          env.clusterReconciler.Client,
 				indexerAdapters: []indexAdapter{clusterDefaultQueriesFalsePathIndexAdapter},
 			},
-			Scheme:          env.clusterReconciler.Scheme,
-			Recorder:        env.clusterReconciler.Recorder,
-			DiscoveryClient: env.clusterReconciler.DiscoveryClient,
-			InstanceClient:  env.clusterReconciler.InstanceClient,
+			Scheme:         env.clusterReconciler.Scheme,
+			Recorder:       env.clusterReconciler.Recorder,
+			InstanceClient: env.clusterReconciler.InstanceClient,
 		}
 
 		By("creating the required monitoring configmap", func() {
@@ -91,10 +90,9 @@ var _ = Describe("ensures that deleteDanglingMonitoringQueries works correctly",
 				Client:          env.clusterReconciler.Client,
 				indexerAdapters: []indexAdapter{clusterDefaultQueriesFalsePathIndexAdapter},
 			},
-			Scheme:          env.clusterReconciler.Scheme,
-			Recorder:        env.clusterReconciler.Recorder,
-			DiscoveryClient: env.clusterReconciler.DiscoveryClient,
-			InstanceClient:  env.clusterReconciler.InstanceClient,
+			Scheme:         env.clusterReconciler.Scheme,
+			Recorder:       env.clusterReconciler.Recorder,
+			InstanceClient: env.clusterReconciler.InstanceClient,
 		}
 		namespace := newFakeNamespace(env.client)
 		var cluster *apiv1.Cluster

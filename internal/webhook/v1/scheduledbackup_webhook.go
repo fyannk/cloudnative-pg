@@ -107,12 +107,15 @@ func (v *ScheduledBackupCustomValidator) ValidateCreate(
 // ValidateUpdate implements webhook.CustomValidator so a webhook will be registered for the type ScheduledBackup.
 func (v *ScheduledBackupCustomValidator) ValidateUpdate(
 	_ context.Context,
-	_ *apiv1.ScheduledBackup, scheduledBackup *apiv1.ScheduledBackup,
+	oldScheduledBackup *apiv1.ScheduledBackup, scheduledBackup *apiv1.ScheduledBackup,
 ) (admission.Warnings, error) {
 	scheduledBackupLog.Info("Validation for ScheduledBackup upon update",
 		"name", scheduledBackup.GetName(), "namespace", scheduledBackup.GetNamespace())
 
 	warnings, allErrs := v.validate(scheduledBackup, false)
+	allErrs, methodWarnings := volumeSnapshotMethodOnUpdate(
+		allErrs, scheduledBackup.Spec.Method, oldScheduledBackup.Spec.Method)
+	warnings = append(warnings, methodWarnings...)
 	if len(allErrs) == 0 {
 		return warnings, nil
 	}
@@ -174,16 +177,7 @@ func (v *ScheduledBackupCustomValidator) validate(
 		}
 	}
 
-	if r.Spec.Method == apiv1.BackupMethodVolumeSnapshot && !utils.HaveVolumeSnapshot() {
-		result = append(result, field.Invalid(
-			field.NewPath("spec", "method"),
-			r.Spec.Method,
-			"Cannot use volumeSnapshot backup method due to missing "+
-				"VolumeSnapshot CRD. If you installed the CRD after having "+
-				"started the operator, please restart it to enable "+
-				"VolumeSnapshot support",
-		))
-	}
+	result = append(result, volumeSnapshotMethodErrors(r.Spec.Method)...)
 
 	if r.Spec.Method == apiv1.BackupMethodBarmanObjectStore && r.Spec.Online != nil {
 		result = append(result, field.Invalid(

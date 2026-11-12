@@ -22,6 +22,7 @@ package imagecatalog
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	apierrs "k8s.io/apimachinery/pkg/api/errors"
@@ -29,7 +30,13 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
+	"github.com/cloudnative-pg/cloudnative-pg/internal/configuration"
 )
+
+// ErrClusterImageCatalogDisabled is returned when a resource references a
+// ClusterImageCatalog and the operator does not use that API
+var ErrClusterImageCatalogDisabled = errors.New(
+	"the ClusterImageCatalog API is not available to this operator, use a namespaced ImageCatalog")
 
 // Get retrieves the image catalog referenced by a cluster's ImageCatalogRef.
 // The caller must ensure that cluster.Spec.ImageCatalogRef is not nil.
@@ -43,6 +50,9 @@ func Get(
 
 	switch catalogKind {
 	case apiv1.ClusterImageCatalogKind:
+		if !configuration.Current.APIClusterImageCatalogEnabled {
+			return nil, ErrClusterImageCatalogDisabled
+		}
 		catalog = &apiv1.ClusterImageCatalog{}
 	case apiv1.ImageCatalogKind:
 		catalog = &apiv1.ImageCatalog{}
