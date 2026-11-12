@@ -103,6 +103,7 @@ ClusterIsNotReady
 ClusterList
 ClusterMonitoringTLSConfiguration
 ClusterRole
+ClusterRoles
 ClusterServiceVersion
 ClusterSpec
 ClusterStatus
@@ -1596,6 +1597,7 @@ subcommand
 subcommands
 subdirectory
 subresource
+subresources
 subscriptionReclaimPolicy
 subscriptionreclaimpolicy
 subscriptionspec
