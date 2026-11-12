@@ -1236,6 +1236,11 @@ const (
 	// does not read the Node API: the topology cannot be extracted, and the
 	// instance manager stops waiting for it.
 	ConditionTopologyUnavailable ClusterConditionType = "TopologyUnavailable"
+
+	// ConditionVolumeExpansionRefused is True while the API server refuses
+	// to expand at least one PVC to the size requested by the cluster, and
+	// False once every PVC accepts it. Only set after a first refusal.
+	ConditionVolumeExpansionRefused ClusterConditionType = "VolumeExpansionRefused"
 )
 
 // ConditionStatus defines conditions of resources
@@ -1296,6 +1301,22 @@ const (
 	// ConditionReasonNodeAccessUnavailable is the reason set on
 	// ConditionTopologyUnavailable when the operator does not read the Node API
 	ConditionReasonNodeAccessUnavailable ConditionReason = "NodeAccessUnavailable"
+
+	// ConditionReasonStorageClassForbidsExpansion means the API server refused
+	// a PVC expansion because its StorageClass does not allow it
+	ConditionReasonStorageClassForbidsExpansion ConditionReason = "StorageClassForbidsExpansion"
+
+	// ConditionReasonQuotaExceeded means the API server refused a PVC
+	// expansion because of a ResourceQuota
+	ConditionReasonQuotaExceeded ConditionReason = "QuotaExceeded"
+
+	// ConditionReasonExpansionForbidden means the API server refused a PVC
+	// expansion for another reason, such as an admission webhook
+	ConditionReasonExpansionForbidden ConditionReason = "Forbidden"
+
+	// ConditionReasonVolumeExpansionAccepted means every PVC accepts the size
+	// requested by the cluster again
+	ConditionReasonVolumeExpansionAccepted ConditionReason = "VolumeExpansionAccepted"
 )
 
 // EmbeddedObjectMetadata contains metadata to be inherited by all resources related to a Cluster
