@@ -107,17 +107,15 @@ func buildTestEnvironment() *testingEnvironment {
 	Expect(err).ToNot(HaveOccurred())
 
 	clusterReconciler := &ClusterReconciler{
-		Client:          k8sClient,
-		Scheme:          scheme,
-		Recorder:        record.NewFakeRecorder(120),
-		DiscoveryClient: discoveryClient,
+		Client:   k8sClient,
+		Scheme:   scheme,
+		Recorder: record.NewFakeRecorder(120),
 	}
 
 	poolerReconciler := &PoolerReconciler{
-		Client:          k8sClient,
-		Scheme:          scheme,
-		Recorder:        record.NewFakeRecorder(120),
-		DiscoveryClient: discoveryClient,
+		Client:   k8sClient,
+		Scheme:   scheme,
+		Recorder: record.NewFakeRecorder(120),
 	}
 
 	backupReconciler := &BackupReconciler{

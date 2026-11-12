@@ -1185,6 +1185,12 @@ const (
 	// has had at least one running instance, at which point it is set to True
 	// and never cleared.
 	ConditionInitialized ClusterConditionType = "Initialized"
+
+	// ConditionTopologyUnavailable is True when the topology of the instances
+	// needs node labels (.spec.postgresql.syncReplicaElectionConstraint) and the operator
+	// does not read the Node API: the topology cannot be extracted, and the
+	// instance manager stops waiting for it.
+	ConditionTopologyUnavailable ClusterConditionType = "TopologyUnavailable"
 )
 
 // ConditionStatus defines conditions of resources
@@ -1241,6 +1247,10 @@ const (
 	// BootstrapPending is the reason set on ConditionInitialized=False while the
 	// cluster has not yet completed its first bootstrap.
 	BootstrapPending ConditionReason = "BootstrapPending"
+
+	// ConditionReasonNodeAccessUnavailable is the reason set on
+	// ConditionTopologyUnavailable when the operator does not read the Node API
+	ConditionReasonNodeAccessUnavailable ConditionReason = "NodeAccessUnavailable"
 )
 
 // EmbeddedObjectMetadata contains metadata to be inherited by all resources related to a Cluster

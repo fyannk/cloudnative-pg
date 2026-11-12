@@ -182,6 +182,19 @@ func (st *ServiceAccountTemplate) MergeMetadata(sa *corev1.ServiceAccount) {
 	maps.Copy(sa.Annotations, st.Metadata.Annotations)
 }
 
+// IsTopologyUnavailable reports whether the operator declared, through the
+// TopologyUnavailable condition, that it cannot extract the topology of the
+// instances because it does not read the Node API
+func (cluster *Cluster) IsTopologyUnavailable() bool {
+	return meta.IsStatusConditionTrue(cluster.Status.Conditions, string(ConditionTopologyUnavailable))
+}
+
+// GetTopologyLabelKeys returns the node label keys used by the legacy
+// synchronous replica election constraint.
+func (cluster *Cluster) GetTopologyLabelKeys() []string {
+	return cluster.Spec.PostgresConfiguration.SyncReplicaElectionConstraint.NodeLabelsAntiAffinity
+}
+
 // MatchesTopology checks if the two topologies have
 // the same label values (labels are specified in SyncReplicaElectionConstraints.NodeLabelsAntiAffinity)
 func (topologyLabels PodTopologyLabels) MatchesTopology(instanceTopology PodTopologyLabels) bool {

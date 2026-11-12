@@ -31,10 +31,12 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/rand"
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
+	"github.com/cloudnative-pg/cloudnative-pg/internal/configuration"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/certs"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/postgres"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/reconciler/persistentvolumeclaim"
@@ -151,10 +153,9 @@ var _ = Describe("cluster_status unit tests", func() {
 			Client: fakeClientWithIndexAdapter{
 				Client: env.clusterReconciler.Client,
 			},
-			DiscoveryClient: env.clusterReconciler.DiscoveryClient,
-			Scheme:          env.clusterReconciler.Scheme,
-			Recorder:        env.clusterReconciler.Recorder,
-			InstanceClient:  env.clusterReconciler.InstanceClient,
+			Scheme:         env.clusterReconciler.Scheme,
+			Recorder:       env.clusterReconciler.Recorder,
+			InstanceClient: env.clusterReconciler.InstanceClient,
 		}
 
 		namespace := newFakeNamespace(env.client)
@@ -598,5 +599,40 @@ var _ = Describe("waiting for an instance that reports why it is not active", fu
 		_, err = r.reconcileResources(ctx, cluster, resources, postgres.PostgresqlStatusList{})
 		Expect(err).ToNot(HaveOccurred())
 		Expect(cluster.Status.PhaseReason).To(Equal("Some instances are not yet active. Please wait."))
+	})
+})
+
+var _ = Describe("topology availability without the Node API", func() {
+	const zoneLabel = "topology.kubernetes.io/zone"
+
+	BeforeEach(func() {
+		previous := configuration.Current.APINodeEnabled
+		configuration.Current.APINodeEnabled = false
+		DeferCleanup(func() { configuration.Current.APINodeEnabled = previous })
+	})
+
+	It("sets one condition and warning while preserving the node count from Pods", func() {
+		recorder := record.NewFakeRecorder(10)
+		reconciler := &ClusterReconciler{Recorder: recorder}
+		cluster := &apiv1.Cluster{}
+		pods := []corev1.Pod{
+			{ObjectMeta: metav1.ObjectMeta{Name: "pg-1"}, Spec: corev1.PodSpec{NodeName: "node-1"}},
+			{ObjectMeta: metav1.ObjectMeta{Name: "pg-2"}, Spec: corev1.PodSpec{NodeName: "node-2"}},
+		}
+
+		reconciler.updateTopologyAvailability(cluster, nil, pods, []string{zoneLabel})
+		Expect(cluster.IsTopologyUnavailable()).To(BeTrue())
+		Expect(cluster.Status.Topology.SuccessfullyExtracted).To(BeFalse())
+		Expect(cluster.Status.Topology.NodesUsed).To(BeEquivalentTo(2))
+		Expect(<-recorder.Events).To(ContainSubstring(zoneLabel))
+
+		previous := cluster.Status.Conditions
+		reconciler.updateTopologyAvailability(cluster, previous, pods, []string{zoneLabel})
+		Expect(recorder.Events).ToNot(Receive())
+
+		reconciler.updateTopologyAvailability(cluster, cluster.Status.Conditions, pods, nil)
+		Expect(cluster.IsTopologyUnavailable()).To(BeFalse())
+		Expect(cluster.Status.Topology.SuccessfullyExtracted).To(BeTrue())
+		Expect(cluster.Status.Topology.NodesUsed).To(BeEquivalentTo(2))
 	})
 })

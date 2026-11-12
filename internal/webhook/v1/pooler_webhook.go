@@ -124,7 +124,7 @@ func NewPoolerAdmissionGuard() *guard.Admission[*apiv1.Pooler] {
 type PoolerCustomValidator struct{}
 
 // ValidateCreate implements webhook.CustomValidator so a webhook will be registered for the type Pooler.
-func (v *PoolerCustomValidator) ValidateCreate(_ context.Context, pooler *apiv1.Pooler) (admission.Warnings, error) {
+func (v *PoolerCustomValidator) ValidateCreate(ctx context.Context, pooler *apiv1.Pooler) (admission.Warnings, error) {
 	poolerLog.Info("Validation for Pooler upon creation", "name", pooler.GetName(), "namespace", pooler.GetNamespace())
 
 	warns := v.getAdmissionWarnings(pooler)
@@ -132,6 +132,13 @@ func (v *PoolerCustomValidator) ValidateCreate(_ context.Context, pooler *apiv1.
 	warns = append(warns, v.validateDeprecatedMonitoringFields(pooler)...)
 
 	allErrs := v.validate(pooler)
+	var stored *apiv1.Pooler
+	if !isAdmissionRequest(ctx) {
+		stored = pooler
+	}
+	apiErrs, apiWarnings := getPoolerUnavailableAPIProblems(pooler, stored)
+	allErrs = append(allErrs, apiErrs...)
+	warns = append(warns, apiWarnings...)
 	if len(allErrs) == 0 {
 		return warns, nil
 	}
@@ -165,7 +172,7 @@ func (v *PoolerCustomValidator) getAdmissionWarnings(r *apiv1.Pooler) admission.
 // ValidateUpdate implements webhook.CustomValidator so a webhook will be registered for the type Pooler.
 func (v *PoolerCustomValidator) ValidateUpdate(
 	_ context.Context,
-	_ *apiv1.Pooler, pooler *apiv1.Pooler,
+	oldPooler *apiv1.Pooler, pooler *apiv1.Pooler,
 ) (admission.Warnings, error) {
 	poolerLog.Info("Validation for Pooler upon update", "name", pooler.GetName(), "namespace", pooler.GetNamespace())
 
@@ -174,6 +181,9 @@ func (v *PoolerCustomValidator) ValidateUpdate(
 	warns = append(warns, v.validateDeprecatedMonitoringFields(pooler)...)
 
 	allErrs := v.validate(pooler)
+	apiErrs, apiWarnings := getPoolerUnavailableAPIProblems(pooler, oldPooler)
+	allErrs = append(allErrs, apiErrs...)
+	warns = append(warns, apiWarnings...)
 	if len(allErrs) == 0 {
 		return warns, nil
 	}

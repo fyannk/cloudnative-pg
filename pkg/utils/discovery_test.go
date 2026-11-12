@@ -20,15 +20,25 @@ SPDX-License-Identifier: Apache-2.0
 package utils
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
 
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/version"
 	discoveryFake "k8s.io/client-go/discovery/fake"
 	fakeClient "k8s.io/client-go/kubernetes/fake"
+	"k8s.io/client-go/kubernetes/scheme"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -101,30 +111,65 @@ var _ = Describe("Detect resources properly when", func() {
 
 		Expect(HaveSecurityContextConstraints()).To(BeTrue())
 	})
+})
 
-	It("should not detect VolumeSnapshots", func() {
-		err := DetectVolumeSnapshotExist(client.Discovery())
-		Expect(err).ToNot(HaveOccurred())
+// forbiddenNamespaceReader answers Forbidden to a List in one namespace and
+// serves every other List
+type forbiddenNamespaceReader struct {
+	client.Reader
+	forbidden string
+}
 
-		Expect(HaveVolumeSnapshot()).To(BeFalse())
+func (r forbiddenNamespaceReader) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
+	options := &client.ListOptions{}
+	options.ApplyOptions(opts)
+	if options.Namespace == r.forbidden {
+		return apierrors.NewForbidden(schema.GroupResource{Resource: "configmaps"}, "", errors.New("denied"))
+	}
+	return r.Reader.List(ctx, list, opts...)
+}
+
+// The probe answers the question an informer would ask: can this kind be
+// listed where it will be watched. Forbidden, not installed and an unknown
+// kind disable; a transient error must not.
+var _ = Describe("Probing an optional API", func() {
+	listError := func(err error) client.Reader {
+		return fake.NewClientBuilder().WithScheme(scheme.Scheme).WithInterceptorFuncs(interceptor.Funcs{
+			List: func(context.Context, client.WithWatch, client.ObjectList, ...client.ListOption) error {
+				return err
+			},
+		}).Build()
+	}
+
+	It("reports an API that can be listed", func(ctx SpecContext) {
+		reader := fake.NewClientBuilder().WithScheme(scheme.Scheme).Build()
+		Expect(ProbeListable(ctx, reader, &corev1.ConfigMapList{}, nil)).To(BeTrue())
 	})
 
-	It("should detect VolumeSnapshots resource", func() {
-		resources := []*metav1.APIResourceList{
-			{
-				GroupVersion: "snapshot.storage.k8s.io/v1",
-				APIResources: []metav1.APIResource{
-					{
-						Name: "volumesnapshots",
-					},
-				},
-			},
+	It("disables an API the operator is forbidden to list, or not installed", func(ctx SpecContext) {
+		for _, err := range []error{
+			apierrors.NewForbidden(schema.GroupResource{Resource: "configmaps"}, "", errors.New("denied")),
+			apierrors.NewNotFound(schema.GroupResource{Resource: "configmaps"}, ""),
+			&meta.NoKindMatchError{GroupKind: schema.GroupKind{Kind: "PodMonitor"}},
+		} {
+			available, probeErr := ProbeListable(ctx, listError(err), &corev1.ConfigMapList{}, nil)
+			Expect(probeErr).ToNot(HaveOccurred())
+			Expect(available).To(BeFalse())
 		}
-		fakeDiscovery.Resources = resources
-		err := DetectVolumeSnapshotExist(client.Discovery())
-		Expect(err).ToNot(HaveOccurred())
+	})
 
-		Expect(HaveVolumeSnapshot()).To(BeTrue())
+	It("returns any other error instead of disabling the API", func(ctx SpecContext) {
+		_, err := ProbeListable(ctx, listError(errors.New("timeout")), &corev1.ConfigMapList{}, nil)
+		Expect(err).To(MatchError("timeout"))
+	})
+
+	It("probes every watched namespace and disables on the first forbidden one", func(ctx SpecContext) {
+		reader := forbiddenNamespaceReader{
+			Reader:    fake.NewClientBuilder().WithScheme(scheme.Scheme).Build(),
+			forbidden: "locked",
+		}
+		Expect(ProbeListable(ctx, reader, &corev1.ConfigMapList{}, []string{"open"})).To(BeTrue())
+		Expect(ProbeListable(ctx, reader, &corev1.ConfigMapList{}, []string{"open", "locked"})).To(BeFalse())
 	})
 })
 

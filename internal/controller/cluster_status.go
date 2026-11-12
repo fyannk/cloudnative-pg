@@ -39,6 +39,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
+	"github.com/cloudnative-pg/cloudnative-pg/internal/configuration"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/certs"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/postgres"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/reconciler/hibernation"
@@ -157,9 +158,11 @@ func (r *ClusterReconciler) getManagedResources(
 		return nil, err
 	}
 
-	nodes, err := r.getNodes(ctx)
-	if err != nil {
-		return nil, err
+	nodes := map[string]corev1.Node{}
+	if configuration.Current.APINodeEnabled {
+		if nodes, err = r.getNodes(ctx); err != nil {
+			return nil, err
+		}
 	}
 
 	return &managedResources{
@@ -277,12 +280,14 @@ func (r *ClusterReconciler) updateResourceStatus(
 	newJobs := int32(len(resources.jobs.Items)) //nolint:gosec
 	cluster.Status.JobCount = newJobs
 
+	nodeLabelKeys := cluster.GetTopologyLabelKeys()
 	cluster.Status.Topology = getPodsTopology(
 		ctx,
 		resources.instances.Items,
 		resources.nodes,
 		cluster.Spec.PostgresConfiguration.SyncReplicaElectionConstraint,
 	)
+	r.updateTopologyAvailability(cluster, existingClusterStatus.Conditions, resources.instances.Items, nodeLabelKeys)
 
 	// Services
 	cluster.Status.WriteService = cluster.GetServiceReadWriteName()
@@ -862,6 +867,13 @@ func getPodsTopology(
 	for _, pod := range pods {
 		podName := apiv1.PodName(pod.Name)
 		data[podName] = make(map[string]string, 0)
+		if len(topology.NodeLabelsAntiAffinity) == 0 {
+			if pod.Spec.NodeName != "" {
+				nodesMap[pod.Spec.NodeName] = append(nodesMap[pod.Spec.NodeName], podName)
+			}
+			continue
+		}
+
 		node, ok := nodes[pod.Spec.NodeName]
 		if !ok {
 			// node not found, it means that:
@@ -879,6 +891,46 @@ func getPodsTopology(
 	}
 
 	return apiv1.Topology{SuccessfullyExtracted: true, Instances: data, NodesUsed: int32(len(nodesMap))} //nolint:gosec
+}
+
+func (r *ClusterReconciler) updateTopologyAvailability(
+	cluster *apiv1.Cluster,
+	previous []metav1.Condition,
+	pods []corev1.Pod,
+	nodeLabelKeys []string,
+) {
+	if configuration.Current.APINodeEnabled {
+		meta.RemoveStatusCondition(&cluster.Status.Conditions, string(apiv1.ConditionTopologyUnavailable))
+		return
+	}
+	if len(nodeLabelKeys) == 0 {
+		meta.RemoveStatusCondition(&cluster.Status.Conditions, string(apiv1.ConditionTopologyUnavailable))
+		cluster.Status.Topology = getPodsTopology(
+			context.Background(), pods, nil, apiv1.SyncReplicaElectionConstraints{},
+		)
+		return
+	}
+
+	usedNodes := make(map[string]struct{})
+	for _, pod := range pods {
+		if pod.Spec.NodeName != "" {
+			usedNodes[pod.Spec.NodeName] = struct{}{}
+		}
+	}
+	cluster.Status.Topology = apiv1.Topology{NodesUsed: int32(len(usedNodes))} //nolint:gosec
+
+	message := "The operator does not read the Node API (API_NODE_ENABLED): the node labels " +
+		strings.Join(nodeLabelKeys, ", ") + " cannot be resolved and the failure domain " +
+		"constraints of the synchronous replicas are not applied"
+	meta.SetStatusCondition(&cluster.Status.Conditions, metav1.Condition{
+		Type:    string(apiv1.ConditionTopologyUnavailable),
+		Status:  metav1.ConditionTrue,
+		Reason:  string(apiv1.ConditionReasonNodeAccessUnavailable),
+		Message: message,
+	})
+	if !meta.IsStatusConditionTrue(previous, string(apiv1.ConditionTopologyUnavailable)) && r.Recorder != nil {
+		r.Recorder.Event(cluster, corev1.EventTypeWarning, string(apiv1.ConditionTopologyUnavailable), message)
+	}
 }
 
 // isWALSpaceAvailableOnPod check if a Pod terminated because it has no
