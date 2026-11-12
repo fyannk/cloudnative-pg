@@ -29,6 +29,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
@@ -96,9 +97,11 @@ func createFakeOperatorDeployment(ctx context.Context, kubeClient client.Client)
 
 func generateFakeClient() client.Client {
 	scheme := controllerScheme.BuildWithAllKnownScheme()
-	return fake.NewClientBuilder().
-		WithScheme(scheme).
-		Build()
+	return fakeClientBuilder(scheme).Build()
+}
+
+func fakeClientBuilder(scheme *runtime.Scheme) *fake.ClientBuilder {
+	return fake.NewClientBuilder().WithScheme(scheme)
 }
 
 var _ = Describe("Root CA secret generation", func() {
