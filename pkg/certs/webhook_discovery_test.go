@@ -37,7 +37,7 @@ import (
 	. "github.com/onsi/gomega"
 )
 
-const webhookCertDir = "/run/secrets/cnpg.io/webhook"
+const webhookCertDir = DefaultWebhookCertDir
 
 // operatorDeploymentWithMount is a deployment shaped like the operator's:
 // labelled pods, a manager container with the webhook port, and the
@@ -89,16 +89,16 @@ func serviceSelecting(name string, selector map[string]string, targetPort intstr
 var _ = Describe("Webhook Secret name discovery", func() {
 	It("is the Secret mounted at the certificate directory", func() {
 		deployment := operatorDeploymentWithMount("toto-webhook-tls")
-		Expect(mountedSecretName(deployment, webhookCertDir)).To(Equal("toto-webhook-tls"))
-		Expect(mountedSecretName(deployment, webhookCertDir+"/")).To(Equal("toto-webhook-tls"))
+		Expect(MountedSecretName(deployment, webhookCertDir)).To(Equal("toto-webhook-tls"))
+		Expect(MountedSecretName(deployment, webhookCertDir+"/")).To(Equal("toto-webhook-tls"))
 	})
 
 	It("is empty without a deployment, a directory, a mount there, or a Secret behind it", func() {
 		deployment := operatorDeploymentWithMount("toto-webhook-tls")
-		Expect(mountedSecretName(nil, webhookCertDir)).To(BeEmpty())
-		Expect(mountedSecretName(deployment, "")).To(BeEmpty())
-		Expect(mountedSecretName(deployment, "/run/secrets/elsewhere")).To(BeEmpty())
-		Expect(mountedSecretName(deployment, "/controller")).To(BeEmpty())
+		Expect(MountedSecretName(nil, webhookCertDir)).To(BeEmpty())
+		Expect(MountedSecretName(deployment, "")).To(BeEmpty())
+		Expect(MountedSecretName(deployment, "/run/secrets/elsewhere")).To(BeEmpty())
+		Expect(MountedSecretName(deployment, "/controller")).To(BeEmpty())
 	})
 
 	It("falls back to the configured name", func() {
