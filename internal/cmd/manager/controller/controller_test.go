@@ -20,8 +20,13 @@ SPDX-License-Identifier: Apache-2.0
 package controller
 
 import (
+	"context"
 	"os"
 	"path/filepath"
+
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	"github.com/cloudnative-pg/cloudnative-pg/internal/configuration"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/certs"
@@ -126,5 +131,26 @@ var _ = Describe("Operator status identity", func() {
 	It("is refused with the identity when the mode is unknown", func() {
 		err := validateOperatorIdentity(&configuration.Data{OperatorStatusIdentity: "verbose"})
 		Expect(err).To(MatchError(ContainSubstring("OPERATOR_STATUS_IDENTITY")))
+	})
+})
+
+// Reading the configuration ConfigMap sets every field again from the
+// environment, the data or the defaults: without OPERATOR_NAMESPACE, it
+// dropped the namespace found from the service account
+var _ = Describe("loadConfiguration", func() {
+	It("keeps the namespace found from the service account", func() {
+		configMap := &corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{Name: "cnpg-controller-manager-config", Namespace: "cnpg-system"},
+			Data:       map[string]string{"INHERITED_LABELS": "team"},
+		}
+		kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(configMap).Build()
+		conf := configuration.NewConfiguration()
+		conf.OperatorNamespace = "cnpg-system"
+
+		_, err := loadConfiguration(context.Background(), kubeClient, configMap.Name, "", conf)
+		Expect(err).ToNot(HaveOccurred())
+
+		Expect(conf.InheritedLabels).To(ConsistOf("team"))
+		Expect(conf.OperatorNamespace).To(Equal("cnpg-system"))
 	})
 })

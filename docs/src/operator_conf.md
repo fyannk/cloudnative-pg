@@ -61,7 +61,7 @@ Name | Description
 `DEFAULT_STORAGE_CLASS` | The name of the StorageClass written, when a `Cluster` is created, into every storage section (`storage`, `walStorage`, each tablespace) that sets neither `storageClass` nor `storageClassName` in its `pvcTemplate`. Clusters that already exist are not changed. Empty by default: the PVCs then get the default StorageClass of the Kubernetes cluster.
 `DRAIN_TAINTS` | Specifies the taint keys that should be interpreted as indicators of node drain. By default, it includes the taints commonly applied by [kubectl](https://kubernetes.io/docs/concepts/scheduling-eviction/taint-and-toleration/), [Cluster Autoscaler](https://github.com/kubernetes/autoscaler), and [Karpenter](https://github.com/aws/karpenter-provider-aws): `node.kubernetes.io/unschedulable`, `ToBeDeletedByClusterAutoscaler`, `karpenter.sh/disrupted`, `karpenter.sh/disruption`.
 `ENABLE_INSTANCE_MANAGER_INPLACE_UPDATES` | When set to `true`, enables in-place updates of the instance manager after an update of the operator, avoiding rolling updates of the cluster (default `false`)
-`ENABLE_WEBHOOK_NAMESPACE_SUFFIX` | When set to `true`, the operator looks up its `MutatingWebhookConfiguration` and `ValidatingWebhookConfiguration` under names suffixed with `-<OPERATOR_NAMESPACE>` (e.g. `cnpg-mutating-webhook-configuration-cnpg-team-a` and `cnpg-validating-webhook-configuration-cnpg-team-a`). Use this when running multiple namespaced operator instances on the same cluster to avoid name collisions. The operator does not create the suffixed configurations; you must create them before starting the operator with this flag enabled. If `OPERATOR_NAMESPACE` is not set when this flag is enabled, the operator will refuse to start. An explicit `MUTATING_WEBHOOK_CONFIGURATION_NAME` or `VALIDATING_WEBHOOK_CONFIGURATION_NAME` is used as given, without the suffix. Default is `false`.
+`ENABLE_WEBHOOK_NAMESPACE_SUFFIX` | When set to `true`, the operator looks up its `MutatingWebhookConfiguration` and `ValidatingWebhookConfiguration` under names suffixed with `-<OPERATOR_NAMESPACE>` (e.g. `cnpg-mutating-webhook-configuration-cnpg-team-a` and `cnpg-validating-webhook-configuration-cnpg-team-a`). Use this when running multiple namespaced operator instances on the same cluster to avoid name collisions. The operator does not create the suffixed configurations; you must create them before starting the operator with this flag enabled. If the [operator namespace](#the-operator-namespace) is unknown when this flag is enabled, the operator will refuse to start. An explicit `MUTATING_WEBHOOK_CONFIGURATION_NAME` or `VALIDATING_WEBHOOK_CONFIGURATION_NAME` is used as given, without the suffix. Default is `false`.
 `EXPIRING_CHECK_THRESHOLD` | Determines the threshold, in days, for identifying a certificate as expiring. Default is 7.
 `INCLUDE_PLUGINS` | A comma-separated list of plugins to be always included in the Cluster's reconciliation.
 `INHERITED_ANNOTATIONS` | List of annotation names that, when defined in a `Cluster` metadata, will be inherited by all the generated resources, including pods
@@ -90,6 +90,21 @@ Name | Description
 `WATCH_NAMESPACE` | Specifies the namespace(s) where the operator should watch for resources. Multiple namespaces can be specified separated by commas. If not set, the operator watches all namespaces (cluster-wide mode).
 `WEBHOOK_CERT_DIR` | The directory holding an externally provided certificate for the webhook server, as `apiserver.crt`/`apiserver.key` (what OLM writes) or `tls.crt`/`tls.key` (a Kubernetes TLS Secret, for example from cert-manager). When set, the operator serves the webhooks with that certificate, manages no certificate of its own and leaves the webhook configurations untouched; it refuses to start when the directory holds no complete, readable pair. When unset, the operator manages its own PKI. See [Webhook certificates and configurations](#webhook-certificates-and-configurations).
 `WEBHOOK_SERVICE_NAME` | The name of the Service exposing the webhook server, the subject of the serving certificate the operator issues, used as given. When unset, `<OPERATOR_DEPLOYMENT_NAME>-webhook-service` when the Deployment name is set, `cnpg-webhook-service` otherwise. The certificate also carries the historical name, the derived one, the Services of the operator namespace selecting the operator Pods on the webhook port, and the Services the managed webhook configurations point at.
+
+## The operator namespace
+
+The operator reads its configuration `ConfigMap` and `Secret`, its pull
+secret, and its plugins in its own namespace. It learns it from the
+`OPERATOR_NAMESPACE` environment variable of its Pod, which the provided
+manifests set from `metadata.namespace` through the downward API. When the
+variable is not set, the operator reads the namespace of its service account,
+from `/var/run/secrets/kubernetes.io/serviceaccount/namespace`. The startup
+log says which of the two gave the namespace.
+
+When neither does, as when the operator runs outside a Pod, the operator logs
+a warning at startup: it does not read its configuration `ConfigMap` and
+`Secret`, it does not copy its pull secret to the clusters and poolers, and it
+does not watch its plugins.
 
 :::warning
     CloudNativePG does NOT currently support running multiple operators on
