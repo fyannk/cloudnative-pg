@@ -85,6 +85,9 @@ func buildTestEnvironment() *testingEnvironment {
 		WithIndex(&apiv1.Backup{}, backupPhase, func(rawObj client.Object) []string {
 			return []string{string(rawObj.(*apiv1.Backup).Status.Phase)}
 		}).
+		WithIndex(&apiv1.DatabaseRole{}, databaseRoleClusterKey, func(rawObj client.Object) []string {
+			return []string{rawObj.(*apiv1.DatabaseRole).Spec.ClusterRef.Name}
+		}).
 		Build()
 	Expect(err).ToNot(HaveOccurred())
 

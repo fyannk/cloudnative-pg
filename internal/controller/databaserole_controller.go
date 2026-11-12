@@ -43,12 +43,17 @@ import (
 
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/certs"
+	"github.com/cloudnative-pg/cloudnative-pg/pkg/filteredcache"
 )
 
 // DatabaseRoleReconciler reconciles a DatabaseRole object
 type DatabaseRoleReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
+
+	// ReloadWatch delivers the changes of the user Secrets carrying
+	// cnpg.io/reload when the cache is filtered, nil otherwise
+	ReloadWatch *filteredcache.ReloadWatch
 }
 
 // clientCertReconcileInterval is the requeue period for roles with client
@@ -208,7 +213,7 @@ func (r *DatabaseRoleReconciler) SetupWithManager(mgr ctrl.Manager, maxConcurren
 		return hasCACert && hasCAKey
 	})
 
-	return ctrl.NewControllerManagedBy(mgr).
+	ctrlBuilder := ctrl.NewControllerManagedBy(mgr).
 		WithOptions(controller.Options{MaxConcurrentReconciles: maxConcurrentReconciles}).
 		For(&apiv1.DatabaseRole{}).
 		Named("database-role").
@@ -234,8 +239,17 @@ func (r *DatabaseRoleReconciler) SetupWithManager(mgr ctrl.Manager, maxConcurren
 			&apiv1.Cluster{},
 			handler.EnqueueRequestsFromMapFunc(r.mapClusterToRoles()),
 			builder.WithPredicates(predicate.GenerationChangedPredicate{}),
-		).
-		Complete(r)
+		)
+
+	if r.ReloadWatch != nil {
+		secrets, err := r.ReloadWatch.Source(&corev1.Secret{}, r.mapSecretToRole(), rolesSecretsPredicate)
+		if err != nil {
+			return err
+		}
+		ctrlBuilder = ctrlBuilder.WatchesRawSource(secrets)
+	}
+
+	return ctrlBuilder.Complete(r)
 }
 
 // mapSecretToRole returns a function mapping secret events to the roles using them

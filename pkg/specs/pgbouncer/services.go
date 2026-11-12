@@ -42,6 +42,7 @@ func Service(pooler *apiv1.Pooler, cluster *apiv1.Cluster) (*corev1.Service, err
 	serviceTemplate := servicespec.NewFrom(pooler.Spec.ServiceTemplate).
 		WithLabel(utils.PgbouncerNameLabel, pooler.Name).
 		WithLabel(utils.ClusterLabelName, cluster.Name).
+		WithLabel(utils.ReconcileLabelName, "true").
 		WithLabel(utils.PodRoleLabelName, string(utils.PodRolePooler)).
 		WithLabel(utils.KubernetesAppLabelName, utils.AppName).
 		WithLabel(utils.KubernetesAppInstanceLabelName, cluster.Name).

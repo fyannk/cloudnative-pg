@@ -26,6 +26,7 @@ import (
 
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/specs"
+	"github.com/cloudnative-pg/cloudnative-pg/pkg/utils"
 )
 
 // ServiceAccount creates a service account for a given pooler.
@@ -33,6 +34,7 @@ import (
 func ServiceAccount(pooler *apiv1.Pooler) *corev1.ServiceAccount {
 	return &corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{
 		Name: pooler.Name, Namespace: pooler.Namespace,
+		Labels: map[string]string{utils.ReconcileLabelName: "true"},
 	}}
 }
 
@@ -59,6 +61,7 @@ func Role(pooler *apiv1.Pooler) *rbacv1.Role {
 
 	return &rbacv1.Role{ObjectMeta: metav1.ObjectMeta{
 		Name: pooler.Name, Namespace: pooler.Namespace,
+		Labels: map[string]string{utils.ReconcileLabelName: "true"},
 	}, Rules: []rbacv1.PolicyRule{
 		{
 			APIGroups: []string{
@@ -110,5 +113,7 @@ func Role(pooler *apiv1.Pooler) *rbacv1.Role {
 
 // RoleBinding creates a role binding for a given pooler
 func RoleBinding(pooler *apiv1.Pooler, serviceAccount string) rbacv1.RoleBinding {
-	return specs.CreateRoleBinding(pooler.ObjectMeta, serviceAccount)
+	roleBinding := specs.CreateRoleBinding(pooler.ObjectMeta, serviceAccount)
+	utils.LabelReconciled(&roleBinding.ObjectMeta)
+	return roleBinding
 }
