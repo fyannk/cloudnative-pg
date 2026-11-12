@@ -185,14 +185,31 @@ var _ = Describe("Objects asking for an unavailable optional API", func() {
 
 		It("warns when node labels are requested without the Node API", func() {
 			configuration.Current.APINodeEnabled = false
+			configuration.Current.NodeStatusSource = configuration.NodeStatusSourceNone
 			cluster := withTopology([]string{"kubernetes.io/hostname", "topology.kubernetes.io/zone"})
 			errs, warnings := getClusterUnavailableAPIProblems(cluster, nil)
 			Expect(errs).To(BeEmpty())
-			Expect(warnings).To(ConsistOf(SatisfyAll(
-				HavePrefix("spec.postgresql.syncReplicaElectionConstraint.nodeLabelsAntiAffinity: the Node API is not available to this operator"),
-				ContainSubstring("API_NODE_ENABLED"),
-				ContainSubstring("the node labels kubernetes.io/hostname, topology.kubernetes.io/zone cannot be resolved"),
-			)))
+			Expect(warnings).To(ConsistOf(
+				configuration.NodeStatusUnavailableMessage,
+				SatisfyAll(
+					HavePrefix("spec.postgresql.syncReplicaElectionConstraint.nodeLabelsAntiAffinity: the operator reads no node state"),
+					ContainSubstring("the node labels kubernetes.io/hostname, topology.kubernetes.io/zone cannot be resolved"),
+				),
+			))
+
+			errs, warnings = getClusterUnavailableAPIProblems(cluster, cluster)
+			Expect(errs).To(BeEmpty())
+			Expect(warnings).To(HaveLen(1))
+			Expect(warnings[0]).To(HavePrefix("spec.postgresql.syncReplicaElectionConstraint.nodeLabelsAntiAffinity:"))
+		})
+
+		It("does not warn when node labels are echoed onto instance Pods", func() {
+			configuration.Current.APINodeEnabled = false
+			configuration.Current.NodeStatusSource = configuration.NodeStatusSourcePods
+			errs, warnings := getClusterUnavailableAPIProblems(
+				withTopology([]string{"kubernetes.io/hostname"}), nil)
+			Expect(errs).To(BeEmpty())
+			Expect(warnings).To(BeEmpty())
 		})
 	})
 

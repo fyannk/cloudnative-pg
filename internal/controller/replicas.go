@@ -72,14 +72,21 @@ func (r *ClusterReconciler) reconcileTargetPrimaryFromPods(
 	if primary := status.Items[0]; (primary.IsPrimary || (cluster.IsReplica() && primary.IsPodReady)) &&
 		primary.Pod.Name == cluster.Status.CurrentPrimary &&
 		cluster.Status.TargetPrimary == cluster.Status.CurrentPrimary {
-		isPrimaryOnUnschedulableNode, err := r.isNodeUnschedulableOrBeingDrained(ctx, primary.Node)
-		if err != nil {
+		isPrimaryOnUnschedulableNode, err := r.isInstanceOnDrainingNode(ctx, &primary)
+		switch {
+		case err != nil:
 			contextLogger.Error(err, "while checking if current primary is on an unschedulable node")
 			// in case of error it's better to proceed with the normal target primary reconciliation
-		} else if isPrimaryOnUnschedulableNode {
+		case isPrimaryOnUnschedulableNode:
 			contextLogger.Info("Primary is running on an unschedulable node, will try switching over",
 				"node", primary.Node, "primary", primary.Pod.Name)
-			return r.setPrimaryOnSchedulableNode(ctx, cluster, status, &primary)
+			return r.setPrimaryOnSchedulableNode(ctx, cluster, status, &primary,
+				fmt.Sprintf("primary instance was running on unschedulable node %v", primary.Node))
+		case r.isEvictionRequested(&primary):
+			contextLogger.Info("Eviction of the primary requested, will try switching over",
+				"node", primary.Node, "primary", primary.Pod.Name)
+			return r.setPrimaryOnSchedulableNode(ctx, cluster, status, &primary,
+				"an eviction of the primary instance was requested")
 		}
 	}
 
@@ -271,12 +278,6 @@ func (r *ClusterReconciler) isNodeUnschedulableOrBeingDrained(
 	ctx context.Context,
 	nodeName string,
 ) (bool, error) {
-	// Without the Node API there is no drain detection: the primary on a
-	// drained node is evicted instead of being switched over first
-	if !configuration.Current.APINodeEnabled {
-		return false, nil
-	}
-
 	var node corev1.Node
 	err := r.Get(ctx, client.ObjectKey{Name: nodeName}, &node)
 	if err != nil {
@@ -286,13 +287,41 @@ func (r *ClusterReconciler) isNodeUnschedulableOrBeingDrained(
 	return isNodeUnschedulableOrBeingDrained(&node, r.drainTaints), nil
 }
 
-// Pick the next primary on a schedulable node, if the current is running on an unschedulable one,
-// e.g. in case a drain is in progress
+// isInstanceOnDrainingNode checks whether the node of an instance is cordoned
+// or being drained, from the configured source of node state: the Node API,
+// the state echoed onto the instance Pod, or nothing
+func (r *ClusterReconciler) isInstanceOnDrainingNode(
+	ctx context.Context,
+	instance *postgres.PostgresqlStatus,
+) (bool, error) {
+	switch r.nodeStatusSource {
+	case configuration.NodeStatusSourceAPI:
+		return r.isNodeUnschedulableOrBeingDrained(ctx, instance.Node)
+	case configuration.NodeStatusSourcePods:
+		return instance.Pod != nil && r.nodeStatus.IsOnDrainingNode(instance.Pod, r.drainTaints), nil
+	default:
+		return false, nil
+	}
+}
+
+// isEvictionRequested checks whether an eviction request echoed onto the Pod
+// of an instance is recent enough to act on. Only the state echoed onto the
+// instance Pods carries eviction requests
+func (r *ClusterReconciler) isEvictionRequested(instance *postgres.PostgresqlStatus) bool {
+	return r.nodeStatusSource == configuration.NodeStatusSourcePods &&
+		instance.Pod != nil &&
+		r.nodeStatus.IsEvictionRequested(instance.Pod, time.Now())
+}
+
+// setPrimaryOnSchedulableNode picks the next primary on a schedulable node,
+// when the current one must leave its node: a drain is in progress, or its
+// eviction was requested. The reason is reported in the Event and the phase.
 func (r *ClusterReconciler) setPrimaryOnSchedulableNode(
 	ctx context.Context,
 	cluster *apiv1.Cluster,
 	status postgres.PostgresqlStatusList,
 	primaryPod *postgres.PostgresqlStatus,
+	reason string,
 ) (string, error) {
 	contextLogger := log.FromContext(ctx)
 
@@ -327,7 +356,7 @@ func (r *ClusterReconciler) setPrimaryOnSchedulableNode(
 	// Start looking for the next primary among the pods
 	for _, candidate := range podsOnOtherNodes.Items {
 		// If candidate on an unschedulable node too, skip it
-		if status, _ := r.isNodeUnschedulableOrBeingDrained(ctx, candidate.Node); status {
+		if status, _ := r.isInstanceOnDrainingNode(ctx, &candidate); status {
 			continue
 		}
 
@@ -346,13 +375,10 @@ func (r *ClusterReconciler) setPrimaryOnSchedulableNode(
 			"targetPrimary", candidate.Pod.Name, "targetPrimaryNode", candidate.Node)
 		status.LogStatus(ctx)
 		r.Recorder.Eventf(cluster, "Normal", "SwitchingOver",
-			"Current primary is running on unschedulable node %v, switching over from %v to %v",
-			primaryPod.Node, cluster.Status.TargetPrimary, candidate.Pod.Name)
+			"Switching over from %v to %v, because %s",
+			cluster.Status.TargetPrimary, candidate.Pod.Name, reason)
 		if err := r.RegisterPhase(ctx, cluster, apiv1.PhaseSwitchover,
-			fmt.Sprintf("Switching over to %v, because primary instance "+
-				"was running on unschedulable node %v",
-				candidate.Pod.Name,
-				primaryPod.Node)); err != nil {
+			fmt.Sprintf("Switching over to %v, because %s", candidate.Pod.Name, reason)); err != nil {
 			return "", err
 		}
 		return candidate.Pod.Name, r.setPrimaryInstance(ctx, cluster, candidate.Pod.Name)

@@ -217,6 +217,92 @@ var _ = Describe("Explicit webhook configuration names", func() {
 	})
 })
 
+var _ = Describe("Node status source", func() {
+	It("is unset by default, with a ten-minute eviction age", func() {
+		config := NewConfiguration()
+		Expect(config.NodeStatusSource).To(BeEmpty())
+		Expect(config.NodeStatusPodKeyPrefix).To(BeEmpty())
+		Expect(config.NodeStatusLabelPrefix).To(BeEmpty())
+		Expect(config.GetNodeStatusEvictionMaxAge()).To(Equal(10 * time.Minute))
+	})
+
+	It("follows the Node API when unset", func() {
+		config := NewConfiguration()
+		Expect(config.ResolveNodeStatusSource()).To(Succeed())
+		Expect(config.NodeStatusSource).To(Equal(NodeStatusSourceAPI))
+		Expect(config.ReadsNodeAPI()).To(BeTrue())
+
+		config = NewConfiguration()
+		config.APINodeEnabled = false
+		Expect(config.ResolveNodeStatusSource()).To(Succeed())
+		Expect(config.NodeStatusSource).To(Equal(NodeStatusSourceNone))
+		Expect(config.ReadsNodeAPI()).To(BeFalse())
+		Expect(config.ReadsNodeStatusFromPods()).To(BeFalse())
+	})
+
+	It("accepts an explicit api source while the Node API is read", func() {
+		config := NewConfiguration()
+		config.NodeStatusSource = NodeStatusSourceAPI
+		Expect(config.ResolveNodeStatusSource()).To(Succeed())
+		Expect(config.ReadsNodeAPI()).To(BeTrue())
+	})
+
+	It("refuses an explicit api source without the Node API", func() {
+		config := NewConfiguration()
+		config.APINodeEnabled = false
+		config.NodeStatusSource = NodeStatusSourceAPI
+		Expect(config.ResolveNodeStatusSource()).To(MatchError(ContainSubstring("API_NODE_ENABLED")))
+	})
+
+	It("reads pod-source settings with or without the Node API", func() {
+		for _, apiNode := range []bool{true, false} {
+			config := NewConfiguration()
+			config.APINodeEnabled = apiNode
+			config.ReadConfigMap(map[string]string{
+				"NODE_STATUS_SOURCE":           "pods",
+				"NODE_STATUS_POD_KEY_PREFIX":   "bridge.example.com/",
+				"NODE_STATUS_LABEL_PREFIX":     "node.example.com/",
+				"NODE_STATUS_EVICTION_MAX_AGE": "120",
+			})
+			Expect(config.ResolveNodeStatusSource()).To(Succeed())
+			Expect(config.ReadsNodeAPI()).To(BeFalse())
+			Expect(config.ReadsNodeStatusFromPods()).To(BeTrue())
+			Expect(config.NodeStatusPodKeyPrefix).To(Equal("bridge.example.com/"))
+			Expect(config.NodeStatusLabelPrefix).To(Equal("node.example.com/"))
+			Expect(config.GetNodeStatusEvictionMaxAge()).To(Equal(2 * time.Minute))
+		}
+	})
+
+	It("accepts none with or without the Node API", func() {
+		for _, apiNode := range []bool{true, false} {
+			config := Data{NodeStatusSource: NodeStatusSourceNone, APINodeEnabled: apiNode}
+			Expect(config.ResolveNodeStatusSource()).To(Succeed())
+			Expect(config.ReadsNodeAPI()).To(BeFalse())
+			Expect(config.ReadsNodeStatusFromPods()).To(BeFalse())
+		}
+	})
+
+	It("refuses pods without a key prefix and a negative age", func() {
+		config := Data{NodeStatusSource: NodeStatusSourcePods}
+		Expect(config.ResolveNodeStatusSource()).To(MatchError(ContainSubstring("NODE_STATUS_POD_KEY_PREFIX")))
+
+		config.NodeStatusPodKeyPrefix = "b/"
+		config.NodeStatusEvictionMaxAge = -1
+		Expect(config.ResolveNodeStatusSource()).To(MatchError(ContainSubstring("NODE_STATUS_EVICTION_MAX_AGE")))
+	})
+
+	It("accepts no eviction age limit with pods", func() {
+		config := Data{NodeStatusSource: NodeStatusSourcePods, NodeStatusPodKeyPrefix: "b/"}
+		Expect(config.ResolveNodeStatusSource()).To(Succeed())
+		Expect(config.GetNodeStatusEvictionMaxAge()).To(BeZero())
+	})
+
+	It("refuses an unknown source", func() {
+		config := Data{NodeStatusSource: "nodes"}
+		Expect(config.ResolveNodeStatusSource()).To(MatchError(ContainSubstring(`unknown NODE_STATUS_SOURCE "nodes"`)))
+	})
+})
+
 var _ = Describe("Webhook configuration names", func() {
 	It("uses default names when suffix is disabled", func() {
 		config := &Data{}
