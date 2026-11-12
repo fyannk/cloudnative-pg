@@ -215,7 +215,7 @@ func (r *ClusterReconciler) reconcileSuperuserSecret(ctx context.Context, cluste
 			return err
 		}
 
-		if _, owned := IsOwnedByCluster(&secret); owned {
+		if _, owned := apiv1.IsOwnedByCluster(&secret); owned {
 			return r.Delete(ctx, &secret)
 		}
 	}
@@ -260,7 +260,7 @@ func createOrPatchClusterCredentialSecret(
 	}
 
 	// we can patch only secrets that are owned by us
-	if _, owned := IsOwnedByCluster(&currentSecret); !owned {
+	if _, owned := apiv1.IsOwnedByCluster(&currentSecret); !owned {
 		return nil
 	}
 
@@ -417,7 +417,7 @@ func (r *ClusterReconciler) serviceReconciler(
 		return err
 	}
 
-	if owner, _ := IsOwnedByCluster(&livingService); owner != cluster.Name {
+	if owner, _ := apiv1.IsOwnedByCluster(&livingService); owner != cluster.Name {
 		return fmt.Errorf("refusing to reconcile service: %s, not owned by the cluster", livingService.Name)
 	}
 
@@ -1083,7 +1083,7 @@ func createOrPatchPodMonitor(
 		return nil
 	// Pod monitor disabled and pod monitor present - delete it
 	case !manager.IsPodMonitorEnabled() && podMonitor != nil:
-		if _, owned := IsOwnedByCluster(podMonitor); owned {
+		if _, owned := apiv1.IsOwnedByCluster(podMonitor); owned {
 			contextLogger.Info("Deleting PodMonitor")
 			if err := cli.Delete(ctx, podMonitor); err != nil {
 				if !apierrs.IsNotFound(err) {
@@ -1417,7 +1417,7 @@ func (r *ClusterReconciler) ensureJobAdoptable(
 		}
 		return ctrl.Result{}, fmt.Errorf("cannot get existing job %q for adoption: %w", jobName, err)
 	}
-	if owner, ok := IsOwnedByCluster(&existing); !ok || owner != cluster.Name {
+	if owner, ok := apiv1.IsOwnedByCluster(&existing); !ok || owner != cluster.Name {
 		return ctrl.Result{}, fmt.Errorf("refusing to adopt job %q: not owned by cluster %q", jobName, cluster.Name)
 	}
 	return ctrl.Result{}, nil

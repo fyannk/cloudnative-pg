@@ -27,6 +27,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
+	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/utils"
 )
 
@@ -148,7 +149,7 @@ func isOwnedByClusterOrSatisfiesPredicate(
 	object client.Object,
 	predicate func(client.Object) bool,
 ) bool {
-	_, owned := IsOwnedByCluster(object)
+	_, owned := apiv1.IsOwnedByCluster(object)
 	return owned || predicate(object)
 }
 
