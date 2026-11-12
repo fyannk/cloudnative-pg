@@ -823,3 +823,34 @@ var _ = Describe("unmarshalMetadata", func() {
 		Expect(data).To(BeNil())
 	})
 })
+
+// A VolumeSnapshot error is retried until the deadline (10 minutes by
+// default) with the Backup "started" and nothing on it: the error is on the
+// VolumeSnapshot. The Backup says it at the first retry.
+var _ = Describe("handleSnapshotErrors", func() {
+	It("records the VolumeSnapshot error on the Backup while retrying", func(ctx SpecContext) {
+		backup := &apiv1.Backup{
+			ObjectMeta: metav1.ObjectMeta{Namespace: "test-namespace", Name: "test-backup"},
+			Status:     apiv1.BackupStatus{PluginMetadata: make(map[string]string)},
+		}
+		cli := fake.NewClientBuilder().WithScheme(scheme.BuildWithAllKnownScheme()).
+			WithObjects(backup).
+			WithStatusSubresource(&apiv1.Backup{}).
+			Build()
+		recorder := record.NewFakeRecorder(10)
+		se := &Reconciler{cli: cli, recorder: recorder}
+
+		result, err := se.handleSnapshotErrors(ctx, backup, &volumeSnapshotError{
+			Name: "test-backup",
+			InternalError: volumesnapshotv1.VolumeSnapshotError{
+				Message: ptr.To("Failed to get snapshot class with error " +
+					"volumesnapshotclass.snapshot.storage.k8s.io \"sv-missing-class\" not found"),
+			},
+		})
+		Expect(err).ToNot(HaveOccurred())
+		Expect(result).To(Equal(&ctrl.Result{RequeueAfter: 10 * time.Second}))
+		Expect(recorder.Events).To(Receive(Equal("Warning VolumeSnapshotError VolumeSnapshot test-backup: " +
+			"Failed to get snapshot class with error " +
+			"volumesnapshotclass.snapshot.storage.k8s.io \"sv-missing-class\" not found (retrying until the deadline)")))
+	})
+})

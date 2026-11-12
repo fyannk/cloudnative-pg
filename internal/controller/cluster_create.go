@@ -1627,7 +1627,35 @@ func (r *ClusterReconciler) ensureInstancesAreCreated(
 		return ctrl.Result{}, fmt.Errorf("unable to create Pod: %w", err)
 	}
 
+	r.Recorder.Event(cluster, corev1.EventTypeNormal, "InstanceCreated",
+		instanceCreatedEventMessage(instanceToCreate.Name, resources.jobs.Items))
+
 	return ctrl.Result{RequeueAfter: 1 * time.Second}, nil
+}
+
+func instanceCreatedEventMessage(instanceName string, jobs []batchv1.Job) string {
+	for _, job := range jobs {
+		if job.Labels[utils.InstanceNameLabelName] != instanceName || !utils.JobHasOneCompletion(job) {
+			continue
+		}
+
+		var method string
+		switch job.Labels[utils.JobRoleLabelName] {
+		case "initdb", "import", "join":
+			method = job.Labels[utils.JobRoleLabelName]
+		case "pgbasebackup":
+			method = "from physical backup"
+		case "full-recovery":
+			method = "from backup"
+		case "snapshot-recovery":
+			method = "from volumeSnapshots"
+		}
+		if method != "" {
+			return fmt.Sprintf("Created instance %s (%s)", instanceName, method)
+		}
+	}
+
+	return fmt.Sprintf("Created instance %s (reattaching its PVCs)", instanceName)
 }
 
 // we elect a current instance that doesn't exist for creation

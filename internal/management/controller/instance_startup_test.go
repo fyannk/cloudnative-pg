@@ -38,6 +38,8 @@ import (
 // fakeLeaseAcquirer reports whatever acquirePrimaryLease's caller should see.
 type fakeLeaseAcquirer struct{ err error }
 
+func (f fakeLeaseAcquirer) WaitReason() string { return "" }
+
 func (f fakeLeaseAcquirer) Acquire(context.Context, lease.Config) error {
 	return f.err
 }

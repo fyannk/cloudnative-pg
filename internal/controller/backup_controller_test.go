@@ -27,6 +27,7 @@ import (
 	volumesnapshotv1 "github.com/kubernetes-csi/external-snapshotter/client/v8/apis/volumesnapshot/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -718,6 +719,8 @@ var _ = Describe("backup pending state", func() {
 			}
 			Expect(env.client.Create(ctx, pendingBackup)).To(Succeed())
 
+			recorder := env.backupReconciler.Recorder.(*record.FakeRecorder)
+			recordedEvents(recorder)
 			res, err := env.backupReconciler.waitIfOtherBackupsRunning(ctx, pendingBackup, cluster)
 			Expect(err).ToNot(HaveOccurred())
 			Expect(res.RequeueAfter).To(Equal(10 * time.Second))
@@ -725,6 +728,11 @@ var _ = Describe("backup pending state", func() {
 			var stored apiv1.Backup
 			Expect(env.client.Get(ctx, client.ObjectKeyFromObject(pendingBackup), &stored)).To(Succeed())
 			Expect(stored.Status.Phase).To(BeEquivalentTo(apiv1.BackupPhasePending))
+
+			// A pending backup has no status.error: the one it waits for is
+			// named in an event
+			Expect(recordedEvents(recorder)).To(ContainElement(
+				"Normal BackupPending Waiting for backup backup-1-running to complete (running)"))
 		})
 
 		It("does not set pending when backup can execute", func(ctx context.Context) {

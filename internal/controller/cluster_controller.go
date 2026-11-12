@@ -26,6 +26,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"sort"
 	"strings"
 	"time"
 
@@ -286,6 +287,9 @@ func (r *ClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	}
 
 	if err != nil {
+		// The error is logged by the manager as "Reconciler error", which the
+		// owner of the Cluster usually cannot read: report it on the Cluster
+		recordReconciliationError(r.Recorder, cluster, err)
 		return ctrl.Result{}, err
 	}
 	return result, nil
@@ -859,14 +863,19 @@ func (r *ClusterReconciler) reconcileResources(
 	// failure in the phase instead. The cause is in the job logs and has to be
 	// investigated: there is no predefined recipe.
 	if failedJobs := resources.failedJobNames(); len(failedJobs) > 0 {
+		sort.Strings(failedJobs)
 		contextLogger.Warning("An instance creation job has failed", "failedJobs", failedJobs)
 
 		reason := fmt.Sprintf("Instance creation failed for the following jobs: %s. "+
 			"Check the job logs to investigate the cause of the failure.",
 			strings.Join(failedJobs, ", "))
+		phaseChanged := cluster.Status.Phase != apiv1.PhaseUnrecoverable || cluster.Status.PhaseReason != reason
 
 		if err := r.RegisterPhase(ctx, cluster, apiv1.PhaseUnrecoverable, reason); err != nil {
 			return ctrl.Result{}, err
+		}
+		if phaseChanged {
+			r.Recorder.Eventf(cluster, "Warning", "InstanceCreationFailed", "%s", reason)
 		}
 		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 	}
@@ -921,12 +930,13 @@ func (r *ClusterReconciler) reconcileResources(
 			// to an unready instance.
 			contextLogger.Debug("Instance pod not active. Retrying...")
 
-			// Register a phase indicating some instances aren't active yet
+			// Register a phase indicating some instances aren't active yet,
+			// with what the Pods report as the cause
 			if err := r.RegisterPhase(
 				ctx,
 				cluster,
 				apiv1.PhaseWaitingForInstancesToBeActive,
-				"Some instances are not yet active. Please wait.",
+				resources.waitingForInstancesReason(),
 			); err != nil {
 				return ctrl.Result{}, err
 			}

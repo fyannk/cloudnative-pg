@@ -44,6 +44,8 @@ import (
 // PrimaryLeaseAcquirer is the interface the primary lease runnable exposes to the reconciler.
 type PrimaryLeaseAcquirer interface {
 	Acquire(ctx context.Context, config lease.Config) error
+	// WaitReason says why the lease is not held yet
+	WaitReason() string
 }
 
 // InstanceReconciler reconciles the status of the Cluster resource with
