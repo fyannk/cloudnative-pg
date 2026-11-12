@@ -20,9 +20,12 @@ SPDX-License-Identifier: Apache-2.0
 package v1
 
 import (
+	"context"
+
 	"k8s.io/utils/ptr"
 
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
+	"github.com/cloudnative-pg/cloudnative-pg/internal/configuration"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/utils"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -42,7 +45,7 @@ var _ = Describe("Validate schedule", func() {
 			},
 		}
 
-		warnings, result := v.validate(schedule)
+		warnings, result := v.validate(schedule, true)
 		Expect(warnings).To(BeEmpty())
 		Expect(result).To(BeEmpty())
 	})
@@ -54,7 +57,7 @@ var _ = Describe("Validate schedule", func() {
 			},
 		}
 
-		warnings, result := v.validate(schedule)
+		warnings, result := v.validate(schedule, true)
 		Expect(warnings).To(HaveLen(1))
 		Expect(result).To(BeEmpty())
 	})
@@ -66,7 +69,7 @@ var _ = Describe("Validate schedule", func() {
 			},
 		}
 
-		warnings, result := v.validate(schedule)
+		warnings, result := v.validate(schedule, true)
 		Expect(warnings).To(BeEmpty())
 		Expect(result).To(HaveLen(1))
 	})
@@ -80,7 +83,7 @@ var _ = Describe("Validate schedule", func() {
 		}
 		utils.SetVolumeSnapshot(true)
 
-		warnings, result := v.validate(schedule)
+		warnings, result := v.validate(schedule, true)
 		Expect(warnings).To(BeEmpty())
 		Expect(result).To(BeEmpty())
 	})
@@ -93,7 +96,7 @@ var _ = Describe("Validate schedule", func() {
 			},
 		}
 		utils.SetVolumeSnapshot(false)
-		warnings, result := v.validate(schedule)
+		warnings, result := v.validate(schedule, true)
 		Expect(warnings).To(BeEmpty())
 		Expect(result).To(HaveLen(1))
 		Expect(result[0].Field).To(Equal("spec.method"))
@@ -107,7 +110,7 @@ var _ = Describe("Validate schedule", func() {
 				Schedule: "* * * * * *",
 			},
 		}
-		warnings, result := v.validate(scheduledBackup)
+		warnings, result := v.validate(scheduledBackup, true)
 		Expect(warnings).To(BeEmpty())
 		Expect(result).To(HaveLen(1))
 		Expect(result[0].Field).To(Equal("spec.online"))
@@ -121,9 +124,72 @@ var _ = Describe("Validate schedule", func() {
 				Schedule:            "* * * * * *",
 			},
 		}
-		warnings, result := v.validate(scheduledBackup)
+		warnings, result := v.validate(scheduledBackup, true)
 		Expect(warnings).To(BeEmpty())
 		Expect(result).To(HaveLen(1))
 		Expect(result[0].Field).To(Equal("spec.onlineConfiguration"))
+	})
+})
+
+var _ = Describe("Five-field schedules under SCHEDULED_BACKUP_CRON_FORMAT", func() {
+	var v *ScheduledBackupCustomValidator
+	var previousFormat string
+	fiveFields := func() *apiv1.ScheduledBackup {
+		return &apiv1.ScheduledBackup{
+			Spec: apiv1.ScheduledBackupSpec{
+				Schedule: "0 2 * * *",
+			},
+		}
+	}
+	BeforeEach(func() {
+		v = &ScheduledBackupCustomValidator{}
+		previousFormat = configuration.Current.ScheduledBackupCronFormat
+	})
+	AfterEach(func() {
+		configuration.Current.ScheduledBackupCronFormat = previousFormat
+	})
+
+	It("rejects a creation and keeps an update under seconds-strict", func() {
+		configuration.Current.ScheduledBackupCronFormat = string(utils.CronFormatSecondsStrict)
+
+		warnings, result := v.validate(fiveFields(), true)
+		Expect(warnings).To(BeEmpty())
+		Expect(result).To(HaveLen(1))
+		Expect(result[0].Field).To(Equal("spec.schedule"))
+		Expect(result[0].Detail).To(ContainSubstring(`"0 0 2 * * *"`))
+
+		warnings, result = v.validate(fiveFields(), false)
+		Expect(warnings).To(HaveLen(1))
+		Expect(result).To(BeEmpty())
+	})
+
+	It("keeps reconciling an existing object under seconds-strict", func(ctx context.Context) {
+		configuration.Current.ScheduledBackupCronFormat = string(utils.CronFormatSecondsStrict)
+
+		// the admission guard of the reconciler validates existing objects as created
+		guard := &ScheduledBackupCustomValidator{ExistingObjects: true}
+		warnings, err := guard.ValidateCreate(ctx, fiveFields())
+		Expect(err).ToNot(HaveOccurred())
+		Expect(warnings).To(HaveLen(1))
+	})
+
+	It("accepts five fields silently under standard", func() {
+		configuration.Current.ScheduledBackupCronFormat = string(utils.CronFormatStandard)
+
+		warnings, result := v.validate(fiveFields(), true)
+		Expect(warnings).To(BeEmpty())
+		Expect(result).To(BeEmpty())
+	})
+
+	It("does not warn on a descriptor", func() {
+		schedule := &apiv1.ScheduledBackup{
+			Spec: apiv1.ScheduledBackupSpec{
+				Schedule: "@every 1h",
+			},
+		}
+
+		warnings, result := v.validate(schedule, true)
+		Expect(warnings).To(BeEmpty())
+		Expect(result).To(BeEmpty())
 	})
 })

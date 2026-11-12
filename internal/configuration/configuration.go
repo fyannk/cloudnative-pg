@@ -29,6 +29,7 @@ import (
 	"github.com/cloudnative-pg/machinery/pkg/log"
 
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/configparser"
+	"github.com/cloudnative-pg/cloudnative-pg/pkg/utils"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/versions"
 )
 
@@ -192,6 +193,14 @@ type Data struct {
 	// be disabled when the webhook configurations are managed externally (e.g.
 	// by cert-manager's CA injector or by GitOps).
 	ManageWebhookConfigurations bool `json:"manageWebhookConfigurations" env:"MANAGE_WEBHOOK_CONFIGURATIONS"`
+
+	// ScheduledBackupCronFormat tells how the schedule of a ScheduledBackup
+	// is read when it has five fields, the standard cron format, instead of
+	// the six fields with seconds of robfig/cron: "seconds" (the default)
+	// reads it with the seconds field first and warns, "seconds-strict"
+	// rejects it when the ScheduledBackup is created, "standard" reads it
+	// as standard cron, with the minute field first.
+	ScheduledBackupCronFormat string `json:"scheduledBackupCronFormat" env:"SCHEDULED_BACKUP_CRON_FORMAT"`
 }
 
 // Current is the configuration used by the operator
@@ -212,6 +221,7 @@ func newDefaultConfig() *Data {
 		KubernetesClusterDomain:     DefaultKubernetesClusterDomain,
 		DrainTaints:                 DefaultDrainTaints,
 		ManageWebhookConfigurations: true,
+		ScheduledBackupCronFormat:   string(utils.CronFormatSeconds),
 	}
 }
 
@@ -249,6 +259,11 @@ func (config *Data) GetClustersRolloutDelay() time.Duration {
 // to the same cluster
 func (config *Data) GetInstancesRolloutDelay() time.Duration {
 	return time.Duration(config.InstancesRolloutDelay) * time.Second
+}
+
+// GetScheduledBackupCronFormat gets how the schedule of a ScheduledBackup is read
+func (config *Data) GetScheduledBackupCronFormat() utils.CronFormat {
+	return utils.CronFormat(config.ScheduledBackupCronFormat)
 }
 
 // WatchedNamespaces get the list of additional watched namespaces.
