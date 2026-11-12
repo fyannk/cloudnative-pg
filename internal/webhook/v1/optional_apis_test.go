@@ -192,7 +192,8 @@ var _ = Describe("Objects asking for an unavailable optional API", func() {
 			Expect(warnings).To(ConsistOf(
 				configuration.NodeStatusUnavailableMessage,
 				SatisfyAll(
-					HavePrefix("spec.postgresql.syncReplicaElectionConstraint.nodeLabelsAntiAffinity: the operator reads no node state"),
+					HavePrefix("spec.postgresql.syncReplicaElectionConstraint.nodeLabelsAntiAffinity: "+
+						"the operator reads no node state"),
 					ContainSubstring("the node labels kubernetes.io/hostname, topology.kubernetes.io/zone cannot be resolved"),
 				),
 			))
