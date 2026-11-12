@@ -177,6 +177,20 @@ func reportVolumeExpansion(
 			Message: "Every PVC accepts the size requested by the cluster",
 		}
 	}
+	return setReportedCondition(ctx, c, recorder, cluster, existing, condition)
+}
+
+// setReportedCondition stores a condition reporting a problem of the cluster,
+// and records an Event when it changes: a Warning one while the problem
+// lasts, a Normal one once it is over
+func setReportedCondition(
+	ctx context.Context,
+	c client.Client,
+	recorder record.EventRecorder,
+	cluster *apiv1.Cluster,
+	existing *metav1.Condition,
+	condition metav1.Condition,
+) error {
 	condition.ObservedGeneration = cluster.Generation
 
 	changed := existing == nil ||
@@ -192,12 +206,13 @@ func reportVolumeExpansion(
 		return nil
 	}
 
-	contextLogger := log.FromContext(ctx)
+	contextLogger := log.FromContext(ctx).WithValues(
+		"condition", condition.Type, "reason", condition.Reason, "message", condition.Message)
 	if condition.Status == metav1.ConditionTrue {
-		contextLogger.Warning("Volume expansion refused", "reason", condition.Reason, "message", condition.Message)
+		contextLogger.Warning("Cluster condition reports a problem")
 		recorder.Event(cluster, corev1.EventTypeWarning, condition.Reason, condition.Message)
 	} else {
-		contextLogger.Info("Volume expansion accepted again")
+		contextLogger.Info("Cluster condition reports the problem is over")
 		recorder.Event(cluster, corev1.EventTypeNormal, condition.Reason, condition.Message)
 	}
 

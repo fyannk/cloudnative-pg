@@ -27,6 +27,7 @@ import (
 	"github.com/cloudnative-pg/machinery/pkg/log"
 	corev1 "k8s.io/api/core/v1"
 	apierrs "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -44,12 +45,15 @@ type reconciliationUnit func(
 
 // reconcileExistingPVCs align the existing pvcs to the desired state. A PVC
 // whose expansion the API server refuses does not stop the loop: the refusals
-// are returned, so that every PVC is attempted and reported.
+// are returned, so that every PVC is attempted and reported. The volumes in
+// sizes, the ones with autoGrow, are resized to the size given there instead
+// of the one in the specification.
 func reconcileExistingPVCs(
 	ctx context.Context,
 	c client.Client,
 	cluster *apiv1.Cluster,
 	pvcs []corev1.PersistentVolumeClaim,
+	sizes map[pvcGroup]resource.Quantity,
 ) ([]*volumeExpansionRefusal, error) {
 	if len(pvcs) == 0 {
 		return nil, nil
@@ -78,6 +82,10 @@ func reconcileExistingPVCs(
 				"pvcName", pvc.Name,
 			)
 			return nil, err
+		}
+
+		if size, ok := sizes[pvcGroupFromLabels(pvc.Labels)]; ok {
+			storageConfiguration.Size = size.String()
 		}
 
 		for _, reconciler := range getReconciliationUnits(&storageConfiguration) {
