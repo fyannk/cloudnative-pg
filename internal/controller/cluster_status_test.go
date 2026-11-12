@@ -166,7 +166,7 @@ var _ = Describe("cluster_status unit tests", func() {
 			jobs = generateFakeInitDBJobs(crReconciler.Client, cluster)
 			pods = generateFakeClusterPods(crReconciler.Client, cluster, true)
 			pvcs = generateClusterPVC(crReconciler.Client, cluster, persistentvolumeclaim.StatusReady)
-			name, isOwned := IsOwnedByCluster(&pods[0])
+			name, isOwned := apiv1.IsOwnedByCluster(&pods[0])
 			Expect(isOwned).To(BeTrue())
 			Expect(name).To(Equal(cluster.Name))
 		})

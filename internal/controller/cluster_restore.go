@@ -171,7 +171,7 @@ func ensureOrphanServiceIsNotPresent(
 		return err
 	}
 
-	if owner, _ := IsOwnedByCluster(&svc); owner == clusterName {
+	if owner, _ := apiv1.IsOwnedByCluster(&svc); owner == clusterName {
 		return nil
 	}
 
