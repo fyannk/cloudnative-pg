@@ -26,6 +26,7 @@ import (
 	"github.com/cloudnative-pg/machinery/pkg/log"
 	corev1 "k8s.io/api/core/v1"
 	apierrs "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -36,6 +37,7 @@ import (
 func Reconcile(
 	ctx context.Context,
 	c client.Client,
+	recorder record.EventRecorder,
 	cluster *apiv1.Cluster,
 	instances []corev1.Pod,
 	pvcs []corev1.PersistentVolumeClaim,
@@ -46,12 +48,19 @@ func Reconcile(
 		return res, err
 	}
 
-	if err := reconcileExistingPVCs(ctx, c, cluster, pvcs); err != nil {
+	refusals, err := reconcileExistingPVCs(ctx, c, cluster, pvcs)
+	if err != nil {
 		if apierrs.IsConflict(err) {
 			contextLogger.Debug("Conflict error while reconciling PVCs", "error", err)
 			return ctrl.Result{RequeueAfter: time.Second}, nil
 		}
 
+		return ctrl.Result{}, err
+	}
+
+	// a refused expansion is reported and does not stop the reconciliation:
+	// the cluster requeues itself to retry it, see VolumeExpansionRetryInterval
+	if err := reportVolumeExpansion(ctx, c, recorder, cluster, refusals); err != nil {
 		return ctrl.Result{}, err
 	}
 
