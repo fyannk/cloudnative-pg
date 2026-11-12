@@ -138,9 +138,13 @@ spec:
 ```
 
 Using the previous configuration, the generated PVCs are satisfied by the
-default storage class. If the target Kubernetes cluster has no default storage
-class, or even if you need your PVCs to be satisfied by a known storage class,
-you can set it into the custom resource:
+default storage class of the Kubernetes cluster, unless the operator
+configuration sets one with `DEFAULT_STORAGE_CLASS` (see
+[Operator configuration](operator_conf.md)): that class is then written into
+the `storageClass` field of every storage section of the `Cluster` that does
+not name one, when the `Cluster` is created. If the target Kubernetes cluster
+has no default storage class, or even if you need your PVCs to be satisfied by
+a known storage class, you can set it into the custom resource:
 
 ```yaml
 apiVersion: postgresql.cnpg.io/v1

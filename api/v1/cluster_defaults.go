@@ -56,6 +56,63 @@ func (r *Cluster) Default() {
 // SetDefaults apply the defaults to undefined values in a Cluster
 func (r *Cluster) SetDefaults() {
 	r.setDefaults(false)
+
+	// The default StorageClass is a creation-time default (see
+	// SetDefaultStorageClass). Outside the admission webhook, the status
+	// tells whether the Cluster has already created an instance.
+	if !r.HasCreatedInstances() {
+		r.SetDefaultStorageClass()
+	}
+}
+
+// SetDefaultStorageClass writes the default StorageClass of the operator
+// configuration, when one is set, into every storage section of the Cluster
+// that names no class: `storage`, `walStorage` and each tablespace. A section
+// that sets `storageClass`, or `storageClassName` in its `pvcTemplate` (an
+// empty value included), is left as it is.
+//
+// This is a creation-time default: the webhook applies it to a Cluster
+// being created, the reconciler to a Cluster that has created no instance
+// yet. A Cluster whose PVCs exist keeps its storage sections as they are,
+// whatever the operator configuration, so that its next volumes land on
+// the same class as its existing ones.
+func (r *Cluster) SetDefaultStorageClass() {
+	r.setDefaultStorageClass(configuration.Current)
+}
+
+func (r *Cluster) setDefaultStorageClass(config *configuration.Data) {
+	if config.DefaultStorageClass == "" {
+		return
+	}
+
+	r.Spec.StorageConfiguration.setDefaultStorageClass(config.DefaultStorageClass)
+	if r.Spec.WalStorage != nil {
+		r.Spec.WalStorage.setDefaultStorageClass(config.DefaultStorageClass)
+	}
+	for i := range r.Spec.Tablespaces {
+		r.Spec.Tablespaces[i].Storage.setDefaultStorageClass(config.DefaultStorageClass)
+	}
+}
+
+// HasCreatedInstances is true once the Cluster has created an instance, that
+// is once a PVC may exist. The target primary is recorded right after the PVCs
+// of the first instance are created; IsInitialized is a second signal, for a
+// status that lost that field or that an older operator version wrote.
+func (r *Cluster) HasCreatedInstances() bool {
+	return r.Status.TargetPrimary != "" || r.IsInitialized()
+}
+
+// setDefaultStorageClass sets the StorageClass of this storage section
+// unless a class, empty or not, is already chosen by the section itself
+func (s *StorageConfiguration) setDefaultStorageClass(name string) {
+	if s.StorageClass != nil {
+		return
+	}
+	if s.PersistentVolumeClaimTemplate != nil && s.PersistentVolumeClaimTemplate.StorageClassName != nil {
+		return
+	}
+
+	s.StorageClass = ptr.To(name)
 }
 
 func (r *Cluster) setDefaults(preserveUserSettings bool) {
