@@ -186,41 +186,7 @@ func RunController(
 	if err != nil {
 		return err
 	}
-	if err := errors.Join(
-		conf.ParseDefaultAndMandatoryMetadata(),
-		conf.ParseMonitoringDiscoveryAnnotations(),
-	); err != nil {
-		setupLog.Error(err, "invalid operator configuration")
-		return err
-	}
-
-	setupLog.Info("Operator configuration loaded", "configuration", conf)
-	if err := conf.ValidateOperatorStatusIdentity(); err != nil {
-		setupLog.Error(err, "invalid operator configuration")
-		return err
-	}
-	if conf.PropagateProxyEnv {
-		logProxyPropagation()
-	}
-	logOwnObjectNames(conf)
-
-	if conf.EnableWebhookNamespaceSuffix && conf.OperatorNamespace == "" {
-		err := fmt.Errorf("ENABLE_WEBHOOK_NAMESPACE_SUFFIX requires OPERATOR_NAMESPACE to be set " +
-			"as a pod environment variable (typically via the Downward API fieldRef.fieldPath = metadata.namespace)")
-		setupLog.Error(err, "invalid webhook configuration")
-		return err
-	}
-	if conf.EnableWebhookNamespaceSuffix &&
-		(conf.MutatingWebhookConfigurationName != "" || conf.ValidatingWebhookConfigurationName != "") {
-		setupLog.Info("Explicit webhook configuration names are used as given, ENABLE_WEBHOOK_NAMESPACE_SUFFIX does not apply to them",
-			"mutatingWebhookConfigurationName", conf.GetMutatingWebhookConfigurationName(),
-			"validatingWebhookConfigurationName", conf.GetValidatingWebhookConfigurationName())
-	}
-
-	if format := conf.GetScheduledBackupCronFormat(); !format.IsValid() {
-		err := fmt.Errorf("SCHEDULED_BACKUP_CRON_FORMAT %q is not one of %q, %q or %q", format,
-			utils.CronFormatSeconds, utils.CronFormatSecondsStrict, utils.CronFormatStandard)
-		setupLog.Error(err, "invalid operator configuration")
+	if err := checkLoadedConfiguration(conf); err != nil {
 		return err
 	}
 
@@ -238,12 +204,8 @@ func RunController(
 	if err := probeOptionalAPIs(ctx, kubeClient, conf); err != nil {
 		return err
 	}
-	if err := conf.ResolveNodeStatusSource(); err != nil {
-		setupLog.Error(err, "invalid node status configuration")
+	if err := resolveNodeStatusSource(conf); err != nil {
 		return err
-	}
-	if conf.NodeStatusSource == configuration.NodeStatusSourceNone {
-		setupLog.Warning(configuration.NodeStatusUnavailableMessage)
 	}
 	utils.SetVolumeSnapshot(conf.APIVolumeSnapshotEnabled)
 
@@ -655,6 +617,64 @@ func logProxyPropagation() {
 		summary = append(summary, setting.Name+"="+setting.Redacted())
 	}
 	setupLog.Info("Propagating the proxy settings of the operator to the workloads", "settings", summary)
+}
+
+// resolveNodeStatusSource settles where the operator reads the state of the
+// nodes from, once the optional APIs are probed, and warns when it reads none
+func resolveNodeStatusSource(conf *configuration.Data) error {
+	if err := conf.ResolveNodeStatusSource(); err != nil {
+		setupLog.Error(err, "invalid node status configuration")
+		return err
+	}
+	if conf.NodeStatusSource == configuration.NodeStatusSourceNone {
+		setupLog.Warning(configuration.NodeStatusUnavailableMessage)
+	}
+	return nil
+}
+
+// checkLoadedConfiguration parses and validates the operator configuration
+// once loaded, and logs the settings that deserve it
+func checkLoadedConfiguration(conf *configuration.Data) error {
+	if err := errors.Join(
+		conf.ParseDefaultAndMandatoryMetadata(),
+		conf.ParseMonitoringDiscoveryAnnotations(),
+	); err != nil {
+		setupLog.Error(err, "invalid operator configuration")
+		return err
+	}
+
+	setupLog.Info("Operator configuration loaded", "configuration", conf)
+	if err := conf.ValidateOperatorStatusIdentity(); err != nil {
+		setupLog.Error(err, "invalid operator configuration")
+		return err
+	}
+	if conf.PropagateProxyEnv {
+		logProxyPropagation()
+	}
+	logOwnObjectNames(conf)
+
+	if conf.EnableWebhookNamespaceSuffix && conf.OperatorNamespace == "" {
+		err := fmt.Errorf("ENABLE_WEBHOOK_NAMESPACE_SUFFIX requires OPERATOR_NAMESPACE to be set " +
+			"as a pod environment variable (typically via the Downward API fieldRef.fieldPath = metadata.namespace)")
+		setupLog.Error(err, "invalid webhook configuration")
+		return err
+	}
+	if conf.EnableWebhookNamespaceSuffix &&
+		(conf.MutatingWebhookConfigurationName != "" || conf.ValidatingWebhookConfigurationName != "") {
+		setupLog.Info("Explicit webhook configuration names are used as given, "+
+			"ENABLE_WEBHOOK_NAMESPACE_SUFFIX does not apply to them",
+			"mutatingWebhookConfigurationName", conf.GetMutatingWebhookConfigurationName(),
+			"validatingWebhookConfigurationName", conf.GetValidatingWebhookConfigurationName())
+	}
+
+	if format := conf.GetScheduledBackupCronFormat(); !format.IsValid() {
+		err := fmt.Errorf("SCHEDULED_BACKUP_CRON_FORMAT %q is not one of %q, %q or %q", format,
+			utils.CronFormatSeconds, utils.CronFormatSecondsStrict, utils.CronFormatStandard)
+		setupLog.Error(err, "invalid operator configuration")
+		return err
+	}
+
+	return nil
 }
 
 func validateOperatorIdentity(conf *configuration.Data) error {
