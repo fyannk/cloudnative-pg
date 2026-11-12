@@ -33,20 +33,15 @@ jobs:
         id: check-release
         run: |
           tag="${GITHUB_REF#refs/tags/v}"
-          latest_release_branch=$(git branch -rl 'origin/release-*' | sort -r | head -n1 | sed -e 's/^.*\(release-.*\)/\1/')
-          current_release_branch=$(echo "${tag}" | sed -e 's/\([0-9]\+.[0-9]\+\).*/release-\1/')
+          # A fork release is the upstream version it is based on, followed
+          # by its own sequence number: 1.30.1-1, 1.30.1-2, ...
+          if [[ ! "$tag" =~ ^[0-9]+\.[0-9]+\.[0-9]+-[0-9]+$ ]]; then
+            echo "::error::v${tag} is not a fork release tag (vX.Y.Z-N)"
+            exit 1
+          fi
           is_latest="false"
-          if [[ "$latest_release_branch" == "$current_release_branch" ]]; then
-            is_latest="true"
-          fi
-          is_stable="false"
-          if [[ "$tag" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            is_stable="true"
-          fi
+          is_stable="true"
           is_rc="false"
-          if [[ "$tag" =~ ^.*-rc[0-9]+$ ]]; then
-            is_rc="true"
-          fi
           echo "is_latest=${is_latest}" >> $GITHUB_OUTPUT
           echo "is_stable=${is_stable}" >> $GITHUB_OUTPUT
           echo "is_rc=${is_rc}" >> $GITHUB_OUTPUT
@@ -63,25 +58,32 @@ jobs:
       -
         name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # The release notes list the commits since the upstream tag.
+          fetch-depth: 0
       -
         name: Get tag
         run: |
           tag="${GITHUB_REF#refs/tags/v}"
           version="${tag#v}"
-          file=$(echo ${version} | awk -F '[.]' '{print "release_notes/v"$1"."$2".md"}')
           echo "TAG=${tag}" >> $GITHUB_ENV
           echo "VERSION=${version}" >> $GITHUB_ENV
-          echo "FILE=${file}" >> $GITHUB_ENV
+          echo "BASE=v${version%-*}" >> $GITHUB_ENV
       -
         name: Generate release notes
         env:
           TAG: ${{ env.TAG }}
-          FILE: ${{ env.FILE }}
+          BASE: ${{ env.BASE }}
         run: |
-          docker run --rm -v $(pwd):/src mist/submark \
-            submark -O --h2 "Version ${TAG}" \
-            --out-file /src/release_notes.md \
-            "/src/docs/src/${FILE}"
+          # the fork carries no upstream tag: fetch the one this release is based on
+          git fetch --no-tags https://github.com/cloudnative-pg/cloudnative-pg.git "refs/tags/${BASE}:refs/tags/${BASE}"
+          {
+            echo "## Version ${TAG}"
+            echo
+            echo "Upstream CloudNativePG ${BASE}, with these changes:"
+            echo
+            git log --reverse --no-merges --format='- %s' "${BASE}..v${TAG}"
+          } > release_notes.md
       -
         name: Install cosign
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
@@ -154,8 +156,9 @@ jobs:
           author_name=$(git show -s --format='%an' "${commit_sha}" | head -n1)
           author_email=$(git show -s --format='%ae' "${commit_sha}" | head -n1)
 
-          # use git describe to get the nearest tag and use that to build the version (e.g. 1.4.0-dev24 or 1.4.0)
-          commit_version=$(git describe --tags --match 'v*' "${commit_sha}"| sed -e 's/^v//; s/-g[0-9a-f]\+$//; s/-\([0-9]\+\)$/-dev\1/')
+          # The version is the tag: git describe would read the fork
+          # sequence number of 1.30.1-1 as a count of commits (1.30.1-dev1)
+          commit_version="${tag}"
           commit_short=$(git rev-parse --short "${commit_sha}")
 
           echo "DATE=${commit_date}" >> $GITHUB_ENV
@@ -166,20 +169,10 @@ jobs:
           echo "author_name=${author_name}" >> $GITHUB_OUTPUT
           echo "author_email=${author_email}" >> $GITHUB_OUTPUT
       -
-        name: Import GPG key
-        id: import_gpg
-        uses: crazy-max/ghaction-import-gpg@2dc316deee8e90f13e1a351ab510b4d5bc0c82cd # v7
-        with:
-          gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
-          passphrase: ${{ secrets.GPG_PASSPHRASE }}
-      -
         name: Set GoReleaser environment
-        env:
-          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
         run: |
           echo GOPATH=$(go env GOPATH) >> $GITHUB_ENV
           echo PWD=$(pwd) >> $GITHUB_ENV
-          echo "$GPG_PRIVATE_KEY" > gpg_signing_key.asc
       -
         name: Install Syft
         uses: anchore/sbom-action/download-syft@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
@@ -196,8 +189,6 @@ jobs:
           COMMIT: ${{ env.COMMIT }}
           VERSION: ${{ env.VERSION }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GPG_FINGERPRINT: ${{ steps.import_gpg.outputs.fingerprint }}
-          NFPM_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
 
       - name: Build checksum file
         id: hashes
@@ -208,14 +199,6 @@ jobs:
           checksum_file=$(echo "$ARTIFACTS" | jq -r '.[] | select (.type=="Checksum") | .path')
           echo "hashes=$(cat $checksum_file | base64 -w0)" >> "$GITHUB_OUTPUT"
 
-      -
-        name: Publish Krew
-        if: |
-          needs.check-version.outputs.is_latest == 'true' &&
-          needs.check-version.outputs.is_stable == 'true'
-        uses: rajatjindal/krew-release-bot@c970b8a8f6dbc2f2285a26e3ae160903b87002c3 # v0.0.51
-        with:
-          krew_template_file: dist/krew/cnpg.yaml
       -
         name: Detect platforms
         run: |
@@ -344,11 +327,7 @@ jobs:
       - release-binaries
     if: |
       (always() && !cancelled()) &&
-      needs.release-binaries.result == 'success' &&
-      (
-        needs.check-version.outputs.is_latest == 'true' ||
-        needs.check-version.outputs.is_rc == 'true'
-      )
+      needs.release-binaries.result == 'success'
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -380,6 +359,7 @@ jobs:
         env:
           OLM_IMG: ${{ needs.release-binaries.outputs.olm_img }}
         run: |
+          echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_ENV
           echo "CONTROLLER_IMG=${OLM_IMG}" >> $GITHUB_ENV
           echo "BUNDLE_IMG=${OLM_IMG}-bundle" >> $GITHUB_ENV
           echo "CATALOG_IMG=${OLM_IMG}-catalog" >> $GITHUB_ENV
@@ -395,7 +375,7 @@ jobs:
           REGCONF="${RUNNER_TEMP}/registries.conf"
           printf 'unqualified-search-registries = ["docker.io", "quay.io"]\n' > "${REGCONF}"
           export CONTAINERS_REGISTRIES_CONF="${REGCONF}"
-          make olm-catalog
+          make olm-catalog VERSION="${VERSION}"
 
       - name: Archive the bundle manifests
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -405,146 +385,3 @@ jobs:
             bundle.Dockerfile
             bundle/
             cloudnative-pg-catalog.yaml
-
-  operatorhub_pr:
-    name: Create remote PR for OperatorHub
-    runs-on: ubuntu-26.04
-    needs:
-      - check-version
-      - release-binaries
-      - olm-bundle
-    if: |
-      (always() && !cancelled()) &&
-      needs.olm-bundle.result == 'success' &&
-      needs.check-version.outputs.is_latest == 'true' &&
-      needs.check-version.outputs.is_stable == 'true'
-    env:
-      VERSION: ${{ needs.release-binaries.outputs.version }}
-    steps:
-      - name: Checkout community-operators
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          repository: k8s-operatorhub/community-operators
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: Download the bundle
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        with:
-          name: bundle
-
-      - name: Copy bundle in the community-operators
-        run: |
-          mkdir -p "operators/cloudnative-pg/${VERSION}"
-          cp -R bundle/* "operators/cloudnative-pg/${VERSION}"
-          rm -fr cloudnative-pg-catalog.yaml bundle.Dockerfile *.zip bundle/
-
-      - name: Add replaces field to CSV
-        run: |
-          CSV_FILE="operators/cloudnative-pg/${VERSION}/manifests/cloudnative-pg.clusterserviceversion.yaml"
-          PREVIOUS_VERSION=$(ls -d operators/cloudnative-pg/[0-9]* | sort -V | tail -2 | head -1 | xargs basename)
-          sed -i "s/^  relatedImages:/  replaces: cloudnative-pg.v${PREVIOUS_VERSION}\n  relatedImages:/" "${CSV_FILE}"
-
-      - name: Create Remote Pull Request
-        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8
-        with:
-          token: ${{ secrets.REPO_GHA_PAT }}
-          commit-message: "operator cloudnative-pg (${{ env.VERSION }})"
-          title: "operator cloudnative-pg (${{ env.VERSION }})"
-          signoff: true
-          branch: release-cloudnativepg-${{ env.VERSION }}
-          delete-branch: true
-          push-to-fork: cloudnative-pg/community-operators
-          body: |
-            Thanks submitting your Operator. Please check below list before you create your Pull Request.
-            ### Updates to existing Operators
-
-              * [x]  Did you create a `ci.yaml` file according to the [update instructions](https://github.com/operator-framework/community-operators/blob/master/docs/operator-ci-yaml.md)?
-              * [x]  Is your new CSV pointing to the previous version with the `replaces` property if you chose `replaces-mode` via the `updateGraph` property in `ci.yaml`?
-              * [x]  Is your new CSV referenced in the [appropriate channel](https://github.com/operator-framework/community-operators/blob/master/docs/packaging-operator.md#channels) defined in the `package.yaml` or `annotations.yaml` ?
-              * [x]  Have you tested an update to your Operator when deployed via OLM?
-              * [x]  Is your submission [signed](https://github.com/operator-framework/community-operators/blob/master/docs/contributing-prerequisites.md#sign-your-work)?
-
-            ### Your submission should not
-              * [x]  Modify more than one operator
-              * [x]  Modify an Operator you don't own
-              * [x]  Rename an operator - please remove and add with a different name instead
-              * [x]  Modify any files outside the above mentioned folders
-              * [x]  Contain more than one commit. **Please squash your commits.**
-
-            ### Operator Description must contain (in order)
-              1. [x]  Description about the managed Application and where to find more information
-              2. [x]  Features and capabilities of your Operator and how to use it
-              3. [x]  Any manual steps about potential pre-requisites for using your Operator
-
-            ### Operator Metadata should contain
-              * [x]  Human readable name and 1-liner description about your Operator
-              * [x]  Valid [category name](https://github.com/operator-framework/community-operators/blob/master/docs/packaging-operator.md#categories)<sup>1</sup>
-              * [x]  One of the pre-defined [capability levels](https://github.com/operator-framework/operator-courier/blob/4d1a25d2c8d52f7de6297ec18d8afd6521236aa2/operatorcourier/validate.py#L556)<sup>2</sup>
-              * [x]  Links to the maintainer, source code and documentation
-              * [x]  Example templates for all Custom Resource Definitions intended to be used
-              * [x]  A quadratic logo
-
-            Remember that you can preview your CSV [here](https://operatorhub.io/preview).
-            --
-            <sup>1</sup> If you feel your Operator does not fit any of the pre-defined categories, file an issue against this repo and explain your need
-            <sup>2</sup> For more information see [here](https://sdk.operatorframework.io/docs/overview/#operator-capability-level)
-
-  publish_bundle:
-    name: Publish OLM Bundle
-    needs:
-      - olm-bundle
-      - release-binaries
-    if: |
-      (always() && !cancelled()) &&
-      needs.olm-bundle.result == 'success' &&
-      github.repository_owner == 'cloudnative-pg'
-    env:
-      VERSION: ${{ needs.release-binaries.outputs.version }}
-    runs-on: ubuntu-26.04
-    steps:
-      -
-        name: Checkout artifact
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          repository: cloudnative-pg/artifacts
-          token: ${{ secrets.REPO_GHA_PAT }}
-          ref: main
-          fetch-depth: 0
-      -
-        name: Configure git user
-        env:
-          AUTHOR_EMAIL: ${{ needs.release-binaries.outputs.author_email }}
-          AUTHOR_NAME: ${{ needs.release-binaries.outputs.author_name }}
-        run: |
-          git config user.email "${AUTHOR_EMAIL}"
-          git config user.name "${AUTHOR_NAME}"
-      -
-        name: Download the bundle
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        with:
-          name: bundle
-      -
-        name: Copy the bundle
-        run: |
-          mkdir -p "bundles/${VERSION}"
-          cp -R bundle/* "bundles/${VERSION}"
-          rm -fr cloudnative-pg-catalog.yaml bundle.Dockerfile *.zip bundle/
-      -
-        name: Prepare commit message
-        env:
-          COMMIT_MESSAGE: |
-            operator cloudnative-pg (${{ env.VERSION }})
-        run: |
-          # Skip creating the commit if there are no changes
-          [ -n "$(git status -s)" ] || exit 0
-
-          git add "bundles/${VERSION}"
-          git commit -sm "${COMMIT_MESSAGE}"
-      -
-        name: Push commit
-        uses: ad-m/github-push-action@881a6320fdb16eb5318c5054f31c218aec2b324c # v1.3.0
-        with:
-          github_token: ${{ secrets.REPO_GHA_PAT }}
-          repository: cloudnative-pg/artifacts
-          branch: "main"

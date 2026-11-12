@@ -3,7 +3,7 @@ project_name: cnpg
 
 release:
   github:
-    owner: cloudnative-pg
+    owner: fyannk
     name: cloudnative-pg
 
 env:
@@ -100,20 +100,14 @@ nfpms:
       {{- .Os }}_
       {{- if eq .Arch "amd64" }}x86_64
       {{- else }}{{ .Arch }}{{ with .Arm }}v{{ . }}{{ end }}{{ end }}
-    homepage: https://github.com/cloudnative-pg/cloudnative-pg
+    homepage: https://github.com/fyannk/cloudnative-pg
     bindir: /usr/local/bin
-    maintainer: 'Marco Nenciarini <marco.nenciarini@enterprisedb.com>'
+    maintainer: 'Fanch KERGUELEN <fyannk@fyannk.dev>'
     ids:
       - kubectl-cnpg
     formats:
       - rpm
       - deb
-    rpm:
-      signature:
-        key_file: gpg_signing_key.asc
-    deb:
-      signature:
-        key_file: gpg_signing_key.asc
 
 checksum:
   name_template: '{{ .ProjectName }}-{{ .Version }}-checksums.txt'
@@ -128,10 +122,6 @@ sboms:
   - artifacts: archive
   - id: packages
     artifacts: package
-
-signs:
-  - artifacts: all
-    args: ["--batch", "-u", "{{ .Env.GPG_FINGERPRINT }}", "--output", "${signature}", "--detach-sign", "${artifact}"]
 
 krews:
   - name: cnpg
