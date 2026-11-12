@@ -26,6 +26,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/cloudnative-pg/machinery/pkg/fileutils"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -714,5 +715,95 @@ var _ = Describe("TryRequestImmediateShutdown", func() {
 		Eventually(instance.TryRequestImmediateShutdown).Should(BeTrue())
 		Expect(<-received).To(Equal(shutDownImmediate))
 		Expect(instance.TryRequestImmediateShutdown()).To(BeFalse())
+	})
+})
+
+// The SIGTERM shutdown of a primary that the cluster has already moved away
+// from: the smart phase gives way to a fast shutdown as soon as that is known
+var _ = Describe("the smart shutdown of a demoted primary", func() {
+	const period = 5 * time.Millisecond
+
+	It("ends with the smart shutdown when the instance stays the target primary", func() {
+		fastCalls := 0
+		err := runSmartShutdownUnlessDemoted(context.Background(),
+			func() error { time.Sleep(4 * period); return nil },
+			func() error { fastCalls++; return nil },
+			func() bool { return false },
+			period)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(fastCalls).To(BeZero())
+	})
+
+	It("reports the failure of a smart shutdown that was not escalated", func() {
+		err := runSmartShutdownUnlessDemoted(context.Background(),
+			func() error { return errors.New("timed out") },
+			func() error { Fail("no fast shutdown expected"); return nil },
+			func() bool { return false },
+			period)
+		Expect(err).To(MatchError("timed out"))
+	})
+
+	It("escalates to a fast shutdown once the instance is demoted, and waits for the smart request", func() {
+		postmasterDown := make(chan struct{})
+		demoted := false
+		smartReturned := false
+		err := runSmartShutdownUnlessDemoted(context.Background(),
+			func() error { <-postmasterDown; smartReturned = true; return nil },
+			func() error { close(postmasterDown); return nil },
+			func() bool { demoted = true; return demoted },
+			period)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(smartReturned).To(BeTrue(), "the smart request must have returned before the escalation ends")
+	})
+
+	It("reports the failure of the fast shutdown it escalated to", func() {
+		postmasterDown := make(chan struct{})
+		err := runSmartShutdownUnlessDemoted(context.Background(),
+			func() error { <-postmasterDown; return nil },
+			func() error { close(postmasterDown); return errors.New("fast failed") },
+			func() bool { return true },
+			period)
+		Expect(err).To(MatchError("fast failed"))
+	})
+})
+
+var _ = Describe("whether a primary is no longer the target primary", func() {
+	var instance *Instance
+
+	BeforeEach(func() {
+		instance = NewInstance().WithPodName("pg-1")
+		instance.PgData = GinkgoT().TempDir()
+	})
+
+	withTarget := func(target string) {
+		instance.SetCluster(&apiv1.Cluster{Status: apiv1.ClusterStatus{TargetPrimary: target}})
+	}
+
+	It("is false while the instance is the target primary", func() {
+		withTarget("pg-1")
+		Expect(instance.isNoLongerTargetPrimary()).To(BeFalse())
+	})
+
+	It("is false without a cached cluster or without a target primary", func() {
+		Expect(instance.isNoLongerTargetPrimary()).To(BeFalse())
+		withTarget("")
+		Expect(instance.isNoLongerTargetPrimary()).To(BeFalse())
+	})
+
+	It("is true when another instance is the target primary", func() {
+		withTarget("pg-2")
+		Expect(instance.isNoLongerTargetPrimary()).To(BeTrue())
+	})
+
+	It("is true when a failover is pending", func() {
+		withTarget(apiv1.PendingFailoverMarker)
+		Expect(instance.isNoLongerTargetPrimary()).To(BeTrue())
+	})
+
+	It("is false on a replica, whatever the target primary", func() {
+		_, err := fileutils.WriteStringToFile(filepath.Join(instance.PgData, "standby.signal"), "")
+		Expect(err).ToNot(HaveOccurred())
+		withTarget("pg-2")
+		Expect(instance.isNoLongerTargetPrimary()).To(BeFalse())
 	})
 })
