@@ -351,6 +351,7 @@ Openshift
 OperatorCapabilities
 OperatorCertificateFingerprint
 OperatorHub
+OperatorStatus
 OptionSpec
 OwnNamespace
 PDB
@@ -1260,6 +1261,7 @@ operativity
 operatorCapabilities
 operatorframework
 operatorhub
+operatorstatus
 optionspec
 ou
 overridable

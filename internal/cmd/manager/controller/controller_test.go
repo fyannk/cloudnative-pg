@@ -25,6 +25,7 @@ import (
 
 	"github.com/cloudnative-pg/cloudnative-pg/internal/configuration"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/certs"
+	"github.com/cloudnative-pg/cloudnative-pg/pkg/versions"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -86,5 +87,44 @@ var _ = Describe("Operator identity", func() {
 	It("refuses a Deployment name that cannot name Kubernetes objects", func() {
 		err := validateOperatorIdentity(&configuration.Data{OperatorDeploymentName: "CNPG_toto"})
 		Expect(err).To(MatchError(ContainSubstring("OPERATOR_DEPLOYMENT_NAME")))
+	})
+})
+
+var _ = Describe("Operator user agent", func() {
+	It("is the default one when the Deployment name is not reported", func() {
+		Expect(operatorUserAgent(&configuration.Data{
+			OperatorDeploymentName: "cnpg-toto",
+			OperatorStatusIdentity: configuration.OperatorStatusIdentityVersion,
+		})).To(BeEmpty())
+		Expect(operatorUserAgent(&configuration.Data{
+			OperatorDeploymentName: "cnpg-toto",
+			OperatorStatusIdentity: configuration.OperatorStatusIdentityOff,
+		})).To(BeEmpty())
+	})
+
+	It("is the default one when the Deployment name is not known", func() {
+		Expect(operatorUserAgent(&configuration.Data{
+			OperatorStatusIdentity: configuration.OperatorStatusIdentityFull,
+		})).To(BeEmpty())
+	})
+
+	It("starts with the Deployment name, the field manager, when the name is reported", func() {
+		for _, mode := range []string{
+			configuration.OperatorStatusIdentityName, configuration.OperatorStatusIdentityFull,
+		} {
+			userAgent := operatorUserAgent(&configuration.Data{
+				OperatorDeploymentName: "cnpg-toto",
+				OperatorStatusIdentity: mode,
+			})
+			Expect(userAgent).To(HavePrefix("cnpg-toto/" + versions.Version + " ("))
+			Expect(userAgent).To(ContainSubstring("cloudnative-pg/"))
+		}
+	})
+})
+
+var _ = Describe("Operator status identity", func() {
+	It("is refused with the identity when the mode is unknown", func() {
+		err := validateOperatorIdentity(&configuration.Data{OperatorStatusIdentity: "verbose"})
+		Expect(err).To(MatchError(ContainSubstring("OPERATOR_STATUS_IDENTITY")))
 	})
 })
