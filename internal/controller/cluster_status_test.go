@@ -607,13 +607,20 @@ var _ = Describe("topology availability without the Node API", func() {
 
 	BeforeEach(func() {
 		previous := configuration.Current.APINodeEnabled
+		previousSource := configuration.Current.NodeStatusSource
 		configuration.Current.APINodeEnabled = false
-		DeferCleanup(func() { configuration.Current.APINodeEnabled = previous })
+		configuration.Current.NodeStatusSource = configuration.NodeStatusSourceNone
+		DeferCleanup(func() {
+			configuration.Current.APINodeEnabled = previous
+			configuration.Current.NodeStatusSource = previousSource
+		})
 	})
 
 	It("sets one condition and warning while preserving the node count from Pods", func() {
 		recorder := record.NewFakeRecorder(10)
-		reconciler := &ClusterReconciler{Recorder: recorder}
+		reconciler := &ClusterReconciler{
+			Recorder: recorder, nodeStatusSource: configuration.NodeStatusSourceNone,
+		}
 		cluster := &apiv1.Cluster{}
 		pods := []corev1.Pod{
 			{ObjectMeta: metav1.ObjectMeta{Name: "pg-1"}, Spec: corev1.PodSpec{NodeName: "node-1"}},
@@ -635,4 +642,127 @@ var _ = Describe("topology availability without the Node API", func() {
 		Expect(cluster.Status.Topology.SuccessfullyExtracted).To(BeTrue())
 		Expect(cluster.Status.Topology.NodesUsed).To(BeEquivalentTo(2))
 	})
+})
+
+var _ = Describe("topology from echoed node labels", func() {
+	const zoneLabel = "topology.kubernetes.io/zone"
+
+	It("reads node labels copied onto the instance Pods", func() {
+		reader := utils.NodeStatusReader{LabelPrefix: "node.example.com/"}
+		pods := []corev1.Pod{
+			{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:   "pg-1",
+					Labels: map[string]string{"node.example.com/" + zoneLabel: "zone-a"},
+				},
+				Spec: corev1.PodSpec{NodeName: "node-1"},
+			},
+			{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:   "pg-2",
+					Labels: map[string]string{"node.example.com/" + zoneLabel: "zone-b"},
+				},
+				Spec: corev1.PodSpec{NodeName: "node-2"},
+			},
+		}
+
+		topology := getPodsTopologyWithNodeLabels(context.Background(), pods, []string{zoneLabel}, reader.NodeLabels)
+		Expect(topology.SuccessfullyExtracted).To(BeTrue())
+		Expect(topology.Instances["pg-1"][zoneLabel]).To(Equal("zone-a"))
+		Expect(topology.Instances["pg-2"][zoneLabel]).To(Equal("zone-b"))
+		Expect(topology.NodesUsed).To(BeEquivalentTo(2))
+	})
+
+	It("leaves the topology unavailable when no node state is read", func() {
+		reconciler := &ClusterReconciler{nodeStatusSource: configuration.NodeStatusSourceNone}
+		cluster := &apiv1.Cluster{}
+		pods := []corev1.Pod{
+			{ObjectMeta: metav1.ObjectMeta{Name: "pg-1"}, Spec: corev1.PodSpec{NodeName: "node-1"}},
+			{ObjectMeta: metav1.ObjectMeta{Name: "pg-2"}, Spec: corev1.PodSpec{NodeName: "node-2"}},
+		}
+
+		reconciler.updateTopologyAvailability(cluster, nil, pods, []string{zoneLabel})
+		Expect(cluster.IsTopologyUnavailable()).To(BeTrue())
+		Expect(cluster.Status.Topology.NodesUsed).To(BeEquivalentTo(2))
+		Expect(cluster.Status.Conditions[0].Message).To(ContainSubstring("NODE_STATUS_SOURCE=none"))
+	})
+})
+
+var _ = Describe("topology resolution by source of node state", func() {
+	const (
+		zoneLabel = "topology.kubernetes.io/zone"
+		prefix    = "node.example.com/"
+	)
+	labelNames := []string{zoneLabel}
+	reader := utils.NodeStatusReader{LabelPrefix: prefix}
+
+	pod := func(name, nodeName string, labels map[string]string) corev1.Pod {
+		return corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Labels: labels},
+			Spec:       corev1.PodSpec{NodeName: nodeName},
+		}
+	}
+	nodes := map[string]corev1.Node{
+		"node-1": {ObjectMeta: metav1.ObjectMeta{Name: "node-1", Labels: map[string]string{zoneLabel: "az1"}}},
+	}
+
+	It("fails the extraction when a copy is missing, as an unknown node does", func() {
+		pods := []corev1.Pod{
+			pod("pg-1", "node-1", map[string]string{prefix + zoneLabel: "az1"}),
+			pod("pg-2", "node-2", nil),
+		}
+		topology := getPodsTopologyWithNodeLabels(context.Background(), pods, labelNames, reader.NodeLabels)
+		Expect(topology.SuccessfullyExtracted).To(BeFalse())
+	})
+
+	It("fails the extraction without node state when node labels are needed", func() {
+		pods := []corev1.Pod{pod("pg-1", "node-1", nil)}
+		topology := getPodsTopologyWithNodeLabels(context.Background(), pods, labelNames, noNodeLabels)
+		Expect(topology.SuccessfullyExtracted).To(BeFalse())
+	})
+
+	DescribeTable("the resolver of the node labels follows the source of node state",
+		func(source string, expected bool) {
+			r := &ClusterReconciler{nodeStatusSource: source, nodeStatus: reader}
+			p := pod("pg-1", "node-1", map[string]string{prefix + zoneLabel: "az1"})
+			_, ok := r.nodeLabelsResolver(nodes)(&p, labelNames)
+			Expect(ok).To(Equal(expected))
+		},
+		Entry("api", configuration.NodeStatusSourceAPI, true),
+		Entry("pods", configuration.NodeStatusSourcePods, true),
+		Entry("none", configuration.NodeStatusSourceNone, false),
+	)
+
+	It("the resolver of the API source reads the Nodes only", func() {
+		r := &ClusterReconciler{nodeStatusSource: configuration.NodeStatusSourceAPI, nodeStatus: reader}
+		p := pod("pg-1", "node-1", map[string]string{prefix + zoneLabel: "az1"})
+		_, ok := r.nodeLabelsResolver(map[string]corev1.Node{})(&p, labelNames)
+		Expect(ok).To(BeFalse())
+	})
+
+	It("the resolver of the pods source reads the Pod only", func() {
+		r := &ClusterReconciler{nodeStatusSource: configuration.NodeStatusSourcePods, nodeStatus: reader}
+		p := pod("pg-1", "node-1", nil)
+		_, ok := r.nodeLabelsResolver(nodes)(&p, labelNames)
+		Expect(ok).To(BeFalse())
+	})
+
+	DescribeTable("updateTopologyAvailability sets nothing when node state is read",
+		func(source string) {
+			recorder := record.NewFakeRecorder(10)
+			r := &ClusterReconciler{Recorder: recorder, nodeStatusSource: source}
+			cluster := &apiv1.Cluster{}
+			cluster.Status.Conditions = []metav1.Condition{{
+				Type: string(apiv1.ConditionTopologyUnavailable), Status: metav1.ConditionTrue,
+			}}
+			pods := []corev1.Pod{pod("pg-1", "node-1", nil)}
+
+			r.updateTopologyAvailability(cluster, cluster.Status.Conditions, pods, labelNames)
+			Expect(meta.FindStatusCondition(cluster.Status.Conditions,
+				string(apiv1.ConditionTopologyUnavailable))).To(BeNil())
+			Expect(recorder.Events).ToNot(Receive())
+		},
+		Entry("api", configuration.NodeStatusSourceAPI),
+		Entry("pods", configuration.NodeStatusSourcePods),
+	)
 })

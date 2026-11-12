@@ -106,9 +106,11 @@ type ClusterReconciler struct {
 	Plugins            repository.Interface
 	OperatorClientCert *tls.Certificate
 
-	drainTaints    []string
-	rolloutManager *rolloutManager.Manager
-	admission      *guard.Admission[*apiv1.Cluster]
+	drainTaints      []string
+	nodeStatusSource string
+	nodeStatus       utils.NodeStatusReader
+	rolloutManager   *rolloutManager.Manager
+	admission        *guard.Admission[*apiv1.Cluster]
 }
 
 // NewClusterReconciler creates a new ClusterReconciler initializing it
@@ -131,8 +133,14 @@ func NewClusterReconciler(
 			configuration.Current.GetClustersRolloutDelay(),
 			configuration.Current.GetInstancesRolloutDelay(),
 		),
-		drainTaints: drainTaints,
-		admission:   admission,
+		drainTaints:      drainTaints,
+		nodeStatusSource: configuration.Current.NodeStatusSource,
+		nodeStatus: utils.NodeStatusReader{
+			KeyPrefix:      configuration.Current.NodeStatusPodKeyPrefix,
+			LabelPrefix:    configuration.Current.NodeStatusLabelPrefix,
+			EvictionMaxAge: configuration.Current.GetNodeStatusEvictionMaxAge(),
+		},
+		admission: admission,
 	}
 }
 
@@ -835,6 +843,29 @@ func (r *ClusterReconciler) setDefaults(ctx context.Context, cluster *apiv1.Clus
 	return nil
 }
 
+// registerFailedInstanceJobs marks the cluster as unrecoverable because of
+// the given failed instance creation jobs, with a Warning event when the
+// phase changes
+func (r *ClusterReconciler) registerFailedInstanceJobs(
+	ctx context.Context, cluster *apiv1.Cluster, failedJobs []string,
+) (ctrl.Result, error) {
+	sort.Strings(failedJobs)
+	log.FromContext(ctx).Warning("An instance creation job has failed", "failedJobs", failedJobs)
+
+	reason := fmt.Sprintf("Instance creation failed for the following jobs: %s. "+
+		"Check the job logs to investigate the cause of the failure.",
+		strings.Join(failedJobs, ", "))
+	phaseChanged := cluster.Status.Phase != apiv1.PhaseUnrecoverable || cluster.Status.PhaseReason != reason
+
+	if err := r.RegisterPhase(ctx, cluster, apiv1.PhaseUnrecoverable, reason); err != nil {
+		return ctrl.Result{}, err
+	}
+	if phaseChanged {
+		r.Recorder.Eventf(cluster, "Warning", "InstanceCreationFailed", "%s", reason)
+	}
+	return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+}
+
 // reconcileResources updates all the objects managed by the controller
 func (r *ClusterReconciler) reconcileResources(
 	ctx context.Context, cluster *apiv1.Cluster,
@@ -865,21 +896,7 @@ func (r *ClusterReconciler) reconcileResources(
 	// failure in the phase instead. The cause is in the job logs and has to be
 	// investigated: there is no predefined recipe.
 	if failedJobs := resources.failedJobNames(); len(failedJobs) > 0 {
-		sort.Strings(failedJobs)
-		contextLogger.Warning("An instance creation job has failed", "failedJobs", failedJobs)
-
-		reason := fmt.Sprintf("Instance creation failed for the following jobs: %s. "+
-			"Check the job logs to investigate the cause of the failure.",
-			strings.Join(failedJobs, ", "))
-		phaseChanged := cluster.Status.Phase != apiv1.PhaseUnrecoverable || cluster.Status.PhaseReason != reason
-
-		if err := r.RegisterPhase(ctx, cluster, apiv1.PhaseUnrecoverable, reason); err != nil {
-			return ctrl.Result{}, err
-		}
-		if phaseChanged {
-			r.Recorder.Eventf(cluster, "Warning", "InstanceCreationFailed", "%s", reason)
-		}
-		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+		return r.registerFailedInstanceJobs(ctx, cluster, failedJobs)
 	}
 
 	runningJobs := resources.runningJobNames()
@@ -1365,8 +1382,10 @@ func (r *ClusterReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manag
 			builder.WithPredicates(isBeingDeletedPredicate),
 		)
 
-	// Nodes are watched to detect drains: cluster-scoped and optional
-	if configuration.Current.APINodeEnabled {
+	// Nodes are watched to detect drains only when the node state comes from
+	// the Node API: with the other sources the instance Pods, owned above,
+	// carry it and wake the Cluster up themselves
+	if r.nodeStatusSource == configuration.NodeStatusSourceAPI {
 		ctrlBuilder = ctrlBuilder.Watches(
 			&corev1.Node{},
 			handler.EnqueueRequestsFromMapFunc(r.mapNodeToClusters()),

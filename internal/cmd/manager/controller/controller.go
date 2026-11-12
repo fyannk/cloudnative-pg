@@ -238,6 +238,13 @@ func RunController(
 	if err := probeOptionalAPIs(ctx, kubeClient, conf); err != nil {
 		return err
 	}
+	if err := conf.ResolveNodeStatusSource(); err != nil {
+		setupLog.Error(err, "invalid node status configuration")
+		return err
+	}
+	if conf.NodeStatusSource == configuration.NodeStatusSourceNone {
+		setupLog.Warning(configuration.NodeStatusUnavailableMessage)
+	}
 	utils.SetVolumeSnapshot(conf.APIVolumeSnapshotEnabled)
 
 	// Detect the available architectures
@@ -252,6 +259,7 @@ func RunController(
 		"apiVolumeSnapshot", conf.APIVolumeSnapshotEnabled,
 		"apiClusterImageCatalog", conf.APIClusterImageCatalogEnabled,
 		"apiNode", conf.APINodeEnabled,
+		"nodeStatusSource", conf.NodeStatusSource,
 		"availableArchitectures", utils.GetAvailableArchitectures(),
 	)
 

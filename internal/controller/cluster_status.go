@@ -281,11 +281,11 @@ func (r *ClusterReconciler) updateResourceStatus(
 	cluster.Status.JobCount = newJobs
 
 	nodeLabelKeys := cluster.GetTopologyLabelKeys()
-	cluster.Status.Topology = getPodsTopology(
+	cluster.Status.Topology = getPodsTopologyWithNodeLabels(
 		ctx,
 		resources.instances.Items,
-		resources.nodes,
-		cluster.Spec.PostgresConfiguration.SyncReplicaElectionConstraint,
+		nodeLabelKeys,
+		r.nodeLabelsResolver(resources.nodes),
 	)
 	r.updateTopologyAvailability(cluster, existingClusterStatus.Conditions, resources.instances.Items, nodeLabelKeys)
 
@@ -854,12 +854,42 @@ func (r *ClusterReconciler) updateClusterStatusThatRequiresInstancesState(
 	return nil
 }
 
-// getPodsTopology returns a map with all the information about the pods topology
-func getPodsTopology(
+type nodeLabelsResolver func(pod *corev1.Pod, keys []string) (map[string]string, bool)
+
+func nodeLabelsFromNodes(nodes map[string]corev1.Node) nodeLabelsResolver {
+	return func(pod *corev1.Pod, keys []string) (map[string]string, bool) {
+		node, ok := nodes[pod.Spec.NodeName]
+		if !ok {
+			return nil, false
+		}
+		labels := make(map[string]string, len(keys))
+		for _, key := range keys {
+			labels[key] = node.Labels[key]
+		}
+		return labels, true
+	}
+}
+
+func noNodeLabels(*corev1.Pod, []string) (map[string]string, bool) {
+	return nil, false
+}
+
+func (r *ClusterReconciler) nodeLabelsResolver(nodes map[string]corev1.Node) nodeLabelsResolver {
+	switch r.nodeStatusSource {
+	case configuration.NodeStatusSourcePods:
+		return r.nodeStatus.NodeLabels
+	case configuration.NodeStatusSourceNone:
+		return noNodeLabels
+	default:
+		return nodeLabelsFromNodes(nodes)
+	}
+}
+
+func getPodsTopologyWithNodeLabels(
 	ctx context.Context,
 	pods []corev1.Pod,
-	nodes map[string]corev1.Node,
-	topology apiv1.SyncReplicaElectionConstraints,
+	nodeLabelKeys []string,
+	nodeLabels nodeLabelsResolver,
 ) apiv1.Topology {
 	contextLogger := log.FromContext(ctx)
 	data := make(map[apiv1.PodName]apiv1.PodTopologyLabels)
@@ -868,26 +898,25 @@ func getPodsTopology(
 	for _, pod := range pods {
 		podName := apiv1.PodName(pod.Name)
 		data[podName] = make(map[string]string, 0)
-		if len(topology.NodeLabelsAntiAffinity) == 0 {
+		if len(nodeLabelKeys) == 0 {
 			if pod.Spec.NodeName != "" {
 				nodesMap[pod.Spec.NodeName] = append(nodesMap[pod.Spec.NodeName], podName)
 			}
 			continue
 		}
 
-		node, ok := nodes[pod.Spec.NodeName]
+		labels, ok := nodeLabels(&pod, nodeLabelKeys)
 		if !ok {
-			// node not found, it means that:
-			// - the node could have been drained
-			// - others
-			contextLogger.Debug("node not found, skipping pod topology matching")
+			contextLogger.Debug("node labels not resolved, skipping pod topology matching",
+				"podName", pod.Name, "nodeName", pod.Spec.NodeName)
 			return apiv1.Topology{}
 		}
 
-		nodesMap[pod.Spec.NodeName] = append(nodesMap[pod.Spec.NodeName], podName)
-
-		for _, labelName := range topology.NodeLabelsAntiAffinity {
-			data[podName][labelName] = node.Labels[labelName]
+		if pod.Spec.NodeName != "" {
+			nodesMap[pod.Spec.NodeName] = append(nodesMap[pod.Spec.NodeName], podName)
+		}
+		for key, value := range labels {
+			data[podName][key] = value
 		}
 	}
 
@@ -900,14 +929,14 @@ func (r *ClusterReconciler) updateTopologyAvailability(
 	pods []corev1.Pod,
 	nodeLabelKeys []string,
 ) {
-	if configuration.Current.APINodeEnabled {
+	if r.nodeStatusSource != configuration.NodeStatusSourceNone {
 		meta.RemoveStatusCondition(&cluster.Status.Conditions, string(apiv1.ConditionTopologyUnavailable))
 		return
 	}
 	if len(nodeLabelKeys) == 0 {
 		meta.RemoveStatusCondition(&cluster.Status.Conditions, string(apiv1.ConditionTopologyUnavailable))
-		cluster.Status.Topology = getPodsTopology(
-			context.Background(), pods, nil, apiv1.SyncReplicaElectionConstraints{},
+		cluster.Status.Topology = getPodsTopologyWithNodeLabels(
+			context.Background(), pods, nil, noNodeLabels,
 		)
 		return
 	}
@@ -920,7 +949,7 @@ func (r *ClusterReconciler) updateTopologyAvailability(
 	}
 	cluster.Status.Topology = apiv1.Topology{NodesUsed: int32(len(usedNodes))} //nolint:gosec
 
-	message := "The operator does not read the Node API (API_NODE_ENABLED): the node labels " +
+	message := "The operator reads no node state (NODE_STATUS_SOURCE=none): the node labels " +
 		strings.Join(nodeLabelKeys, ", ") + " cannot be resolved and the failure domain " +
 		"constraints of the synchronous replicas are not applied"
 	meta.SetStatusCondition(&cluster.Status.Conditions, metav1.Condition{
