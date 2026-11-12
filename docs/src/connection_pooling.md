@@ -829,6 +829,9 @@ cnpg_pgbouncer_stats_total_xact_count{database="pgbouncer"} 15
 # HELP cnpg_pgbouncer_stats_total_xact_time Total number of microseconds spent by pgbouncer when connected to PostgreSQL in a transaction, either idle in transaction or executing queries.
 # TYPE cnpg_pgbouncer_stats_total_xact_time gauge
 cnpg_pgbouncer_stats_total_xact_time{database="pgbouncer"} 0
+# HELP cnpg_pgbouncer_up 1 if pgbouncer is up, 0 otherwise.
+# TYPE cnpg_pgbouncer_up gauge
+cnpg_pgbouncer_up 1
 ```
 
 :::info
