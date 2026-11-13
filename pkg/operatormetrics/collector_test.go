@@ -24,6 +24,8 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"sync/atomic"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	corev1 "k8s.io/api/core/v1"
@@ -33,6 +35,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
+	"github.com/cloudnative-pg/cloudnative-pg/internal/configuration"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/versions"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -49,6 +52,23 @@ type failingReader struct {
 func (r failingReader) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
 	if fmt.Sprintf("%T", list) == fmt.Sprintf("%T", r.failing) {
 		return errors.New("informer not started")
+	}
+	return r.Reader.List(ctx, list, opts...)
+}
+
+// blockingReader blocks on listing one kind until its context is done, as a
+// cache does when the informer of that kind never syncs, and serves the others
+type blockingReader struct {
+	client.Reader
+	blocking client.ObjectList
+	calls    *atomic.Int32
+}
+
+func (r blockingReader) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
+	if fmt.Sprintf("%T", list) == fmt.Sprintf("%T", r.blocking) {
+		r.calls.Add(1)
+		<-ctx.Done()
+		return ctx.Err()
 	}
 	return r.Reader.List(ctx, list, opts...)
 }
@@ -87,11 +107,16 @@ func joinLabels(labels []string) string {
 }
 
 var _ = Describe("The operator metrics collector", func() {
-	var scheme *runtime.Scheme
+	var (
+		scheme *runtime.Scheme
+		// conf enables every optional API
+		conf *configuration.Data
+	)
 
 	BeforeEach(func() {
 		scheme = runtime.NewScheme()
 		Expect(apiv1.AddToScheme(scheme)).To(Succeed())
+		conf = &configuration.Data{APIClusterImageCatalogEnabled: true}
 	})
 
 	meta := func(namespace, name string) metav1.ObjectMeta {
@@ -148,7 +173,7 @@ var _ = Describe("The operator metrics collector", func() {
 		}
 		reader := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objects...).Build()
 
-		Expect(gather(NewCollector(reader))).To(Equal(map[string]float64{
+		Expect(gather(NewCollector(reader, conf))).To(Equal(map[string]float64{
 			`cnpg_operator_build_info{commit="` + versions.Info.Commit + `",date="` + versions.Info.Date +
 				`",version="` + versions.Info.Version + `"}`: 1,
 			`cnpg_operator_managed_objects{cluster="",kind="Cluster",namespace="tenant-a"}`:             2,
@@ -181,10 +206,55 @@ var _ = Describe("The operator metrics collector", func() {
 			failing: &apiv1.PoolerList{},
 		}
 
-		series := gather(NewCollector(reader))
+		series := gather(NewCollector(reader, conf))
 		Expect(series).To(HaveLen(2))
 		Expect(series).To(HaveKeyWithValue(
 			`cnpg_operator_managed_objects{cluster="",kind="Cluster",namespace="tenant-a"}`, 1.0))
 		Expect(series).To(HaveKey(HavePrefix("cnpg_operator_build_info{")))
+	})
+
+	// The ClusterImageCatalog API disabled at startup, forbidden or not
+	// installed, is never listed: the cache would wait forever for its
+	// informer to sync, and hold the scrape.
+	It("does not list a kind whose optional API is disabled", func() {
+		var calls atomic.Int32
+		reader := blockingReader{
+			Reader: fake.NewClientBuilder().WithScheme(scheme).WithObjects(
+				&apiv1.Cluster{ObjectMeta: meta("tenant-a", "pg-1")},
+			).Build(),
+			blocking: &apiv1.ClusterImageCatalogList{},
+			calls:    &calls,
+		}
+		conf.APIClusterImageCatalogEnabled = false
+
+		series := gather(NewCollector(reader, conf))
+		Expect(calls.Load()).To(BeZero())
+		Expect(series).To(HaveLen(2))
+		Expect(series).To(HaveKeyWithValue(
+			`cnpg_operator_managed_objects{cluster="",kind="Cluster",namespace="tenant-a"}`, 1.0))
+		Expect(series).To(HaveKey(HavePrefix("cnpg_operator_build_info{")))
+	})
+
+	// A List that does not return is cut by the timeout of the scrape: the
+	// kind is left out, the others are reported.
+	It("leaves out a kind that cannot be listed in time", func() {
+		previous := collectTimeout
+		collectTimeout = 100 * time.Millisecond
+		DeferCleanup(func() { collectTimeout = previous })
+
+		var calls atomic.Int32
+		reader := blockingReader{
+			Reader: fake.NewClientBuilder().WithScheme(scheme).WithObjects(
+				&apiv1.Cluster{ObjectMeta: meta("tenant-a", "pg-1")},
+			).Build(),
+			blocking: &apiv1.ClusterImageCatalogList{},
+			calls:    &calls,
+		}
+
+		series := gather(NewCollector(reader, conf))
+		Expect(calls.Load()).To(BeEquivalentTo(1))
+		Expect(series).To(HaveLen(2))
+		Expect(series).To(HaveKeyWithValue(
+			`cnpg_operator_managed_objects{cluster="",kind="Cluster",namespace="tenant-a"}`, 1.0))
 	})
 })

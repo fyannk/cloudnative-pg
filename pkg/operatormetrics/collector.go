@@ -23,6 +23,7 @@ package operatormetrics
 
 import (
 	"context"
+	"time"
 
 	"github.com/cloudnative-pg/machinery/pkg/log"
 	"github.com/prometheus/client_golang/prometheus"
@@ -32,6 +33,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/metrics"
 
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
+	"github.com/cloudnative-pg/cloudnative-pg/internal/configuration"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/versions"
 )
 
@@ -59,7 +61,14 @@ type managedKind struct {
 	// cluster gives the Cluster an object belongs to, for the kinds that
 	// reference one
 	cluster func(client.Object) string
+	// enabled tells, for the kinds of an optional API, whether the operator
+	// uses it. The kinds without it are always counted.
+	enabled func(*configuration.Data) bool
 }
+
+// collectTimeout bounds a scrape: listing a kind whose informer cannot sync
+// must not hold the whole metrics endpoint. A variable for the tests.
+var collectTimeout = 5 * time.Second
 
 // managedKinds lists every CloudNativePG kind, in the order of the output
 var managedKinds = []managedKind{
@@ -115,6 +124,9 @@ var managedKinds = []managedKind{
 	{
 		name:    "ClusterImageCatalog",
 		newList: func() client.ObjectList { return &apiv1.ClusterImageCatalogList{} },
+		// Disabled when forbidden or not installed: an informer on it would
+		// never sync, and a List on the cache would wait for it forever
+		enabled: func(conf *configuration.Data) bool { return conf.APIClusterImageCatalogEnabled },
 	},
 }
 
@@ -123,16 +135,25 @@ var managedKinds = []managedKind{
 // cache, with no refresh to schedule and no stale value to keep
 type Collector struct {
 	reader client.Reader
+	kinds  []managedKind
 }
 
-// NewCollector creates a collector counting the objects of the given reader
-func NewCollector(reader client.Reader) *Collector {
-	return &Collector{reader: reader}
+// NewCollector creates a collector counting the objects of the given reader,
+// for the kinds whose API the given configuration enables. It must be called
+// once the optional APIs are probed.
+func NewCollector(reader client.Reader, conf *configuration.Data) *Collector {
+	kinds := make([]managedKind, 0, len(managedKinds))
+	for _, kind := range managedKinds {
+		if kind.enabled == nil || kind.enabled(conf) {
+			kinds = append(kinds, kind)
+		}
+	}
+	return &Collector{reader: reader, kinds: kinds}
 }
 
 // Register registers a collector on the metrics registry of controller-runtime
-func Register(reader client.Reader) error {
-	return metrics.Registry.Register(NewCollector(reader))
+func Register(reader client.Reader, conf *configuration.Data) error {
+	return metrics.Registry.Register(NewCollector(reader, conf))
 }
 
 // Describe implements prometheus.Collector
@@ -148,14 +169,15 @@ type scope struct {
 	cluster   string
 }
 
-// Collect implements prometheus.Collector. A kind that cannot be listed is
-// left out of the scrape, and logged.
+// Collect implements prometheus.Collector. A kind that cannot be listed, in
+// time, is left out of the scrape, and logged.
 func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 	ch <- prometheus.MustNewConstMetric(buildInfoDesc, prometheus.GaugeValue, 1,
 		versions.Info.Version, versions.Info.Commit, versions.Info.Date)
 
-	ctx := context.Background()
-	for _, kind := range managedKinds {
+	ctx, cancel := context.WithTimeout(context.Background(), collectTimeout)
+	defer cancel()
+	for _, kind := range c.kinds {
 		// The objects are only counted: the cached objects are read in place
 		list := kind.newList()
 		if err := c.reader.List(ctx, list, client.UnsafeDisableDeepCopy); err != nil {
