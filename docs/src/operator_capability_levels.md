@@ -628,6 +628,40 @@ for the recommended use, and the
 [Horizontal Pod Autoscaler integration](resource_management.md#integration-with-the-horizontal-pod-autoscaler-hpa)
 for the caveats that apply to HPA.
 
+A write to the scale subresource, as made by `kubectl scale` or an
+autoscaler, carries no `Cluster`, so the `Cluster` admission webhook does not
+see it. The `vclusterscale.cnpg.io` validating webhook applies the requested
+number of instances to the stored `Cluster` and validates the result as an
+update of the `Cluster`, so the rules on the number of instances apply to
+scale writes too. The `cnpg.io/validation: disabled` annotation turns it off
+like the `Cluster` webhook.
+
+:::note[Known issues]
+    - The scale webhook is fail-closed (`failurePolicy: Fail`): while the
+      operator webhook server is unreachable, every `kubectl scale` and
+      autoscaler write is refused.
+    - It validates the whole `Cluster`, not only the number of instances: a
+      `Cluster` holding an invalid field from before, unrelated to the
+      number of instances, refuses every scale write until that field is
+      fixed.
+    - A downgrade to an upstream release, which has no such webhook, keeps
+      the `vclusterscale.cnpg.io` entry in the
+      `ValidatingWebhookConfiguration` unless the upgrade prunes the objects
+      of the previous manifest. The upstream operator does not serve its
+      path, so `kubectl scale` keeps failing until the entry is removed by
+      hand.
+
+    With the default name of the configuration, the entry can be removed
+    with:
+
+    ```sh
+    kubectl get validatingwebhookconfiguration \
+      cnpg-validating-webhook-configuration -o json \
+      | jq 'del(.webhooks[] | select(.name == "vclusterscale.cnpg.io"))' \
+      | kubectl replace -f -
+    ```
+:::
+
 ### Maintenance window and PodDisruptionBudget for Kubernetes nodes
 
 The operator creates a `PodDisruptionBudget` resource to limit the number of
