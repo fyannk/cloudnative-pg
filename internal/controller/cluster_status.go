@@ -411,10 +411,29 @@ func (r *ClusterReconciler) updateResourceStatus(
 		})
 	}
 
+	removeStaleContinuousArchivingCondition(cluster)
+
 	if !reflect.DeepEqual(existingClusterStatus, cluster.Status) {
 		return r.Status().Update(ctx, cluster)
 	}
 	return nil
+}
+
+// removeStaleContinuousArchivingCondition removes a failing
+// ContinuousArchiving condition from a cluster whose instances cannot archive
+// WAL files anymore. Only the instances set this condition, when they archive
+// a WAL file: once the archiving configuration is removed, a failure stays
+// reported forever when no WAL file is archived again, such as when
+// PostgreSQL is stopped by a full disk or archive_mode is off, and autoGrow
+// keeps refusing to grow the volume holding the WAL files. A True condition
+// is left alone: the instances set it at each WAL file they skip, and removing
+// it would only make the status flap.
+func removeStaleContinuousArchivingCondition(cluster *apiv1.Cluster) {
+	if cluster.MayArchiveWALs() ||
+		!meta.IsStatusConditionFalse(cluster.Status.Conditions, string(apiv1.ConditionContinuousArchiving)) {
+		return
+	}
+	meta.RemoveStatusCondition(&cluster.Status.Conditions, string(apiv1.ConditionContinuousArchiving))
 }
 
 // removeConditionsWithInvalidReason will remove every condition which has a not valid

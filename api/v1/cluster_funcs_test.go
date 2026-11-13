@@ -2081,3 +2081,40 @@ var _ = Describe("FailureDomainKeys", func() {
 		Expect(sync.FailureDomainKeys()).To(Equal([]string{"topology.kubernetes.io/zone"}))
 	})
 })
+
+var _ = Describe("MayArchiveWALs", func() {
+	It("is false without a Barman object store nor an enabled plugin", func() {
+		cluster := &Cluster{Spec: ClusterSpec{
+			Backup:  &BackupConfiguration{},
+			Plugins: []PluginConfiguration{{Name: "disabled", Enabled: ptr.To(false)}},
+		}}
+		Expect(cluster.MayArchiveWALs()).To(BeFalse())
+	})
+
+	It("is true with a Barman object store", func() {
+		cluster := &Cluster{Spec: ClusterSpec{
+			Backup: &BackupConfiguration{BarmanObjectStore: &BarmanObjectStoreConfiguration{}},
+		}}
+		Expect(cluster.MayArchiveWALs()).To(BeTrue())
+	})
+
+	It("is true with any enabled plugin, a WAL archiver or not", func() {
+		cluster := &Cluster{Spec: ClusterSpec{
+			Plugins: []PluginConfiguration{{Name: "barman-cloud.cloudnative-pg.io"}},
+		}}
+		Expect(cluster.MayArchiveWALs()).To(BeTrue())
+
+		cluster.Spec.Plugins[0].IsWALArchiver = ptr.To(true)
+		Expect(cluster.MayArchiveWALs()).To(BeTrue())
+	})
+
+	It("is false when the WAL archiving is disabled by annotation", func() {
+		cluster := &Cluster{
+			ObjectMeta: metav1.ObjectMeta{Annotations: map[string]string{utils.SkipWalArchiving: "enabled"}},
+			Spec: ClusterSpec{
+				Backup: &BackupConfiguration{BarmanObjectStore: &BarmanObjectStoreConfiguration{}},
+			},
+		}
+		Expect(cluster.MayArchiveWALs()).To(BeFalse())
+	})
+})
