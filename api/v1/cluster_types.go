@@ -117,7 +117,10 @@ const (
 	MetricsExporterUserName = "cnpg_metrics_exporter"
 
 	// MissingWALDiskSpaceExitCode is the exit code the instance manager
-	// will use to signal that there's no more WAL disk space
+	// will use to signal that there's no more WAL disk space, or that
+	// PostgreSQL stopped because a volume is full: the termination message
+	// of the container names the full volumes, and the volume holding the
+	// WAL files is the full one when it names none
 	MissingWALDiskSpaceExitCode = 4
 )
 

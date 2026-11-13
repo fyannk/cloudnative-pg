@@ -207,6 +207,7 @@ func (p *LogPipe) streamLogFromCSVFile(ctx context.Context, inputFile io.Reader,
 		err.Fields = content
 		return err
 	}
+	observeDiskFull(content)
 	writer.Write(p.record.FromCSV(content))
 
 reader:
@@ -240,6 +241,7 @@ reader:
 			}
 		}
 
+		observeDiskFull(content)
 		writer.Write(p.record.FromCSV(content))
 	}
 
