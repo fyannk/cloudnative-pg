@@ -362,18 +362,28 @@ var _ = Describe("Webhook certificate from the operator deployment", func() {
 		ca, err := pki.ensureRootCACertificate(ctx, kubeClient)
 		Expect(err).ToNot(HaveOccurred())
 
-		By("refusing to create the certificate without the discovered names")
-		failing = true
-		_, err = pki.ensureCertificate(ctx, kubeClient, ca)
-		Expect(err).To(MatchError(ContainSubstring("while listing the Services")))
-		Expect(apierrors.IsNotFound(kubeClient.Get(ctx,
-			client.ObjectKey{Namespace: operatorNamespaceName, Name: "toto-webhook-tls"}, &corev1.Secret{}))).
-			To(BeTrue())
+		dnsNames := func(secret *corev1.Secret) []string {
+			pair, err := ParseServerSecret(secret)
+			Expect(err).ToNot(HaveOccurred())
+			cert, err := pair.ParseCertificate()
+			Expect(err).ToNot(HaveOccurred())
+			return cert.DNSNames
+		}
+		configuredName := "cnpg-toto-webhook-service." + operatorNamespaceName + ".svc"
+		discoveredName := "cnpg-toto-service." + operatorNamespaceName + ".svc"
 
-		By("creating it once the discovery works")
+		By("creating the certificate with the configured names when the discovery fails")
+		failing = true
+		created, err := pki.ensureCertificate(ctx, kubeClient, ca)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(dnsNames(created)).To(ContainElement(configuredName))
+		Expect(dnsNames(created)).ToNot(ContainElement(discoveredName))
+
+		By("adding the discovered names once the discovery works")
 		failing = false
 		secret, err := pki.ensureCertificate(ctx, kubeClient, ca)
 		Expect(err).ToNot(HaveOccurred())
+		Expect(dnsNames(secret)).To(ContainElements(configuredName, discoveredName))
 
 		By("keeping it as it is when the discovery fails")
 		failing = true
