@@ -197,14 +197,23 @@ func getAutoGrowVolumes(cluster *apiv1.Cluster) []autoGrowVolume {
 	return volumes
 }
 
-// hasPendingExpansion tells whether a PVC has not got the size it requests
-// yet
-func hasPendingExpansion(pvc *corev1.PersistentVolumeClaim) bool {
+// hasPendingExpansion tells whether a PVC has not got the size of its volume
+// yet: the size it requests, or the size of the volume when its request is
+// below it. A PVC whose expansion to the previous step was refused, by a
+// quota or a StorageClass, still requests its old size, and must hold the
+// next step back as much as a PVC still being expanded: otherwise the volume
+// is grown again from the size of the PVCs that accepted the step, up to
+// maxSize, while the refused PVC stays behind.
+func hasPendingExpansion(pvc *corev1.PersistentVolumeClaim, size resource.Quantity) bool {
 	if isResizing(*pvc) || hasPVCCondition(*pvc, corev1.PersistentVolumeClaimFileSystemResizePending) {
 		return true
 	}
+	request := pvc.Spec.Resources.Requests.Storage()
+	if request.Cmp(size) < 0 {
+		return true
+	}
 	capacity, ok := pvc.Status.Capacity[corev1.ResourceStorage]
-	return !ok || capacity.Cmp(*pvc.Spec.Resources.Requests.Storage()) < 0
+	return !ok || capacity.Cmp(*request) < 0
 }
 
 // isUsageOfVolume tells whether the filesystem reported by an instance is
@@ -298,7 +307,9 @@ func planAutoGrow(
 		}
 		plan.sizes[volume.group] = *size
 
-		if slices.ContainsFunc(groupPVCs, hasPendingExpansion) {
+		if slices.ContainsFunc(groupPVCs, func(pvc *corev1.PersistentVolumeClaim) bool {
+			return hasPendingExpansion(pvc, *size)
+		}) {
 			continue
 		}
 

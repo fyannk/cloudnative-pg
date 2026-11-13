@@ -30,6 +30,7 @@ import (
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
 	"github.com/cloudnative-pg/cloudnative-pg/internal/scheme"
@@ -311,6 +312,26 @@ var _ = Describe("autoGrow plan", func() {
 		Expect(plan.steps).To(BeEmpty())
 	})
 
+	It("does not step again while a PVC of the volume is below the size of the previous step", func() {
+		// the expansion of the second PVC to 12Gi was refused: it still
+		// requests 10Gi, with nothing in progress
+		pvcs := []corev1.PersistentVolumeClaim{
+			autoGrowPVC("1", NewPgDataCalculator(), "12Gi", "12Gi"),
+			autoGrowPVC("2", NewPgDataCalculator(), "10Gi", "10Gi"),
+		}
+
+		plan, err := planAutoGrow(cluster, pvcs, instancesReporting(
+			reporting("1", used("pgdata", 12, 95)),
+			reporting("2", used("pgdata", 10, 95)),
+		))
+
+		Expect(err).ToNot(HaveOccurred())
+		// the same step is requested again to the refused PVC
+		Expect(sizesOf(plan)).To(Equal(map[pvcGroup]string{pgData: "12Gi"}))
+		Expect(plan.steps).To(BeEmpty())
+		Expect(plan.stops).To(BeEmpty())
+	})
+
 	It("ignores a filesystem that is not the one of the PVC", func() {
 		// local-path: the volume is a directory of the node filesystem
 		plan, err := planAutoGrow(cluster, dataPVCs("10Gi"), instancesReporting(reporting("1", used("pgdata", 500, 95))))
@@ -386,6 +407,94 @@ var _ = Describe("autoGrow plan", func() {
 		Expect(plan.stops).To(ConsistOf(autoGrowStop{
 			group: wal, reason: apiv1.ConditionReasonWALArchivingFailing, size: quantity("2Gi"), threshold: 60,
 		}))
+	})
+})
+
+// A step refused to one PVC of the volume: the other PVCs must not be grown
+// again from the size they accepted, while the refused one stays behind
+var _ = Describe("autoGrow with a refused expansion", func() {
+	It("retries the same step on the refused PVC, and steps again only once every PVC got it", func() {
+		ctx := context.Background()
+		cluster := &apiv1.Cluster{
+			ObjectMeta: metav1.ObjectMeta{Name: autoGrowCluster, Namespace: "default", Generation: 1},
+			Spec: apiv1.ClusterSpec{
+				Instances: 2,
+				StorageConfiguration: apiv1.StorageConfiguration{
+					Size:     "10Gi",
+					AutoGrow: &apiv1.AutoGrowConfiguration{MaxSize: "100Gi", Step: "5Gi"},
+				},
+			},
+		}
+		first := autoGrowPVC("1", NewPgDataCalculator(), "10Gi", "10Gi")
+		second := autoGrowPVC("2", NewPgDataCalculator(), "10Gi", "10Gi")
+		base := fake.NewClientBuilder().WithScheme(scheme.BuildWithAllKnownScheme()).
+			WithObjects(cluster, &first, &second).WithStatusSubresource(cluster).Build()
+		refuse := true
+		cli := interceptor.NewClient(base, interceptor.Funcs{
+			Patch: func(ctx context.Context, c client.WithWatch, obj client.Object,
+				patch client.Patch, opts ...client.PatchOption,
+			) error {
+				if refuse && obj.GetName() == second.Name {
+					return forbiddenPVC(obj.GetName(), quotaRefusal)
+				}
+				return c.Patch(ctx, obj, patch, opts...)
+			},
+		})
+		recorder := record.NewFakeRecorder(10)
+
+		pvcs := func() []corev1.PersistentVolumeClaim {
+			var list corev1.PersistentVolumeClaimList
+			Expect(cli.List(ctx, &list)).To(Succeed())
+			return list.Items
+		}
+		requests := func() map[string]string {
+			result := make(map[string]string)
+			for _, pvc := range pvcs() {
+				result[pvc.Name] = pvc.Spec.Resources.Requests.Storage().String()
+			}
+			return result
+		}
+		expand := func() {
+			for _, pvc := range pvcs() {
+				pvc.Status.Capacity = corev1.ResourceList{corev1.ResourceStorage: *pvc.Spec.Resources.Requests.Storage()}
+				Expect(cli.Status().Update(ctx, &pvc)).To(Succeed())
+			}
+		}
+		full := instancesReporting(
+			reporting("1", used("pgdata", 15, 95)),
+			reporting("2", used("pgdata", 10, 95)),
+		)
+
+		_, err := ReconcileExisting(ctx, cli, recorder, cluster, pvcs(), instancesReporting(
+			reporting("1", used("pgdata", 10, 95)),
+			reporting("2", used("pgdata", 10, 95)),
+		))
+		Expect(err).ToNot(HaveOccurred())
+		Expect(requests()).To(Equal(map[string]string{first.Name: "15Gi", second.Name: "10Gi"}))
+
+		// the first PVC got its step, the second is still refused: the
+		// same step is retried, and the first PVC is not grown again
+		for range 3 {
+			expand()
+			_, err = ReconcileExisting(ctx, cli, recorder, cluster, pvcs(), full)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(requests()).To(Equal(map[string]string{first.Name: "15Gi", second.Name: "10Gi"}))
+		}
+
+		// the quota is raised: the second PVC gets the step, and only
+		// then the volume is grown again
+		refuse = false
+		_, err = ReconcileExisting(ctx, cli, recorder, cluster, pvcs(), full)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(requests()).To(Equal(map[string]string{first.Name: "15Gi", second.Name: "15Gi"}))
+
+		expand()
+		_, err = ReconcileExisting(ctx, cli, recorder, cluster, pvcs(), instancesReporting(
+			reporting("1", used("pgdata", 15, 95)),
+			reporting("2", used("pgdata", 15, 95)),
+		))
+		Expect(err).ToNot(HaveOccurred())
+		Expect(requests()).To(Equal(map[string]string{first.Name: "20Gi", second.Name: "20Gi"}))
 	})
 })
 
