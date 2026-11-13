@@ -256,7 +256,17 @@ certificate, stored in the Secret mounted at its webhook certificate directory,
 injects the CA bundle into the two webhook configurations. The serving
 certificate is issued for the `cnpg-webhook-service` Service and for every
 Service of the namespace that selects the operator Pods on the webhook port,
-which the operator lists when it is allowed to. It needs `get` and `patch` on
+which the operator lists when it is allowed to, and for the Services the
+managed webhook configurations point at. The certificate is reissued as soon
+as these names change, so a transient error while discovering them, other
+than a missing object or a missing permission, skips the renewal for that
+round instead: reissuing it without the names that could not be read would
+break the TLS handshake through those Services until the next round. The
+existing certificate is kept, the error is logged, and the next periodic
+maintenance, every hour, tries again. At startup, when the certificate does
+not exist yet, such an error stops the operator, which tries again when
+restarted, rather than issue a certificate missing names. It needs `get`
+and `patch` on
 the webhook configurations, which it looks up under
 `cnpg-mutating-webhook-configuration` and `cnpg-validating-webhook-configuration`,
 suffixed with the operator namespace when `ENABLE_WEBHOOK_NAMESPACE_SUFFIX` is

@@ -347,7 +347,9 @@ func (pki PublicKeyInfrastructure) schedulePeriodicMaintenance(
 // ensureCertificate will ensure that a webhook certificate exists and is usable.
 // The Secret is the one mounted in the operator deployment when it can be read,
 // and the certificate carries every DNS name the webhook server is reachable
-// through, see webhookAltDNSNames.
+// through, see webhookAltDNSNames. When these names cannot all be discovered,
+// an existing certificate is kept as it is for this round, and a missing one is
+// not created: the next round, or the next start, tries again.
 func (pki PublicKeyInfrastructure) ensureCertificate(
 	ctx context.Context, kubeClient client.Client, caSecret *corev1.Secret,
 ) (*corev1.Secret, error) {
@@ -355,7 +357,7 @@ func (pki PublicKeyInfrastructure) ensureCertificate(
 	// renewed even when the deployment cannot be read
 	deployment, deploymentErr := pki.operatorDeployment(ctx, kubeClient)
 	secretName := pki.webhookSecretName(deployment)
-	altDNSNames := pki.webhookAltDNSNames(ctx, kubeClient, deployment)
+	altDNSNames, discoveryErr := pki.webhookAltDNSNames(ctx, kubeClient, deployment)
 	webhookHostname := fmt.Sprintf(
 		"%v.%v.svc",
 		pki.ServiceName,
@@ -367,6 +369,16 @@ func (pki PublicKeyInfrastructure) ensureCertificate(
 		types.NamespacedName{Namespace: pki.OperatorNamespace, Name: secretName},
 		secret,
 	); err == nil {
+		if discoveryErr != nil {
+			// Renewing now would compare, and issue the certificate, without the
+			// names that could not be discovered: the Services only known
+			// through the discovery would fail the TLS handshake until the
+			// next round. The current certificate is kept until then.
+			pkiLog.Info("Cannot discover every name of the webhook Services, "+
+				"the webhook certificate is not renewed this round",
+				"secret", secretName, "error", discoveryErr.Error())
+			return secret, nil
+		}
 		// Verify the temporal validity of this certificate and
 		// renew it if needed
 		return renewServerCertificate(ctx, kubeClient, *caSecret, secret, altDNSNames)
@@ -376,6 +388,9 @@ func (pki PublicKeyInfrastructure) ensureCertificate(
 
 	if deploymentErr != nil {
 		return nil, deploymentErr
+	}
+	if discoveryErr != nil {
+		return nil, fmt.Errorf("while discovering the names of the webhook Services: %w", discoveryErr)
 	}
 
 	// Let's generate the pki certificate
