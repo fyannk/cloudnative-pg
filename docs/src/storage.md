@@ -345,7 +345,10 @@ which the operator reads at least every 30 seconds. When the most used instance
 crosses the threshold, the operator grows the PVCs of
 that volume on every instance together, by one step, through the same path as a
 change of the size, and records a `Normal` event `VolumeAutoGrow`. It grows them
-again only once every PVC of the volume got the size of the previous step. An
+again only once every PVC of the volume got the size of the previous step: a
+PVC whose expansion was refused, by a quota or by its `StorageClass`, still
+requests its old size and holds the next step back, so the other PVCs are not
+grown up to `maxSize` while it stays behind. An
 instance whose PostgreSQL stopped because the disk holding the WAL files is full
 counts as fully used for that volume.
 
