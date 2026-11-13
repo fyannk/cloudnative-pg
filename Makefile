@@ -31,6 +31,7 @@ endif
 CATALOG_IMG ?= ${CONTROLLER_IMG}-catalog
 BUNDLE_IMG ?= ${CONTROLLER_IMG}-bundle
 INDEX_IMG ?= ${CONTROLLER_IMG}-index
+IMAGE_DESCRIPTION ?= Unofficial build of the CloudNativePG operator from the fyannk/cloudnative-pg fork for testing only. Not supported by the CloudNativePG project.
 
 # Define CONTROLLER_IMG_WITH_DIGEST by appending CONTROLLER_IMG_SHA to CONTROLLER_IMG with '@' if CONTROLLER_IMG_SHA is set
 ifneq ($(CONTROLLER_IMG_DIGEST),)
@@ -237,7 +238,7 @@ olm-bundle: manifests kustomize operator-sdk ## Build the bundle for OLM install
 	$(OPERATOR_SDK) generate bundle --verbose --overwrite --manifests --metadata --package cloudnative-pg --channels stable-v1 --use-image-digests --default-channel stable-v1 --version "${VERSION}" ; \
 	echo -e "\n  # OpenShift annotations." >> bundle/metadata/annotations.yaml ;\
 	echo -e "  com.redhat.openshift.versions: $(OPENSHIFT_VERSIONS)" >> bundle/metadata/annotations.yaml ;\
-	DOCKER_BUILDKIT=1 docker build --push --no-cache -f bundle.Dockerfile -t ${BUNDLE_IMG} . ;\
+	DOCKER_BUILDKIT=1 docker build --push --no-cache -f bundle.Dockerfile --label "org.opencontainers.image.description=${IMAGE_DESCRIPTION}" -t ${BUNDLE_IMG} . ;\
 	export BUNDLE_IMG="${BUNDLE_IMG}"
 
 .PHONY: olm-catalog
@@ -256,7 +257,7 @@ olm-catalog: olm-bundle opm ## Build and push the index image for OLM Catalog
 	$(OPM) validate catalog/ ;\
 	$(OPM) index add --mode semver --container-tool docker --bundles "${BUNDLE_IMG}" --tag "${INDEX_IMG}" ;\
 	docker push ${INDEX_IMG} ;\
-	DOCKER_BUILDKIT=1 docker build --push -f catalog.Dockerfile -t ${CATALOG_IMG} . ;\
+	DOCKER_BUILDKIT=1 docker build --push -f catalog.Dockerfile --label "org.opencontainers.image.description=${IMAGE_DESCRIPTION}" -t ${CATALOG_IMG} . ;\
 	echo -e "apiVersion: operators.coreos.com/v1alpha1\n\
 	kind: CatalogSource\n\
 	metadata:\n\

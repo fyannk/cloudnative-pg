@@ -51,10 +51,10 @@ variable "revision" {
 
 suffix = (environment == "testing") ? "-testing" : ""
 
-title = "CloudNativePG Operator"
-description = "This Docker image contains CloudNativePG Operator."
+title = "CloudNativePG Operator (unofficial fork build)"
+description = "Unofficial build of the CloudNativePG operator from the fyannk/cloudnative-pg fork for testing only. Not supported by the CloudNativePG project."
 authors = "The CloudNativePG Contributors"
-url = "https://github.com/cloudnative-pg/cloudnative-pg"
+url = "https://github.com/fyannk/cloudnative-pg"
 documentation = "https://cloudnative-pg.io/docs/"
 license = "Apache-2.0"
 now = timestamp()
