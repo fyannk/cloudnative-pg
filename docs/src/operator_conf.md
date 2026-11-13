@@ -104,6 +104,11 @@ container that bootstraps them (initdb, join or recovery), to the major
 upgrade jobs, and to the `pgbouncer` container of the poolers. Set it to
 `false` to keep the proxy settings to the operator.
 
+Propagation is on by default because an operator running behind a proxy is
+expected to make the workloads it creates proxy-aware as well, as other
+operators do, which is a requirement for operators certified on OpenShift.
+The consequences on an existing installation are described below.
+
 - The three variables are read from the environment of the operator, the
   upper case name first and the lower case one as a fallback, as Go does.
   Empty values are not propagated.
@@ -124,9 +129,13 @@ upgrade jobs, and to the `pgbouncer` container of the poolers. Set it to
   `cnpg.io/reconcilePodSpec: disabled` annotation prevents the rollout as
   usual.
 - On an operator that already runs behind a proxy, the first start of a
-  version with this setting rolls every cluster and pooler once, as the pods
-  receive the proxy variables. Set `PROPAGATE_PROXY_ENV` to `false` before
-  the upgrade to avoid it.
+  version with this setting, such as an upgrade from an upstream release,
+  rolls every cluster and pooler once, as the pods receive the proxy
+  variables. Set `PROPAGATE_PROXY_ENV` to `false` before the upgrade to
+  avoid it.
+- A downgrade to a version without this setting, such as an upstream
+  release, removes the propagated variables from the pods, which rolls every
+  cluster and pooler that received them once more.
 
 Keep in mind:
 
@@ -137,6 +146,29 @@ Keep in mind:
 - A proxy URL with credentials is copied in clear text into the pod
   specification, as it already is in the operator deployment. Use the
   `spec.env` override with a Secret for those clusters.
+
+:::warning
+    Go honors the CIDR entries of `NO_PROXY`, such as `10.0.0.0/8`, but the
+    Python tooling of the instances, such as `barman-cloud` and the `boto3`
+    library it uses for S3, ignores them and matches host names only. An
+    object store running inside the Kubernetes cluster, such as MinIO or
+    another S3-compatible service reached through a `.svc` or
+    `.cluster.local` name, must therefore be covered by a host name or a
+    domain suffix in `NO_PROXY` (for example `.svc,.cluster.local`): a CIDR
+    entry alone lets WAL archiving and backups go through the proxy, where
+    they usually fail.
+:::
+
+:::warning
+    The credentials of a proxy URL, such as
+    `http://user:password@proxy:3128`, are copied as plain values into the
+    environment of the instance and Pooler pods, where anyone allowed to read
+    those pods can see them. Administrators who don't want that override the
+    proxy settings, as for any proxy-aware operator: per resource, through
+    `spec.env` of the `Cluster` or the `pgbouncer` container of the `Pooler`
+    template with a `valueFrom.secretKeyRef`, or for the whole installation
+    by setting `PROPAGATE_PROXY_ENV` to `false`.
+:::
 - At startup, the operator logs the settings it propagates, without the
   credentials of the URLs, and warns when a value is not a valid URL.
 
