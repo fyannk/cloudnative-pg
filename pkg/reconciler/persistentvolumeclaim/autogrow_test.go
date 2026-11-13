@@ -21,6 +21,7 @@ package persistentvolumeclaim
 
 import (
 	"context"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -86,14 +87,31 @@ func reporting(serial string, usages ...postgres.VolumeUsage) postgres.Postgresq
 	}
 }
 
-// outOfWALSpace is the status of an instance whose PostgreSQL stopped
-// because the WAL volume is full: it cannot report its usage
-func outOfWALSpace(serial string) postgres.PostgresqlStatus {
-	status := reporting(serial)
+// crashTime is the time a PostgreSQL container terminated in the tests, and
+// its identity as recorded on the PVCs
+var crashTime = metav1.NewTime(time.Date(2026, 11, 13, 10, 0, 0, 0, time.UTC))
+
+const crashID = "2026-11-13T10:00:00Z"
+
+// outOfWALSpace is the status of the first instance, whose PostgreSQL
+// stopped because the WAL volume is full: it cannot report its usage
+func outOfWALSpace() postgres.PostgresqlStatus {
+	return outOfSpaceAt(crashTime)
+}
+
+// outOfSpaceAt is the status of the first instance, whose PostgreSQL
+// container terminated at the given time for a lack of disk space, and was
+// restarted by the kubelet without being ready again
+func outOfSpaceAt(finishedAt metav1.Time) postgres.PostgresqlStatus {
+	status := reporting("1")
 	status.Pod.Status.ContainerStatuses = []corev1.ContainerStatus{{
-		Name: specs.PostgresContainerName,
-		State: corev1.ContainerState{
-			Terminated: &corev1.ContainerStateTerminated{ExitCode: apiv1.MissingWALDiskSpaceExitCode},
+		Name:  specs.PostgresContainerName,
+		State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}},
+		LastTerminationState: corev1.ContainerState{
+			Terminated: &corev1.ContainerStateTerminated{
+				ExitCode:   apiv1.MissingWALDiskSpaceExitCode,
+				FinishedAt: finishedAt,
+			},
 		},
 	}}
 	status.Error = context.DeadlineExceeded
@@ -342,12 +360,51 @@ var _ = Describe("autoGrow plan", func() {
 	})
 
 	It("grows the volume holding the WAL files of an instance stopped for lack of WAL space", func() {
-		plan, err := planAutoGrow(cluster, dataPVCs("10Gi"), instancesReporting(outOfWALSpace("1")))
+		plan, err := planAutoGrow(cluster, dataPVCs("10Gi"), instancesReporting(outOfWALSpace()))
 
 		Expect(err).ToNot(HaveOccurred())
 		Expect(sizesOf(plan)[pgData]).To(Equal("12Gi"))
 		Expect(plan.steps).To(HaveLen(1))
 		Expect(plan.steps[0].usedPercent).To(BeEquivalentTo(100))
+		Expect(plan.steps[0].diskFull).To(BeTrue())
+		Expect(plan.terminations).To(ConsistOf(autoGrowTermination{
+			group: pgData, pvcName: autoGrowCluster + "-1", finishedAt: crashID,
+		}))
+	})
+
+	It("grows the volume once per termination for a full volume", func() {
+		pvcs := dataPVCs("10Gi")
+		pvcs[0].Annotations[utils.AutoGrowLastTerminationAnnotationName] = crashID
+
+		// the termination recorded on the PVC of the instance was handled
+		plan, err := planAutoGrow(cluster, pvcs, instancesReporting(outOfWALSpace()))
+		Expect(err).ToNot(HaveOccurred())
+		Expect(sizesOf(plan)[pgData]).To(Equal("10Gi"))
+		Expect(plan.steps).To(BeEmpty())
+		Expect(plan.terminations).To(BeEmpty())
+
+		// a new termination of the same instance grows it again
+		plan, err = planAutoGrow(cluster, pvcs, instancesReporting(
+			outOfSpaceAt(metav1.NewTime(crashTime.Add(5*time.Minute)))))
+		Expect(err).ToNot(HaveOccurred())
+		Expect(sizesOf(plan)[pgData]).To(Equal("12Gi"))
+		Expect(plan.terminations).To(ConsistOf(autoGrowTermination{
+			group: pgData, pvcName: autoGrowCluster + "-1", finishedAt: "2026-11-13T10:05:00Z",
+		}))
+	})
+
+	It("attributes a termination for a full volume to the expansion in progress", func() {
+		pvcs := dataPVCs("12Gi")
+		pvcs[0].Status.Capacity[corev1.ResourceStorage] = quantity("10Gi")
+
+		plan, err := planAutoGrow(cluster, pvcs, instancesReporting(outOfWALSpace()))
+
+		Expect(err).ToNot(HaveOccurred())
+		Expect(sizesOf(plan)[pgData]).To(Equal("12Gi"))
+		Expect(plan.steps).To(BeEmpty())
+		Expect(plan.terminations).To(ConsistOf(autoGrowTermination{
+			group: pgData, pvcName: autoGrowCluster + "-1", finishedAt: crashID,
+		}))
 	})
 
 	It("does not grow the volume holding the WAL files while the WAL archiving fails", func() {
@@ -495,6 +552,100 @@ var _ = Describe("autoGrow with a refused expansion", func() {
 		))
 		Expect(err).ToNot(HaveOccurred())
 		Expect(requests()).To(Equal(map[string]string{first.Name: "20Gi", second.Name: "20Gi"}))
+	})
+})
+
+// An instance whose PostgreSQL stopped because the volume is full stays so
+// until the kubelet restarts it, up to five minutes in CrashLoopBackOff,
+// while the cluster is reconciled every ten seconds
+var _ = Describe("autoGrow for a full volume", func() {
+	It("grows the volume once per termination of PostgreSQL", func() {
+		ctx := context.Background()
+		cluster := &apiv1.Cluster{
+			ObjectMeta: metav1.ObjectMeta{Name: autoGrowCluster, Namespace: "default", Generation: 1},
+			Spec: apiv1.ClusterSpec{
+				Instances: 2,
+				StorageConfiguration: apiv1.StorageConfiguration{
+					Size:     "10Gi",
+					AutoGrow: &apiv1.AutoGrowConfiguration{MaxSize: "100Gi", Step: "5Gi"},
+				},
+			},
+		}
+		first := autoGrowPVC("1", NewPgDataCalculator(), "10Gi", "10Gi")
+		second := autoGrowPVC("2", NewPgDataCalculator(), "10Gi", "10Gi")
+		cli := fake.NewClientBuilder().WithScheme(scheme.BuildWithAllKnownScheme()).
+			WithObjects(cluster, &first, &second).WithStatusSubresource(cluster).Build()
+		recorder := record.NewFakeRecorder(10)
+
+		pvcs := func() []corev1.PersistentVolumeClaim {
+			var list corev1.PersistentVolumeClaimList
+			Expect(cli.List(ctx, &list)).To(Succeed())
+			return list.Items
+		}
+		requests := func() []string {
+			list := pvcs()
+			result := make([]string, 0, len(list))
+			for _, pvc := range list {
+				result = append(result, pvc.Spec.Resources.Requests.Storage().String())
+			}
+			return result
+		}
+		expand := func() {
+			for _, pvc := range pvcs() {
+				pvc.Status.Capacity = corev1.ResourceList{corev1.ResourceStorage: *pvc.Spec.Resources.Requests.Storage()}
+				Expect(cli.Status().Update(ctx, &pvc)).To(Succeed())
+			}
+		}
+		crashed := instancesReporting(outOfWALSpace(), reporting("2", used("pgdata", 10, 40)))
+
+		_, err := ReconcileExisting(ctx, cli, recorder, cluster, pvcs(), crashed)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(requests()).To(ConsistOf("15Gi", "15Gi"))
+		Expect(recorder.Events).To(Receive(Equal("Normal VolumeAutoGrow Growing the PVCs of the PGDATA volume " +
+			"from 10Gi to 15Gi: PostgreSQL of grow-1 stopped because the volume is full")))
+		var stored corev1.PersistentVolumeClaim
+		Expect(cli.Get(ctx, client.ObjectKeyFromObject(&first), &stored)).To(Succeed())
+		Expect(stored.Annotations).To(HaveKeyWithValue(utils.AutoGrowLastTerminationAnnotationName, crashID))
+
+		// expanded, and the container is still waiting to be restarted
+		// after the same termination: nothing more
+		expand()
+		for range 3 {
+			_, err = ReconcileExisting(ctx, cli, recorder, cluster, pvcs(), crashed)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(requests()).To(ConsistOf("15Gi", "15Gi"))
+			Expect(recorder.Events).ToNot(Receive())
+		}
+
+		// PostgreSQL stopped again, the volume is still too small
+		_, err = ReconcileExisting(ctx, cli, recorder, cluster, pvcs(), instancesReporting(
+			outOfSpaceAt(metav1.NewTime(crashTime.Add(5*time.Minute)))))
+		Expect(err).ToNot(HaveOccurred())
+		Expect(requests()).To(ConsistOf("20Gi", "20Gi"))
+		Expect(recorder.Events).To(Receive(HavePrefix("Normal VolumeAutoGrow Growing the PVCs of the PGDATA " +
+			"volume from 15Gi to 20Gi")))
+	})
+
+	It("does not record a termination while the expansion of its volume is refused", func() {
+		ctx := context.Background()
+		first := autoGrowPVC("1", NewPgDataCalculator(), "10Gi", "10Gi")
+		second := autoGrowPVC("2", NewPgDataCalculator(), "10Gi", "10Gi")
+		cli := fake.NewClientBuilder().WithScheme(scheme.BuildWithAllKnownScheme()).
+			WithObjects(&first, &second).Build()
+		pvcs := []corev1.PersistentVolumeClaim{first, second}
+		pgData := pvcGroup{role: utils.PVCRolePgData}
+		terminations := []autoGrowTermination{{group: pgData, pvcName: first.Name, finishedAt: crashID}}
+		refusals := []*volumeExpansionRefusal{newVolumeExpansionRefusal(&second, quantity("15Gi"),
+			forbiddenPVC(second.Name, quotaRefusal))}
+
+		Expect(recordAutoGrowTerminations(ctx, cli, pvcs, terminations, refusals)).To(Succeed())
+		var stored corev1.PersistentVolumeClaim
+		Expect(cli.Get(ctx, client.ObjectKeyFromObject(&first), &stored)).To(Succeed())
+		Expect(stored.Annotations).ToNot(HaveKey(utils.AutoGrowLastTerminationAnnotationName))
+
+		Expect(recordAutoGrowTerminations(ctx, cli, pvcs, terminations, nil)).To(Succeed())
+		Expect(cli.Get(ctx, client.ObjectKeyFromObject(&first), &stored)).To(Succeed())
+		Expect(stored.Annotations).To(HaveKeyWithValue(utils.AutoGrowLastTerminationAnnotationName, crashID))
 	})
 })
 

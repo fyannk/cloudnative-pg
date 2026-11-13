@@ -84,6 +84,10 @@ func ReconcileExisting(
 		return ctrl.Result{}, err
 	}
 
+	if err := recordAutoGrowTerminations(ctx, c, pvcs, plan.terminations, refusals); err != nil {
+		return ctrl.Result{}, err
+	}
+
 	reportAutoGrowSteps(ctx, recorder, cluster, pvcs, plan.steps, refusals)
 	if err := reportAutoGrowStops(ctx, c, recorder, cluster, plan.stops); err != nil {
 		return ctrl.Result{}, err
