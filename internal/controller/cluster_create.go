@@ -1243,6 +1243,7 @@ func (r *ClusterReconciler) createPrimaryInstance(
 		fmt.Sprintf("Creating primary instance %v", podName)); err != nil {
 		return ctrl.Result{}, err
 	}
+	r.warnAboutNodeStatus(cluster)
 
 	// Creation of the init Job is owned by the unified PVC-state-driven path
 	// (ensureInstancesAreCreated): an initializing PVC with no Job gets one
@@ -1418,6 +1419,14 @@ func (r *ClusterReconciler) buildPrimaryBootstrapCommand(
 		r.Recorder.Event(cluster, "Normal", "CreatingInstance", "Primary instance (initdb)")
 		return specs.BuildPrimaryBootstrapCommandViaInitdb(*cluster), nil
 	}
+}
+
+func (r *ClusterReconciler) warnAboutNodeStatus(cluster *apiv1.Cluster) {
+	if r.nodeStatusSource != configuration.NodeStatusSourceNone {
+		return
+	}
+	r.Recorder.Event(cluster, corev1.EventTypeWarning, "NodeStatusUnavailable",
+		configuration.NodeStatusUnavailableMessage)
 }
 
 // isPrimaryPDBDisabledByNodeStatus reports whether the primary

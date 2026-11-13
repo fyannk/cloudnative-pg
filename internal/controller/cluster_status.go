@@ -298,7 +298,7 @@ func (r *ClusterReconciler) updateResourceStatus(
 		r.nodeLabelsResolver(resources.nodes),
 	)
 	r.updateTopologyAvailability(cluster, existingClusterStatus.Conditions, resources.instances.Items, nodeLabelKeys)
-	r.updateNodeStatusAvailability(cluster, existingClusterStatus.Conditions)
+	r.updateNodeStatusAvailability(cluster)
 	updateSyncReplicationTopologyCondition(cluster)
 
 	// Services
@@ -946,8 +946,9 @@ func (r *ClusterReconciler) updateTopologyAvailability(
 // updateNodeStatusAvailability declares, through the NodeStatusUnavailable
 // condition, that the operator reads no node state, and what
 // NODE_STATUS_UNAVAILABLE_POLICY does about the primary PodDisruptionBudget.
-// A Warning Event is emitted when the condition is first set.
-func (r *ClusterReconciler) updateNodeStatusAvailability(cluster *apiv1.Cluster, previous []metav1.Condition) {
+// The Warning Event stays the one sent when a Cluster is created, see
+// warnAboutNodeStatus
+func (r *ClusterReconciler) updateNodeStatusAvailability(cluster *apiv1.Cluster) {
 	if r.nodeStatusSource != configuration.NodeStatusSourceNone {
 		meta.RemoveStatusCondition(&cluster.Status.Conditions, string(apiv1.ConditionNodeStatusUnavailable))
 		return
@@ -970,9 +971,6 @@ func (r *ClusterReconciler) updateNodeStatusAvailability(cluster *apiv1.Cluster,
 		Reason:  string(reason),
 		Message: message,
 	})
-	if !meta.IsStatusConditionTrue(previous, string(apiv1.ConditionNodeStatusUnavailable)) && r.Recorder != nil {
-		r.Recorder.Event(cluster, corev1.EventTypeWarning, string(apiv1.ConditionNodeStatusUnavailable), message)
-	}
 }
 
 // getPodsTopology extracts the topology of the instances with the node
