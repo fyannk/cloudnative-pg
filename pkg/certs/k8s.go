@@ -349,7 +349,7 @@ func (pki PublicKeyInfrastructure) schedulePeriodicMaintenance(
 // and the certificate carries every DNS name the webhook server is reachable
 // through, see webhookAltDNSNames. When these names cannot all be discovered,
 // an existing certificate is kept as it is for this round, and a missing one is
-// not created: the next round, or the next start, tries again.
+// created with the names that could be read: the next round adds the others.
 func (pki PublicKeyInfrastructure) ensureCertificate(
 	ctx context.Context, kubeClient client.Client, caSecret *corev1.Secret,
 ) (*corev1.Secret, error) {
@@ -390,7 +390,13 @@ func (pki PublicKeyInfrastructure) ensureCertificate(
 		return nil, deploymentErr
 	}
 	if discoveryErr != nil {
-		return nil, fmt.Errorf("while discovering the names of the webhook Services: %w", discoveryErr)
+		// The operator must start: the certificate is created with the
+		// names that could be read, the configured ones included, which is
+		// never less than what upstream issues. The next periodic
+		// maintenance sees the missing names and reissues it with them.
+		pkiLog.Info("Cannot discover every name of the webhook Services, "+
+			"the webhook certificate is created with the names that could be read",
+			"secret", secretName, "error", discoveryErr.Error())
 	}
 
 	// Let's generate the pki certificate

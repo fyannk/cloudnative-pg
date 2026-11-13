@@ -119,8 +119,9 @@ round instead: reissuing it without the names that could not be read would
 break the TLS handshake through those Services until the next round. The
 existing certificate is kept, the error is logged, and the next periodic
 maintenance, every hour, tries again. At startup, when the certificate does
-not exist yet, such an error stops the operator, which tries again when
-restarted, rather than issue a certificate missing names. It needs `get`
+not exist yet, such an error does not stop the operator: the certificate is
+created with the names that could be read, the configured ones included, and
+the next periodic maintenance reissues it with the missing names. It needs `get`
 and `patch` on
 the webhook configurations, which it looks up under
 `cnpg-mutating-webhook-configuration` and `cnpg-validating-webhook-configuration`,
