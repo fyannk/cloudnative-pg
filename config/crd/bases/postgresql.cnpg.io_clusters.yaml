@@ -8026,23 +8026,29 @@ spec:
         x-kubernetes-validations:
         - fieldPath: .spec.imageCatalogRef.major
           message: the PostgreSQL major version cannot be downgraded
-          rule: '!has(self.spec.imageCatalogRef) || !has(oldSelf.status) || !has(oldSelf.status.pgDataImageInfo)
-            || self.spec.imageCatalogRef.major >= oldSelf.status.pgDataImageInfo.majorVersion'
+          rule: '!has(self.spec.imageCatalogRef) || (has(oldSelf.spec.imageCatalogRef)
+            && self.spec.imageCatalogRef.major == oldSelf.spec.imageCatalogRef.major)
+            || !has(oldSelf.status) || !has(oldSelf.status.pgDataImageInfo) || self.spec.imageCatalogRef.major
+            >= oldSelf.status.pgDataImageInfo.majorVersion'
         - fieldPath: .spec.imageCatalogRef.major
           message: major upgrades are only supported to version 16 or higher
-          rule: '!has(self.spec.imageCatalogRef) || !has(oldSelf.status) || !has(oldSelf.status.pgDataImageInfo)
-            || self.spec.imageCatalogRef.major <= oldSelf.status.pgDataImageInfo.majorVersion
-            || self.spec.imageCatalogRef.major >= 16'
+          rule: '!has(self.spec.imageCatalogRef) || (has(oldSelf.spec.imageCatalogRef)
+            && self.spec.imageCatalogRef.major == oldSelf.spec.imageCatalogRef.major)
+            || !has(oldSelf.status) || !has(oldSelf.status.pgDataImageInfo) || self.spec.imageCatalogRef.major
+            <= oldSelf.status.pgDataImageInfo.majorVersion || self.spec.imageCatalogRef.major
+            >= 16'
         - fieldPath: .spec.imageName
           message: the PostgreSQL major version cannot be downgraded
-          rule: '!has(self.spec.imageName) || !has(oldSelf.status) || !has(oldSelf.status.pgDataImageInfo)
+          rule: '!has(self.spec.imageName) || (has(oldSelf.spec.imageName) && self.spec.imageName
+            == oldSelf.spec.imageName) || !has(oldSelf.status) || !has(oldSelf.status.pgDataImageInfo)
             || self.spec.imageName.split(''@'')[0].substring(self.spec.imageName.split(''@'')[0].lastIndexOf('':'')
             + 1).contains(''/'') || !self.spec.imageName.split(''@'')[0].substring(self.spec.imageName.split(''@'')[0].lastIndexOf('':'')
             + 1).matches(''^[0-9]+'') || int(self.spec.imageName.split(''@'')[0].substring(self.spec.imageName.split(''@'')[0].lastIndexOf('':'')
             + 1).find(''^[0-9]+'')) >= oldSelf.status.pgDataImageInfo.majorVersion'
         - fieldPath: .spec.imageName
           message: major upgrades are only supported to version 16 or higher
-          rule: '!has(self.spec.imageName) || !has(oldSelf.status) || !has(oldSelf.status.pgDataImageInfo)
+          rule: '!has(self.spec.imageName) || (has(oldSelf.spec.imageName) && self.spec.imageName
+            == oldSelf.spec.imageName) || !has(oldSelf.status) || !has(oldSelf.status.pgDataImageInfo)
             || self.spec.imageName.split(''@'')[0].substring(self.spec.imageName.split(''@'')[0].lastIndexOf('':'')
             + 1).contains(''/'') || !self.spec.imageName.split(''@'')[0].substring(self.spec.imageName.split(''@'')[0].lastIndexOf('':'')
             + 1).matches(''^[0-9]+'') || int(self.spec.imageName.split(''@'')[0].substring(self.spec.imageName.split(''@'')[0].lastIndexOf('':'')
