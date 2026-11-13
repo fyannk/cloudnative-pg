@@ -133,6 +133,11 @@ func RunController(
 
 	setupLog.Info("Operator configuration loaded", "configuration", conf)
 
+	if err := conf.ValidateNodeStatusUnavailablePolicy(); err != nil {
+		setupLog.Error(err, "invalid operator configuration")
+		return err
+	}
+
 	if conf.EnableWebhookNamespaceSuffix && conf.OperatorNamespace == "" {
 		return fmt.Errorf("ENABLE_WEBHOOK_NAMESPACE_SUFFIX requires OPERATOR_NAMESPACE to be set " +
 			"as a pod environment variable (typically via the Downward API fieldRef.fieldPath = metadata.namespace)")
@@ -159,8 +164,15 @@ func RunController(
 		setupLog.Error(err, "invalid node status configuration")
 		return err
 	}
-	if conf.NodeStatusSource == configuration.NodeStatusSourceNone {
-		setupLog.Warning(configuration.NodeStatusUnavailableMessage)
+	// The Node API is probed once, here: granting the rights later needs a
+	// restart of the operator to be noticed
+	if err := conf.CheckNodeStatusUnavailablePolicy(); err != nil {
+		setupLog.Error(err, "refusing to start without node state")
+		return err
+	}
+	if conf.ReadsNoNodeStatus() {
+		setupLog.Warning(configuration.NodeStatusUnavailableMessage,
+			"nodeStatusUnavailablePolicy", conf.GetNodeStatusUnavailablePolicy())
 	}
 
 	// Detect the available architectures

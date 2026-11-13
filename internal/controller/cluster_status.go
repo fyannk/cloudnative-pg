@@ -298,6 +298,7 @@ func (r *ClusterReconciler) updateResourceStatus(
 		r.nodeLabelsResolver(resources.nodes),
 	)
 	r.updateTopologyAvailability(cluster, existingClusterStatus.Conditions, resources.instances.Items, nodeLabelKeys)
+	r.updateNodeStatusAvailability(cluster, existingClusterStatus.Conditions)
 	updateSyncReplicationTopologyCondition(cluster)
 
 	// Services
@@ -939,6 +940,38 @@ func (r *ClusterReconciler) updateTopologyAvailability(
 	})
 	if !meta.IsStatusConditionTrue(previous, string(apiv1.ConditionTopologyUnavailable)) && r.Recorder != nil {
 		r.Recorder.Event(cluster, corev1.EventTypeWarning, string(apiv1.ConditionTopologyUnavailable), message)
+	}
+}
+
+// updateNodeStatusAvailability declares, through the NodeStatusUnavailable
+// condition, that the operator reads no node state, and what
+// NODE_STATUS_UNAVAILABLE_POLICY does about the primary PodDisruptionBudget.
+// A Warning Event is emitted when the condition is first set.
+func (r *ClusterReconciler) updateNodeStatusAvailability(cluster *apiv1.Cluster, previous []metav1.Condition) {
+	if r.nodeStatusSource != configuration.NodeStatusSourceNone {
+		meta.RemoveStatusCondition(&cluster.Status.Conditions, string(apiv1.ConditionNodeStatusUnavailable))
+		return
+	}
+
+	reason := apiv1.ConditionReasonPrimaryPDBKept
+	message := "The operator reads no node state (NODE_STATUS_SOURCE=none): the primary of a node " +
+		"being drained is not switched over first, and its PodDisruptionBudget, when enabled, " +
+		"holds the drain until the primary is switched over or deleted by hand " +
+		"(NODE_STATUS_UNAVAILABLE_POLICY=keepPDB)"
+	if r.isPrimaryPDBDisabledByNodeStatus() {
+		reason = apiv1.ConditionReasonPrimaryPDBDisabled
+		message = "The operator reads no node state (NODE_STATUS_SOURCE=none): the primary of a node " +
+			"being drained is not switched over first, and its PodDisruptionBudget is removed, so " +
+			"the drain evicts it and a failover follows (NODE_STATUS_UNAVAILABLE_POLICY=disablePrimaryPDB)"
+	}
+	meta.SetStatusCondition(&cluster.Status.Conditions, metav1.Condition{
+		Type:    string(apiv1.ConditionNodeStatusUnavailable),
+		Status:  metav1.ConditionTrue,
+		Reason:  string(reason),
+		Message: message,
+	})
+	if !meta.IsStatusConditionTrue(previous, string(apiv1.ConditionNodeStatusUnavailable)) && r.Recorder != nil {
+		r.Recorder.Event(cluster, corev1.EventTypeWarning, string(apiv1.ConditionNodeStatusUnavailable), message)
 	}
 }
 

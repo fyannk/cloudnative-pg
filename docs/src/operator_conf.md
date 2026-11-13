@@ -56,6 +56,7 @@ Name | Description
 `NODE_STATUS_POD_KEY_PREFIX` | With `NODE_STATUS_SOURCE=pods`, the prefix of the keys read on the instance Pods: `<prefix>unschedulable`, `<prefix>taints` and `<prefix>eviction-requested`. Required with `pods`.
 `NODE_STATUS_LABEL_PREFIX` | With `NODE_STATUS_SOURCE=pods`, the prefix under which the node labels are copied onto the instance Pods: the node label `<key>` is read from the Pod label `<prefix><key>`. Empty by default: the node label keys themselves.
 `NODE_STATUS_EVICTION_MAX_AGE` | With `NODE_STATUS_SOURCE=pods`, the age in seconds after which an eviction request echoed onto a primary Pod no longer triggers a switchover. Default `600`; `0` means no limit.
+`NODE_STATUS_UNAVAILABLE_POLICY` | What the operator does when it reads no node state, that is when `NODE_STATUS_SOURCE` resolves to `none`: `keepPDB` (default) runs in degraded mode and keeps the `PodDisruptionBudgets`, so the primary blocks the drain of its node; `disablePrimaryPDB` runs in degraded mode without the primary `PodDisruptionBudget`, so a drain evicts the primary and a failover follows; `fail` refuses to start. Any other value refuses to start. See [Running without node state](#running-without-node-state).
 `DRAIN_TAINTS` | Specifies the taint keys that should be interpreted as indicators of node drain. By default, it includes the taints commonly applied by [kubectl](https://kubernetes.io/docs/concepts/scheduling-eviction/taint-and-toleration/), [Cluster Autoscaler](https://github.com/kubernetes/autoscaler), and [Karpenter](https://github.com/aws/karpenter-provider-aws): `node.kubernetes.io/unschedulable`, `ToBeDeletedByClusterAutoscaler`, `karpenter.sh/disrupted`, `karpenter.sh/disruption`.
 `ENABLE_INSTANCE_MANAGER_INPLACE_UPDATES` | When set to `true`, enables in-place updates of the instance manager after an update of the operator, avoiding rolling updates of the cluster (default `false`)
 `ENABLE_WEBHOOK_NAMESPACE_SUFFIX` | When set to `true`, the operator looks up its `MutatingWebhookConfiguration` and `ValidatingWebhookConfiguration` under names suffixed with `-<OPERATOR_NAMESPACE>` (e.g. `cnpg-mutating-webhook-configuration-cnpg-team-a` and `cnpg-validating-webhook-configuration-cnpg-team-a`). Use this when running multiple namespaced operator instances on the same cluster to avoid name collisions. The operator does not create the suffixed configurations; you must create them before starting the operator with this flag enabled. If `OPERATOR_NAMESPACE` is not set when this flag is enabled, the operator will refuse to start. Default is `false`.
@@ -217,8 +218,8 @@ What a disabled API costs:
   the instance Pods (see [Node state from the instance Pods](#node-state-from-the-instance-pods)),
   the operator reads no node state (`NODE_STATUS_SOURCE=none`): drained or
   cordoned nodes are not detected, so the primary of a node being drained is
-  not switched over to a replica first: its `PodDisruptionBudget` holds the
-  drain until the Pod is evicted, and a failover follows. Node labels are not
+  not switched over to a replica first, see
+  [Running without node state](#running-without-node-state). Node labels are not
   resolved in the instance topology: when
   `postgresql.syncReplicaElectionConstraint` or
   `postgresql.synchronous.nodeFailureDomainKeys` relies on them, the
@@ -226,9 +227,10 @@ What a disabled API costs:
   the webhook warns about them, and the failure domain constraints of the
   synchronous replicas are not applied. Pod failure domain keys keep
   working, and `status.topology` still counts the nodes used from the
-  instance Pods. The operator log says so at startup, every `Cluster` gets a
-  Warning Event and a webhook warning when it is created. The `nodes` rules
-  can be removed from the `ClusterRole`.
+  instance Pods. What happens to the drains, and how this degraded mode is
+  reported, is set by `NODE_STATUS_UNAVAILABLE_POLICY`: see
+  [Running without node state](#running-without-node-state). The `nodes`
+  rules can be removed from the `ClusterRole`.
 
 The effective state of each API is logged at startup under
 `Kubernetes system metadata`.
@@ -297,7 +299,49 @@ as its PodDisruptionBudget holds it today.
 `NODE_STATUS_SOURCE=none`, which is what an unset `NODE_STATUS_SOURCE` resolves
 to when the Node API is disabled or not accessible, reads no node state: see
 the `Node` entry of [Restricted installations](#restricted-installations) for
-what is lost and how it is reported.
+what is lost, and [Running without node state](#running-without-node-state)
+for what happens to the drains.
+
+## Running without node state
+
+The operator reads no node state when `NODE_STATUS_SOURCE` resolves to
+`none`: set so explicitly, or unset while the `Node` API is disabled
+(`API_NODE_ENABLED=false`) or not accessible, for example when the operator
+`ClusterRole` lacks the `list` and `watch` rights on `nodes`, or when the
+operator runs with a namespaced `Role` only. Without node state, nothing tells
+the operator that the node of a primary is being drained, so it cannot switch
+the primary over to a replica before the drain, as it does when it reads the
+`Node` API or the state a node bridge echoes.
+
+The operator keeps running in this degraded mode, and
+`NODE_STATUS_UNAVAILABLE_POLICY` chooses what a drain does to the primary:
+
+| Policy | Primary `PodDisruptionBudget` | What a drain of the node of the primary does |
+|---|---|---|
+| `keepPDB` (default) | kept | `kubectl drain` waits on the primary `PodDisruptionBudget` until someone switches the primary over (`kubectl cnpg promote`) or deletes the primary Pod by hand; a drain with a timeout fails. A `Cluster` with `enablePDB: false` has no `PodDisruptionBudget`: its primary is evicted, and a failover follows |
+| `disablePrimaryPDB` | removed, and not created | the drain evicts the primary without a switchover: the instance stops, and a failover promotes a replica, with the downtime of a failover instead of the one of a switchover. The replica `PodDisruptionBudget` is kept, so replicas are still evicted one at a time |
+| `fail` | none: the operator does not run | the operator refuses to start, with an error naming the cause |
+
+With `keepPDB` and `disablePrimaryPDB`, the degraded mode is reported:
+
+- in the operator log, at startup, with the policy applied;
+- on every `Cluster`, by the `NodeStatusUnavailable` condition, `True` with
+  the reason `PrimaryPDBKept` or `PrimaryPDBDisabled`, and a Warning Event
+  `NodeStatusUnavailable` when the condition is set;
+- by the webhook, as a warning when a `Cluster` is created.
+
+When the node state is read again, after a restart, the condition is removed
+and the primary `PodDisruptionBudget` is created again.
+
+The policy applies whenever no node state is read, an explicit
+`NODE_STATUS_SOURCE=none` included: with `fail`, that combination refuses to
+start too. Choose `keepPDB` or `disablePrimaryPDB` to run without node state
+on purpose.
+
+The `Node` API is probed only once, when the operator starts. Granting the
+operator the `nodes` rights afterwards, or putting them back in its
+`ClusterRole`, changes nothing until the operator is restarted, see
+[Restarting the operator to reload configs](#restarting-the-operator-to-reload-configs).
 
 ## Defaulting and validation without admission webhooks
 

@@ -140,6 +140,13 @@ func (r *ClusterReconciler) reconcilePodDisruptionBudget(ctx context.Context, cl
 		}
 	}
 
+	if r.isPrimaryPDBDisabledByNodeStatus() {
+		// Without node state, the primary of a node being drained is not
+		// switched over: dropping its PDB lets the drain evict it, and a
+		// failover follows
+		primaryPDB = nil
+	}
+
 	if err := r.handlePDB(ctx, cluster, primaryPDB, r.deletePrimaryPodDisruptionBudgetIfExists); err != nil {
 		return err
 	}
@@ -1236,7 +1243,6 @@ func (r *ClusterReconciler) createPrimaryInstance(
 		fmt.Sprintf("Creating primary instance %v", podName)); err != nil {
 		return ctrl.Result{}, err
 	}
-	r.warnAboutNodeStatus(cluster)
 
 	// Creation of the init Job is owned by the unified PVC-state-driven path
 	// (ensureInstancesAreCreated): an initializing PVC with no Job gets one
@@ -1414,14 +1420,12 @@ func (r *ClusterReconciler) buildPrimaryBootstrapCommand(
 	}
 }
 
-// warnAboutNodeStatus tells a Cluster being created, once, that the operator
-// reads no node state: what it gives up, and how to recover it
-func (r *ClusterReconciler) warnAboutNodeStatus(cluster *apiv1.Cluster) {
-	if r.nodeStatusSource != configuration.NodeStatusSourceNone {
-		return
-	}
-	r.Recorder.Event(cluster, corev1.EventTypeWarning, "NodeStatusUnavailable",
-		configuration.NodeStatusUnavailableMessage)
+// isPrimaryPDBDisabledByNodeStatus reports whether the primary
+// PodDisruptionBudget is dropped because the operator reads no node state and
+// NODE_STATUS_UNAVAILABLE_POLICY is disablePrimaryPDB
+func (r *ClusterReconciler) isPrimaryPDBDisabledByNodeStatus() bool {
+	return r.nodeStatusSource == configuration.NodeStatusSourceNone &&
+		r.nodeStatusUnavailablePolicy == configuration.NodeStatusUnavailablePolicyDisablePrimaryPDB
 }
 
 // getOriginBackup gets the backup that is used to bootstrap a new PostgreSQL cluster
