@@ -56,13 +56,6 @@ func (r *Cluster) Default() {
 // SetDefaults apply the defaults to undefined values in a Cluster
 func (r *Cluster) SetDefaults() {
 	r.setDefaults(false)
-
-	// The default StorageClass is a creation-time default (see
-	// SetDefaultStorageClass). Outside the admission webhook, the status
-	// tells whether the Cluster has already created an instance.
-	if !r.HasCreatedInstances() {
-		r.SetDefaultStorageClass()
-	}
 }
 
 // SetDefaultStorageClass writes the default StorageClass of the operator
@@ -71,11 +64,16 @@ func (r *Cluster) SetDefaults() {
 // that sets `storageClass`, or `storageClassName` in its `pvcTemplate` (an
 // empty value included), is left as it is.
 //
-// This is a creation-time default: the webhook applies it to a Cluster
-// being created, the reconciler to a Cluster that has created no instance
-// yet. A Cluster whose PVCs exist keeps its storage sections as they are,
-// whatever the operator configuration, so that its next volumes land on
-// the same class as its existing ones.
+// This is a creation-time default, and it is not part of SetDefaults: the
+// caller must first make sure that the Cluster is a new one, which neither
+// the operation nor the status can tell alone. A Cluster object re-created
+// without its status (a backup restore, a GitOps tool deleting and creating
+// it again) while its PVCs still exist is not new: its storage sections are
+// kept as they are, whatever the operator configuration, so that its next
+// volumes land on the same class as its existing ones. The defaulter of the
+// Cluster, in the webhook or in the admission guard of the reconciler when
+// the webhook is not installed, takes that decision, looking for the PVCs of
+// the Cluster.
 func (r *Cluster) SetDefaultStorageClass() {
 	r.setDefaultStorageClass(configuration.Current)
 }
@@ -98,6 +96,8 @@ func (r *Cluster) setDefaultStorageClass(config *configuration.Data) {
 // is once a PVC may exist. The target primary is recorded right after the PVCs
 // of the first instance are created; IsInitialized is a second signal, for a
 // status that lost that field or that an older operator version wrote.
+// False does not mean that no PVC exists: a Cluster object re-created
+// without its status says false while its PVCs are still there.
 func (r *Cluster) HasCreatedInstances() bool {
 	return r.Status.TargetPrimary != "" || r.IsInitialized()
 }

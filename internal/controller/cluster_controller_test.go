@@ -2089,27 +2089,22 @@ var _ = Describe("setDefaults without the webhooks: default storage class", func
 		return cluster
 	}
 
-	It("patches the class into a Cluster that has created no instance", func(ctx SpecContext) {
-		cluster := newStoredCluster(ctx, apiv1.ClusterStatus{})
+	// The admission guard, which runs earlier in the reconciliation, writes
+	// the class once it has made sure that the Cluster has no PVC: the
+	// reconcile-time defaults, which cannot tell, leave it alone
+	DescribeTable("leaves the storage sections as they are",
+		func(ctx SpecContext, status apiv1.ClusterStatus) {
+			cluster := newStoredCluster(ctx, status)
 
-		Expect(env.clusterReconciler.setDefaults(ctx, cluster)).To(Succeed())
+			Expect(env.clusterReconciler.setDefaults(ctx, cluster)).To(Succeed())
 
-		var stored apiv1.Cluster
-		Expect(env.client.Get(ctx, client.ObjectKeyFromObject(cluster), &stored)).To(Succeed())
-		Expect(stored.Spec.StorageConfiguration.StorageClass).To(HaveValue(Equal(defaultClass)))
-		Expect(stored.Spec.WalStorage.StorageClass).To(HaveValue(Equal(defaultClass)))
-		Expect(stored.Spec.Bootstrap.InitDB.Database).To(Equal("app"))
-	})
-
-	It("leaves the storage sections of a Cluster that has created an instance", func(ctx SpecContext) {
-		cluster := newStoredCluster(ctx, apiv1.ClusterStatus{TargetPrimary: "cluster-example-1"})
-
-		Expect(env.clusterReconciler.setDefaults(ctx, cluster)).To(Succeed())
-
-		var stored apiv1.Cluster
-		Expect(env.client.Get(ctx, client.ObjectKeyFromObject(cluster), &stored)).To(Succeed())
-		Expect(stored.Spec.StorageConfiguration.StorageClass).To(BeNil())
-		Expect(stored.Spec.WalStorage.StorageClass).To(BeNil())
-		Expect(stored.Spec.Bootstrap.InitDB.Database).To(Equal("app"))
-	})
+			var stored apiv1.Cluster
+			Expect(env.client.Get(ctx, client.ObjectKeyFromObject(cluster), &stored)).To(Succeed())
+			Expect(stored.Spec.StorageConfiguration.StorageClass).To(BeNil())
+			Expect(stored.Spec.WalStorage.StorageClass).To(BeNil())
+			Expect(stored.Spec.Bootstrap.InitDB.Database).To(Equal("app"))
+		},
+		Entry("of a Cluster that has created no instance", apiv1.ClusterStatus{}),
+		Entry("of a Cluster that has created an instance", apiv1.ClusterStatus{TargetPrimary: "cluster-example-1"}),
+	)
 })
