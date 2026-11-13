@@ -1768,6 +1768,21 @@ func (cluster *Cluster) GetEnabledWALArchivePluginName() string {
 	return ""
 }
 
+// MayArchiveWALs tells whether the instances may archive the WAL files of the
+// cluster: WAL archiving is not disabled by the skipWalArchiving annotation,
+// and a Barman object store or an enabled plugin is configured. Every enabled
+// plugin counts, not only the one declared as the WAL archiver, because the
+// instances ask every enabled plugin able to archive WAL files to do it.
+func (cluster *Cluster) MayArchiveWALs() bool {
+	if utils.IsWalArchivingDisabled(&cluster.ObjectMeta) {
+		return false
+	}
+	if cluster.Spec.Backup != nil && cluster.Spec.Backup.BarmanObjectStore != nil {
+		return true
+	}
+	return len(GetPluginConfigurationEnabledPluginNames(cluster.Spec.Plugins)) > 0
+}
+
 // IsFailoverQuorumActive check if we should enable the
 // quorum failover protection alpha-feature.
 func (cluster *Cluster) IsFailoverQuorumActive() bool {

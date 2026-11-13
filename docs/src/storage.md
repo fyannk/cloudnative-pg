@@ -395,7 +395,18 @@ above its threshold and:
   `WALArchivingFailing`): the WAL files that cannot be archived are kept, and
   growing the volume would only hide the failure until `maxSize`.
 
-The condition turns `False` with the `VolumeAutoGrowResumed` reason once no
+The WAL archiving is failing when the `ContinuousArchiving` condition of the
+`Cluster` is `False`. Only the instances set this condition, each time they
+archive a WAL file, so a failure would stay reported once the archiving
+configuration is removed, if no WAL file is archived again, for example while
+PostgreSQL is stopped by the full disk. The operator therefore removes a
+`False` `ContinuousArchiving` condition from a `Cluster` that has no Barman
+object store and no enabled plugin, or that disables the WAL archiving with the
+`cnpg.io/skipWalArchiving` annotation: removing the archiving configuration
+lets `autoGrow` grow the volume again.
+
+The `VolumeAutoGrowStopped` condition turns `False` with the
+`VolumeAutoGrowResumed` reason once no
 volume is in these cases. A refused expansion is reported by the
 `VolumeExpansionRefused` condition, described above, and the same step is
 retried.
