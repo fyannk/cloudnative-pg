@@ -396,7 +396,7 @@ func setupReconcilers(
 		pluginRepository,
 		conf.DrainTaints,
 		operatorClientCert,
-		webhookv1.NewClusterAdmissionGuard(),
+		webhookv1.NewClusterAdmissionGuard(mgr.GetAPIReader()),
 	)
 	clusterReconciler.ReloadWatch = reloadWatch
 	if err := clusterReconciler.SetupWithManager(ctx, mgr, maxConcurrentReconciles); err != nil {

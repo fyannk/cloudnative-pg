@@ -685,40 +685,43 @@ var _ = Describe("default storage class", func() {
 			Expect(cluster.Spec.Tablespaces[0].Storage.StorageClass).To(HaveValue(Equal(defaultClass)))
 		})
 
-		It("is part of the reconcile-time defaults while the Cluster has created no instance", func() {
+		It("is not part of the reconcile-time defaults, which cannot tell a new Cluster", func() {
+			// a Cluster without a status may be one re-created over its PVCs:
+			// the defaulting webhook looks for them before writing the class
 			cluster := newCluster()
 			cluster.SetDefaults()
-			Expect(cluster.Spec.StorageConfiguration.StorageClass).To(HaveValue(Equal(defaultClass)))
-			Expect(cluster.Spec.WalStorage.StorageClass).To(HaveValue(Equal(defaultClass)))
-			Expect(cluster.Spec.Tablespaces[0].Storage.StorageClass).To(HaveValue(Equal(defaultClass)))
+			Expect(cluster.Spec.StorageConfiguration.StorageClass).To(BeNil())
+			Expect(cluster.Spec.WalStorage.StorageClass).To(BeNil())
+			Expect(cluster.Spec.Tablespaces[0].Storage.StorageClass).To(BeNil())
 		})
-
-		DescribeTable("is not part of the reconcile-time defaults once the Cluster has created an instance",
-			func(status ClusterStatus) {
-				cluster := newCluster()
-				cluster.Status = status
-				cluster.SetDefaults()
-				Expect(cluster.Spec.StorageConfiguration.StorageClass).To(BeNil())
-				Expect(cluster.Spec.WalStorage.StorageClass).To(BeNil())
-				Expect(cluster.Spec.Tablespaces[0].Storage.StorageClass).To(BeNil())
-			},
-			Entry("target primary recorded, bootstrap in progress", ClusterStatus{
-				TargetPrimary: "cluster-example-1",
-				Conditions: []metav1.Condition{{
-					Type:   string(ConditionInitialized),
-					Status: metav1.ConditionFalse,
-				}},
-			}),
-			Entry("initialized", ClusterStatus{
-				TargetPrimary: "cluster-example-1",
-				Conditions: []metav1.Condition{{
-					Type:   string(ConditionInitialized),
-					Status: metav1.ConditionTrue,
-				}},
-			}),
-			Entry("status written by an operator version without the Initialized condition", ClusterStatus{
-				LatestGeneratedNode: 1,
-			}),
-		)
 	})
+
+	It("tells a Cluster that has created no instance from its status", func() {
+		Expect(newCluster().HasCreatedInstances()).To(BeFalse())
+	})
+
+	DescribeTable("tells a Cluster that has created an instance from its status",
+		func(status ClusterStatus) {
+			cluster := newCluster()
+			cluster.Status = status
+			Expect(cluster.HasCreatedInstances()).To(BeTrue())
+		},
+		Entry("target primary recorded, bootstrap in progress", ClusterStatus{
+			TargetPrimary: "cluster-example-1",
+			Conditions: []metav1.Condition{{
+				Type:   string(ConditionInitialized),
+				Status: metav1.ConditionFalse,
+			}},
+		}),
+		Entry("initialized", ClusterStatus{
+			TargetPrimary: "cluster-example-1",
+			Conditions: []metav1.Condition{{
+				Type:   string(ConditionInitialized),
+				Status: metav1.ConditionTrue,
+			}},
+		}),
+		Entry("status written by an operator version without the Initialized condition", ClusterStatus{
+			LatestGeneratedNode: 1,
+		}),
+	)
 })
