@@ -254,7 +254,7 @@ func RunController(
 		return err
 	}
 
-	if err := operatormetrics.Register(mgr.GetCache()); err != nil {
+	if err := operatormetrics.Register(mgr.GetCache(), conf); err != nil {
 		setupLog.Error(err, "unable to register the operator metrics")
 		return err
 	}

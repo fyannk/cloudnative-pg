@@ -861,12 +861,20 @@ for more details), and two families of its own:
   `Pooler`, `Database`, `Publication`, `Subscription`, `DatabaseRole`,
   `FailoverQuorum`), per Cluster. The `cluster` label is empty for `Cluster`
   itself and for the image catalogs, the `namespace` label is empty for
-  `ClusterImageCatalog`. A kind without objects has no series.
+  `ClusterImageCatalog`. A kind without objects has no series. A kind whose
+  optional API is disabled, such as `ClusterImageCatalog` with
+  `API_CLUSTER_IMAGE_CATALOG_ENABLED` set to `false` or found forbidden or
+  not installed at startup (see
+  [Restricted installations](operator_conf.md#restricted-installations)), is
+  not counted and has no series: the operator does not watch it, and listing
+  it from the cache would wait forever for a watch that never starts.
 - `cnpg_operator_build_info{version, commit, date}`: always `1`, with the
   build of the running operator in its labels.
 
 Both are computed when scraped, from the operator's cache: with several
-replicas, each one reports its own view.
+replicas, each one reports its own view. The counting is bounded to five
+seconds per scrape: a kind not listed in time is left out of that scrape and
+logged, rather than holding the whole metrics endpoint.
 
 A third family reports the effective configuration of the operator:
 
