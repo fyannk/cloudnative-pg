@@ -32,6 +32,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/rand"
 	"k8s.io/client-go/tools/record"
+	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
@@ -698,5 +699,74 @@ var _ = Describe("updateNodeStatusAvailability", func() {
 		r.updateNodeStatusAvailability(cluster, nil)
 		Expect(meta.IsStatusConditionTrue(cluster.Status.Conditions,
 			string(apiv1.ConditionNodeStatusUnavailable))).To(BeTrue())
+	})
+})
+
+var _ = Describe("stale ContinuousArchiving condition", func() {
+	failing := metav1.Condition{
+		Type:   string(apiv1.ConditionContinuousArchiving),
+		Status: metav1.ConditionFalse,
+		Reason: string(apiv1.ConditionReasonContinuousArchivingFailing),
+	}
+	ready := metav1.Condition{
+		Type:   string(apiv1.ConditionClusterReady),
+		Status: metav1.ConditionTrue,
+		Reason: string(apiv1.ClusterReady),
+	}
+
+	It("is removed when the cluster has no WAL archiver anymore", func() {
+		cluster := &apiv1.Cluster{Status: apiv1.ClusterStatus{Conditions: []metav1.Condition{failing, ready}}}
+
+		removeStaleContinuousArchivingCondition(cluster)
+
+		Expect(cluster.Status.Conditions).To(ConsistOf(ready))
+	})
+
+	It("is removed when the WAL archiving is disabled by annotation", func() {
+		cluster := &apiv1.Cluster{
+			ObjectMeta: metav1.ObjectMeta{Annotations: map[string]string{utils.SkipWalArchiving: "enabled"}},
+			Spec: apiv1.ClusterSpec{Backup: &apiv1.BackupConfiguration{
+				BarmanObjectStore: &apiv1.BarmanObjectStoreConfiguration{},
+			}},
+			Status: apiv1.ClusterStatus{Conditions: []metav1.Condition{failing}},
+		}
+
+		removeStaleContinuousArchivingCondition(cluster)
+
+		Expect(cluster.Status.Conditions).To(BeEmpty())
+	})
+
+	It("is kept while a Barman object store or a plugin may archive the WAL files", func() {
+		withBarman := &apiv1.Cluster{
+			Spec: apiv1.ClusterSpec{Backup: &apiv1.BackupConfiguration{
+				BarmanObjectStore: &apiv1.BarmanObjectStoreConfiguration{},
+			}},
+			Status: apiv1.ClusterStatus{Conditions: []metav1.Condition{failing}},
+		}
+		withPlugin := &apiv1.Cluster{
+			Spec: apiv1.ClusterSpec{Plugins: []apiv1.PluginConfiguration{{
+				Name: "barman-cloud.cloudnative-pg.io", IsWALArchiver: ptr.To(true),
+			}}},
+			Status: apiv1.ClusterStatus{Conditions: []metav1.Condition{failing}},
+		}
+
+		removeStaleContinuousArchivingCondition(withBarman)
+		removeStaleContinuousArchivingCondition(withPlugin)
+
+		Expect(withBarman.Status.Conditions).To(ConsistOf(failing))
+		Expect(withPlugin.Status.Conditions).To(ConsistOf(failing))
+	})
+
+	It("keeps a condition reporting a working archiving", func() {
+		working := metav1.Condition{
+			Type:   string(apiv1.ConditionContinuousArchiving),
+			Status: metav1.ConditionTrue,
+			Reason: string(apiv1.ConditionReasonContinuousArchivingSuccess),
+		}
+		cluster := &apiv1.Cluster{Status: apiv1.ClusterStatus{Conditions: []metav1.Condition{working}}}
+
+		removeStaleContinuousArchivingCondition(cluster)
+
+		Expect(cluster.Status.Conditions).To(ConsistOf(working))
 	})
 })
