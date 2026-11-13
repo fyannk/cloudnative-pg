@@ -28,25 +28,37 @@ import (
 // IsWALSpaceAvailableOnPod checks that the PostgreSQL container of a Pod did
 // not terminate because it has no disk space for WALs
 func IsWALSpaceAvailableOnPod(pod *corev1.Pod) bool {
-	isTerminatedForMissingWALDiskSpace := func(state *corev1.ContainerState) bool {
+	// Return true if WAL space IS available (i.e., NOT terminated for missing disk space)
+	return GetMissingDiskSpaceTermination(pod) == nil
+}
+
+// GetMissingDiskSpaceTermination returns the termination of the PostgreSQL
+// container of a Pod for a lack of disk space, with the
+// MissingWALDiskSpaceExitCode exit code: the current one, or the last one
+// while the container is not ready again. It returns nil when there is none.
+func GetMissingDiskSpaceTermination(pod *corev1.Pod) *corev1.ContainerStateTerminated {
+	isTerminatedForMissingDiskSpace := func(state *corev1.ContainerState) bool {
 		return state.Terminated != nil && state.Terminated.ExitCode == apiv1.MissingWALDiskSpaceExitCode
 	}
-	// Return true if WAL space IS available (i.e., NOT terminated for missing disk space)
-	return !HasPostgresContainerTerminationReason(pod, isTerminatedForMissingWALDiskSpace)
+
+	pgContainerStatus := getPostgresContainerStatus(pod)
+	switch {
+	case pgContainerStatus == nil:
+		return nil
+	case isTerminatedForMissingDiskSpace(&pgContainerStatus.State):
+		return pgContainerStatus.State.Terminated
+	case !pgContainerStatus.Ready && isTerminatedForMissingDiskSpace(&pgContainerStatus.LastTerminationState):
+		return pgContainerStatus.LastTerminationState.Terminated
+	default:
+		return nil
+	}
 }
 
 // HasPostgresContainerTerminationReason tells whether the PostgreSQL container
 // of a Pod is terminated, or was terminated and is not ready yet, for the
 // given reason
 func HasPostgresContainerTerminationReason(pod *corev1.Pod, reason func(state *corev1.ContainerState) bool) bool {
-	var pgContainerStatus *corev1.ContainerStatus
-	for i := range pod.Status.ContainerStatuses {
-		status := pod.Status.ContainerStatuses[i]
-		if status.Name == PostgresContainerName {
-			pgContainerStatus = &pod.Status.ContainerStatuses[i]
-			break
-		}
-	}
+	pgContainerStatus := getPostgresContainerStatus(pod)
 
 	// This is not an instance Pod as there's no PostgreSQL
 	// container
@@ -67,4 +79,15 @@ func HasPostgresContainerTerminationReason(pod *corev1.Pod, reason func(state *c
 	}
 
 	return false
+}
+
+// getPostgresContainerStatus returns the status of the PostgreSQL container
+// of a Pod, nil when the Pod has none
+func getPostgresContainerStatus(pod *corev1.Pod) *corev1.ContainerStatus {
+	for i := range pod.Status.ContainerStatuses {
+		if pod.Status.ContainerStatuses[i].Name == PostgresContainerName {
+			return &pod.Status.ContainerStatuses[i]
+		}
+	}
+	return nil
 }

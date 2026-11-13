@@ -379,7 +379,13 @@ PVC whose expansion was refused, by a quota or by its `StorageClass`, still
 requests its old size and holds the next step back, so the other PVCs are not
 grown up to `maxSize` while it stays behind. An
 instance whose PostgreSQL stopped because the disk holding the WAL files is full
-counts as fully used for that volume.
+counts as fully used for that volume, once per stop: the PostgreSQL container
+stays terminated, then not ready, until the kubelet restarts it, which can
+take minutes in `CrashLoopBackOff`. The operator records the stop it grew the
+volume for, by the time the container finished, in the
+`cnpg.io/autoGrowLastTermination` annotation of the PVC of the instance, and
+grows the volume again only for a new stop. A stop while the volume is already
+being grown is attributed to that growth.
 
 The size in the `Cluster` is never changed: the PVCs are the record of the
 growth. A manifest kept in Git therefore stays in sync, and a `Cluster`

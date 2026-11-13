@@ -146,6 +146,32 @@ type autoGrowStep struct {
 	to          resource.Quantity
 	instance    string
 	usedPercent float64
+	// diskFull is set when the step is for an instance whose PostgreSQL
+	// stopped because the volume is full
+	diskFull bool
+}
+
+// autoGrowTermination is a termination of the PostgreSQL container of an
+// instance because a volume is full. It is recorded on the PVC of the
+// instance for that volume, so that it grows the volume at most once: the
+// container stays terminated, or not ready, until the kubelet restarts it,
+// which can take minutes in CrashLoopBackOff.
+type autoGrowTermination struct {
+	group   pvcGroup
+	pvcName string
+	// finishedAt identifies the termination, as the time the container
+	// finished
+	finishedAt string
+}
+
+// volumeState is what the instances tell of a volume: the most used of its
+// filesystems and the instance reporting it, and the terminations for a full
+// volume not handled yet
+type volumeState struct {
+	usedPercent  float64
+	instance     string
+	diskFull     bool
+	terminations []autoGrowTermination
 }
 
 // autoGrowStop is a volume above its threshold that is not grown
@@ -163,6 +189,10 @@ type autoGrowPlan struct {
 	sizes map[pvcGroup]resource.Quantity
 	steps []autoGrowStep
 	stops []autoGrowStop
+	// terminations are the terminations for a full volume handled by this
+	// plan, by a step or by an expansion already in progress, to be recorded
+	// on their PVCs
+	terminations []autoGrowTermination
 }
 
 // autoGrowVolume is a volume of the cluster with autoGrow
@@ -231,16 +261,29 @@ func isUsageOfVolume(usage postgres.VolumeUsage, pvc *corev1.PersistentVolumeCla
 	return total >= capacity.AsApproximateFloat64()/2 && total <= capacity.AsApproximateFloat64()*1.1
 }
 
-// getUsedPercent returns the most used filesystem of a volume among the
+// getTerminationID returns the identity of a termination of the PostgreSQL
+// container of an instance for a full volume, and whether there is one
+func getTerminationID(pod *corev1.Pod) (string, bool) {
+	termination := specs.GetMissingDiskSpaceTermination(pod)
+	if termination == nil {
+		return "", false
+	}
+	return termination.FinishedAt.UTC().Format(time.RFC3339), true
+}
+
+// getVolumeState returns the most used filesystem of a volume among the
 // instances, and the instance reporting it. An instance whose PostgreSQL
-// stopped because the WAL volume is full counts as 100% used for the volume
-// holding the WAL files: it cannot report its usage anymore.
-func getUsedPercent(
+// stopped because the volume holding the WAL files is full counts as 100%
+// used for that volume, as it cannot report its usage anymore, once per
+// termination: a termination recorded on the PVC of the instance was handled
+// already, and only the usage the instance reports counts.
+func getVolumeState(
 	cluster *apiv1.Cluster,
 	group pvcGroup,
 	pvcs []*corev1.PersistentVolumeClaim,
 	instances postgres.PostgresqlStatusList,
-) (usedPercent float64, instance string) {
+) volumeState {
+	var state volumeState
 	pvcOfInstance := make(map[string]*corev1.PersistentVolumeClaim, len(pvcs))
 	for _, pvc := range pvcs {
 		pvcOfInstance[pvc.Labels[utils.InstanceNameLabelName]] = pvc
@@ -255,8 +298,14 @@ func getUsedPercent(
 			continue
 		}
 
-		if group.holdsWAL(cluster) && !specs.IsWALSpaceAvailableOnPod(status.Pod) {
-			return 100, status.Pod.Name
+		if id, ok := getTerminationID(status.Pod); ok && group.holdsWAL(cluster) &&
+			pvc.Annotations[utils.AutoGrowLastTerminationAnnotationName] != id {
+			state.terminations = append(state.terminations, autoGrowTermination{
+				group: group, pvcName: pvc.Name, finishedAt: id,
+			})
+			if !state.diskFull {
+				state.usedPercent, state.instance, state.diskFull = 100, status.Pod.Name, true
+			}
 		}
 		if status.Error != nil {
 			continue
@@ -265,13 +314,13 @@ func getUsedPercent(
 			if usage.Volume != group.volumeName() || !isUsageOfVolume(usage, pvc) {
 				continue
 			}
-			if used := usage.UsedPercent(); used > usedPercent {
-				usedPercent, instance = used, status.Pod.Name
+			if used := usage.UsedPercent(); used > state.usedPercent {
+				state.usedPercent, state.instance, state.diskFull = used, status.Pod.Name, false
 			}
 		}
 	}
 
-	return usedPercent, instance
+	return state
 }
 
 // planAutoGrow decides the size of the PVCs of each volume with autoGrow.
@@ -307,15 +356,19 @@ func planAutoGrow(
 		}
 		plan.sizes[volume.group] = *size
 
+		state := getVolumeState(cluster, volume.group, groupPVCs, instances)
+
+		// a termination for a full volume while the volume is being grown
+		// is the one of the growth in progress
 		if slices.ContainsFunc(groupPVCs, func(pvc *corev1.PersistentVolumeClaim) bool {
 			return hasPendingExpansion(pvc, *size)
 		}) {
+			plan.terminations = append(plan.terminations, state.terminations...)
 			continue
 		}
 
 		autoGrow := volume.configuration.AutoGrow
-		usedPercent, instance := getUsedPercent(cluster, volume.group, groupPVCs, instances)
-		if usedPercent < float64(autoGrow.GetThreshold()) {
+		if state.usedPercent < float64(autoGrow.GetThreshold()) {
 			continue
 		}
 
@@ -349,9 +402,11 @@ func planAutoGrow(
 			group:       volume.group,
 			from:        *size,
 			to:          target,
-			instance:    instance,
-			usedPercent: usedPercent,
+			instance:    state.instance,
+			usedPercent: state.usedPercent,
+			diskFull:    state.diskFull,
 		})
+		plan.terminations = append(plan.terminations, state.terminations...)
 	}
 
 	return plan, nil
@@ -369,14 +424,7 @@ func reportAutoGrowSteps(
 	steps []autoGrowStep,
 	refusals []*volumeExpansionRefusal,
 ) {
-	refusedGroups := make(map[pvcGroup]bool, len(refusals))
-	for _, refusal := range refusals {
-		for idx := range pvcs {
-			if pvcs[idx].Name == refusal.pvcName {
-				refusedGroups[pvcGroupFromLabels(pvcs[idx].Labels)] = true
-			}
-		}
-	}
+	refusedGroups := getRefusedGroups(pvcs, refusals)
 
 	contextLogger := log.FromContext(ctx)
 	for _, step := range steps {
@@ -385,9 +433,68 @@ func reportAutoGrowSteps(
 		}
 		message := fmt.Sprintf("Growing the PVCs of the %s volume from %s to %s: %s uses %.0f%% of it",
 			step.group, step.from.String(), step.to.String(), step.instance, step.usedPercent)
+		if step.diskFull {
+			message = fmt.Sprintf("Growing the PVCs of the %s volume from %s to %s: "+
+				"PostgreSQL of %s stopped because the volume is full",
+				step.group, step.from.String(), step.to.String(), step.instance)
+		}
 		contextLogger.Info(message)
 		recorder.Event(cluster, corev1.EventTypeNormal, "VolumeAutoGrow", message)
 	}
+}
+
+// getRefusedGroups returns the volumes with a PVC whose expansion was
+// refused
+func getRefusedGroups(
+	pvcs []corev1.PersistentVolumeClaim,
+	refusals []*volumeExpansionRefusal,
+) map[pvcGroup]bool {
+	refusedGroups := make(map[pvcGroup]bool, len(refusals))
+	for _, refusal := range refusals {
+		for idx := range pvcs {
+			if pvcs[idx].Name == refusal.pvcName {
+				refusedGroups[pvcGroupFromLabels(pvcs[idx].Labels)] = true
+			}
+		}
+	}
+	return refusedGroups
+}
+
+// recordAutoGrowTerminations records the terminations handled by the plan on
+// the PVCs of their instance, so that the next reconciliations do not grow
+// the volume again for them. A termination is not recorded while the
+// expansion of a PVC of its volume is refused: the same step is retried, and
+// the termination is recorded once every PVC accepted it.
+func recordAutoGrowTerminations(
+	ctx context.Context,
+	c client.Client,
+	pvcs []corev1.PersistentVolumeClaim,
+	terminations []autoGrowTermination,
+	refusals []*volumeExpansionRefusal,
+) error {
+	refusedGroups := getRefusedGroups(pvcs, refusals)
+	for _, termination := range terminations {
+		if refusedGroups[termination.group] {
+			continue
+		}
+		idx := slices.IndexFunc(pvcs, func(pvc corev1.PersistentVolumeClaim) bool {
+			return pvc.Name == termination.pvcName
+		})
+		if idx < 0 || pvcs[idx].Annotations[utils.AutoGrowLastTerminationAnnotationName] == termination.finishedAt {
+			continue
+		}
+
+		pvc := &pvcs[idx]
+		oldPVC := pvc.DeepCopy()
+		if pvc.Annotations == nil {
+			pvc.Annotations = make(map[string]string, 1)
+		}
+		pvc.Annotations[utils.AutoGrowLastTerminationAnnotationName] = termination.finishedAt
+		if err := c.Patch(ctx, pvc, client.MergeFrom(oldPVC)); err != nil {
+			return fmt.Errorf("while recording the termination handled by autoGrow on the PVC %s: %w", pvc.Name, err)
+		}
+	}
+	return nil
 }
 
 // autoGrowStoppedCondition builds the condition reporting the volumes above
