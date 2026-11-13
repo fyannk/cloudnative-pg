@@ -263,6 +263,23 @@ of their deployment, so each pooler rolls out once when the setting changes.
 As for the inherited metadata, removing a family does not remove its
 annotations from the existing instance pods.
 
+:::note[Known issues]
+    - Clearing `MONITORING_DISCOVERY_ANNOTATIONS`, or removing a family from
+      it, leaves the `prometheus.io/*` (or `io.opentelemetry.discovery.*`)
+      annotations on the existing instance pods, so the agents keep scraping
+      them. Remove the annotations by hand with
+      `kubectl annotate pod <pod> prometheus.io/scrape- prometheus.io/port- prometheus.io/path- prometheus.io/scheme-`,
+      or restart the instances (`kubectl cnpg restart <cluster>`) so that
+      their pods are created again without them. The pooler pods lose them
+      with the rollout of their deployment.
+    - While `prometheus` is set, the operator overwrites the
+      `prometheus.io/scrape`, `prometheus.io/port`, `prometheus.io/path` and
+      `prometheus.io/scheme` annotations of the instance and pooler pods,
+      including the values users set themselves, for example to point a
+      scrape job at another port. Leave the family out to keep such
+      annotations.
+:::
+
 :::warning[Status of the OpenTelemetry hints]
     The `io.opentelemetry.discovery.*` hints are defined by the
     [`receiver_creator`](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/receiver/receivercreator),
