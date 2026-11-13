@@ -300,6 +300,15 @@ the condition turns `False` with the `VolumeExpansionAccepted` reason, and a
 `Normal` event says so. A `Cluster` that never had a refused expansion has no
 such condition.
 
+:::note[Known issue]
+    Any `403 Forbidden` answer to the patch of a PVC is reported as a refused
+    expansion, including an RBAC error, such as a missing `patch` permission
+    of the operator on `persistentvolumeclaims`. Such a case shows up with
+    the `Forbidden` reason: read the answer of the API server quoted in the
+    message of the condition before acting on the `StorageClass` or the
+    quota.
+:::
+
 ### Using the volume expansion Kubernetes feature
 
 Given the storage class supports volume expansion, you can change the size
