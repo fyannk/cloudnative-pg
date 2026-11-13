@@ -179,11 +179,40 @@ on its existing objects before a filtered mode is enabled: run this version
 with the mode `off` until every Cluster, Pooler and DatabaseRole has been
 reconciled once. Their reconcilers add the label to the objects they
 manage; the pod template of each Pooler Deployment gets it too, which rolls
-the Pooler out once. Enabling a filtered mode before that leaves the
-existing Clusters without visible instances and volumes: the operator reports
-them as unrecoverable, keeps reconciling them in a tight loop without touching
-them, and only recovers once it runs with the mode `off` again long enough to
-label their objects.
+the Pooler out once. Enabling a filtered mode before that hides the
+unlabeled objects from the operator.
+
+:::warning
+    Switching to a filtered mode is an administrator decision, to be taken
+    only once every object is labeled. When none of the objects of a Cluster
+    carries the label, the operator sees neither its instances nor its
+    volumes: it reports the Cluster as unrecoverable and keeps reconciling it
+    in a tight loop without touching it, until it runs with the mode `off`
+    again long enough to label its objects. When only some of them carry the
+    label, because the labeling was interrupted in the middle of a
+    reconciliation or because a tool strips the `cnpg.io/reconcile` label,
+    the operator does act on what it sees: with the PVCs of an instance
+    visible and its Pod invisible, it creates the Pod again and again, each
+    attempt failing with `AlreadyExists`; with the Pod of a healthy primary
+    invisible, it can start a failover.
+:::
+
+Before switching, check that no Pod, PVC or Job of a Cluster, and no Pooler
+Deployment or Pod, lacks the label, in every namespace the operator watches:
+
+```sh
+kubectl get pods,pvc,jobs --all-namespaces \
+  -l 'cnpg.io/cluster,cnpg.io/reconcile!=true'
+kubectl get deployments,pods --all-namespaces \
+  -l 'cnpg.io/poolerName,cnpg.io/reconcile!=true'
+```
+
+Both commands must return no resources. The selector `cnpg.io/reconcile!=true`
+also matches the objects without the label at all. Pods and PVCs get the label
+from the reconciliation of their Cluster, but the Jobs created by a version
+that did not set it never do: once such a Job has completed and its instance
+is running, delete it or add the label by hand
+(`kubectl label job <name> cnpg.io/reconcile=true`).
 
 With a filtered mode, the Pods matched by `podSelectorRefs` must carry the
 `cnpg.io/reconcile=true` label, typically from the pod template of the
