@@ -338,6 +338,9 @@ With `keepPDB` and `disablePrimaryPDB`, the degraded mode is reported:
   condition, `True` with the reason `PrimaryPDBKept` or `PrimaryPDBDisabled`;
 - on each new `Cluster`, by a Warning Event `NodeStatusUnavailable` when its
   first instance is created, as before this policy existed;
+- by the operator metric `cnpg_operator_node_status_unavailable`, `1` while
+  no node state is read and `0` otherwise, with the policy in its `policy`
+  label: `cnpg_operator_node_status_unavailable == 1` makes an alert;
 - by the webhook, as a warning when a `Cluster` is created.
 
 When the node state is read again, after a restart, the condition is removed
