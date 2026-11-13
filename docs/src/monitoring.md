@@ -487,6 +487,16 @@ go_threads 18
     `cnpg_disk_available_bytes` or `cnpg_disk_inodes_free` reaches zero.
 :::
 
+:::note[Known issue]
+    The volumes are found from the paths present in the container, not from
+    the mounts: a `wal` series is reported whenever
+    `/var/lib/postgresql/wal` exists, and a `tbs-<name>` series for every
+    directory under `/var/lib/postgresql/tablespaces`. When such a path is
+    not a mount point, for example a directory left in the container without
+    a WAL volume or a stray directory under `tablespaces/`, its series
+    describe the root filesystem of the container instead of a volume.
+:::
+
 :::warning
     The metrics `cnpg_collector_last_failed_backup_timestamp`,
     `cnpg_collector_last_available_backup_timestamp`, and
