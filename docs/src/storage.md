@@ -462,6 +462,33 @@ than this feature, stands for the volume holding the WAL files. In every case,
 the operator does not fail over to another instance, as described in
 ["Disk Full Failure"](instance_manager.md#disk-full-failure).
 
+#### Known limitations
+
+- A resize that stalls in the storage backend leaves `autoGrow` waiting, with
+  no condition on the `Cluster`: the PVC keeps requesting more than its
+  capacity, and no step is taken until it gets it. Some backends limit the
+  number of modifications of a volume, such as AWS EBS, which accepts one
+  modification every six hours.
+- An instance manager older than `autoGrow` reports no usage of its volumes:
+  the usage of its instance is ignored, and only a full WAL volume stopping its
+  PostgreSQL counts. `autoGrow` is fully active once every instance manager is
+  upgraded.
+- Turning `autoGrow` off after it grew a volume leaves the PVCs larger than the
+  size in the `Cluster`: the operator logs `cannot decrease storage
+  requirement` at each reconciliation. Set the size in the `Cluster` to the
+  grown size.
+- A new `Cluster` restored from a `VolumeSnapshot` of a grown volume, with a
+  smaller size in its specification, fails to create its PVCs: a PVC cannot be
+  smaller than the snapshot it is restored from. Give the new `Cluster` at least
+  the grown size.
+- When the expansion of a step is refused to some PVCs of a volume, no
+  `VolumeAutoGrow` event is recorded for that volume, even for the PVCs that
+  accepted it: the `VolumeExpansionRefused` condition reports the refusal.
+- Outside of the volume holding the WAL files, a full-disk stop is detected
+  from the logs of PostgreSQL, and only a volume below the thresholds given
+  above counts as full: a write failing on a volume with more room left, or a
+  stop with no disk full error logged, grows no volume.
+
 ### Re-creating storage
 
 If the storage class doesn't support volume expansion, you can still regenerate
