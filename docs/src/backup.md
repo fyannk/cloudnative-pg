@@ -255,6 +255,19 @@ setting can reject five-field schedules when they are created
 (`seconds-strict`) or read them as standard cron (`standard`).
 
 :::warning
+    With `standard`, a five-field schedule only means what it says as long as
+    the operator keeps that setting. After a switch back to `seconds`, or a
+    downgrade to an upstream release, which always reads the seconds field
+    first, the same `0 2 * * *` (every day at 02:00) is read as second 0,
+    minute 2 of every hour: the backups become hourly. The only signal is the
+    `ScheduleFieldCount` Warning event recorded on the `ScheduledBackup` after
+    a switch back to `seconds`; an upstream release records none for the
+    existing objects. If a downgrade or a change of the setting is possible,
+    write the schedules with six fields, such as `0 0 2 * * *`, which are
+    read the same way whatever the setting and the version.
+:::
+
+:::warning
     The `spec.cluster` field is immutable after creation. To schedule backups
     for a different `Cluster`, create a new `ScheduledBackup` resource instead
     of updating an existing one.
