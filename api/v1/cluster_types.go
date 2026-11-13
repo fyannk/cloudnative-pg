@@ -1247,6 +1247,12 @@ const (
 	// maxSize or because its growth would hide failing WAL archiving, and
 	// False once no volume is in that case. Only set after a first stop.
 	ConditionVolumeAutoGrowStopped ClusterConditionType = "VolumeAutoGrowStopped"
+
+	// ConditionNodeStatusUnavailable is True when the operator reads no node
+	// state (NODE_STATUS_SOURCE resolved to none): the primary of a node
+	// being drained is not switched over first. Its reason tells what
+	// NODE_STATUS_UNAVAILABLE_POLICY does with the primary PodDisruptionBudget.
+	ConditionNodeStatusUnavailable ClusterConditionType = "NodeStatusUnavailable"
 )
 
 // ConditionStatus defines conditions of resources
@@ -1336,6 +1342,16 @@ const (
 	// ConditionReasonVolumeAutoGrowResumed means no volume above its autoGrow
 	// threshold is stopped anymore
 	ConditionReasonVolumeAutoGrowResumed ConditionReason = "VolumeAutoGrowResumed"
+
+	// ConditionReasonPrimaryPDBKept is the reason set on
+	// ConditionNodeStatusUnavailable with the keepPDB policy: the primary
+	// PodDisruptionBudget holds the drain of its node
+	ConditionReasonPrimaryPDBKept ConditionReason = "PrimaryPDBKept"
+
+	// ConditionReasonPrimaryPDBDisabled is the reason set on
+	// ConditionNodeStatusUnavailable with the disablePrimaryPDB policy: the
+	// primary PodDisruptionBudget is removed, and a drain evicts the primary
+	ConditionReasonPrimaryPDBDisabled ConditionReason = "PrimaryPDBDisabled"
 )
 
 // EmbeddedObjectMetadata contains metadata to be inherited by all resources related to a Cluster

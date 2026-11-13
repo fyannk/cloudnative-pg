@@ -305,6 +305,63 @@ var _ = Describe("Node status source", func() {
 	})
 })
 
+var _ = Describe("The policy when no node state is read", func() {
+	It("defaults to keepPDB, also when unset", func() {
+		Expect(NewConfiguration().GetNodeStatusUnavailablePolicy()).To(Equal(NodeStatusUnavailablePolicyKeepPDB))
+		Expect((&Data{}).GetNodeStatusUnavailablePolicy()).To(Equal(NodeStatusUnavailablePolicyKeepPDB))
+	})
+
+	DescribeTable("reads and validates NODE_STATUS_UNAVAILABLE_POLICY",
+		func(value string, valid bool) {
+			config := NewConfiguration()
+			config.ReadConfigMap(map[string]string{"NODE_STATUS_UNAVAILABLE_POLICY": value})
+			Expect(config.NodeStatusUnavailablePolicy).To(Equal(value))
+			if valid {
+				Expect(config.ValidateNodeStatusUnavailablePolicy()).To(Succeed())
+				Expect(config.GetNodeStatusUnavailablePolicy()).To(Equal(value))
+			} else {
+				Expect(config.ValidateNodeStatusUnavailablePolicy()).To(
+					MatchError(ContainSubstring(`unknown NODE_STATUS_UNAVAILABLE_POLICY "` + value + `"`)))
+			}
+		},
+		Entry("keepPDB", NodeStatusUnavailablePolicyKeepPDB, true),
+		Entry("disablePrimaryPDB", NodeStatusUnavailablePolicyDisablePrimaryPDB, true),
+		Entry("fail", NodeStatusUnavailablePolicyFail, true),
+		Entry("a value with another case", "keeppdb", false),
+		Entry("an unknown value", "ignore", false),
+	)
+
+	DescribeTable("fail refuses to start only when no node state is read",
+		func(source string, apiNode bool, policy string, refused bool) {
+			config := NewConfiguration()
+			config.NodeStatusSource = source
+			config.NodeStatusPodKeyPrefix = "bridge.example.com/"
+			config.APINodeEnabled = apiNode
+			config.NodeStatusUnavailablePolicy = policy
+			Expect(config.ResolveNodeStatusSource()).To(Succeed())
+			if refused {
+				Expect(config.CheckNodeStatusUnavailablePolicy()).To(
+					MatchError(ContainSubstring("NODE_STATUS_UNAVAILABLE_POLICY=fail")))
+			} else {
+				Expect(config.CheckNodeStatusUnavailablePolicy()).To(Succeed())
+			}
+		},
+		Entry("unset source, Node API not accessible", "", false, NodeStatusUnavailablePolicyFail, true),
+		Entry("explicit none", NodeStatusSourceNone, true, NodeStatusUnavailablePolicyFail, true),
+		Entry("unset source, Node API read", "", true, NodeStatusUnavailablePolicyFail, false),
+		Entry("pods source without the Node API", NodeStatusSourcePods, false, NodeStatusUnavailablePolicyFail, false),
+		Entry("keepPDB without the Node API", "", false, NodeStatusUnavailablePolicyKeepPDB, false),
+		Entry("disablePrimaryPDB without the Node API", "", false,
+			NodeStatusUnavailablePolicyDisablePrimaryPDB, false),
+	)
+
+	It("tells whether no node state is read", func() {
+		Expect((&Data{NodeStatusSource: NodeStatusSourceNone}).ReadsNoNodeStatus()).To(BeTrue())
+		Expect((&Data{NodeStatusSource: NodeStatusSourceAPI}).ReadsNoNodeStatus()).To(BeFalse())
+		Expect((&Data{NodeStatusSource: NodeStatusSourcePods}).ReadsNoNodeStatus()).To(BeFalse())
+	})
+})
+
 var _ = Describe("Webhook configuration names", func() {
 	It("uses default names when suffix is disabled", func() {
 		config := &Data{}

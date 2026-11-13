@@ -101,6 +101,21 @@ const (
 	NodeStatusSourceNone = "none"
 )
 
+// Values of NodeStatusUnavailablePolicy
+const (
+	// NodeStatusUnavailablePolicyKeepPDB keeps the PodDisruptionBudgets and
+	// reports the degraded mode: a drain is held by the primary
+	// PodDisruptionBudget until the primary is moved by hand
+	NodeStatusUnavailablePolicyKeepPDB = "keepPDB"
+
+	// NodeStatusUnavailablePolicyDisablePrimaryPDB removes the primary
+	// PodDisruptionBudget: a drain evicts the primary, and a failover follows
+	NodeStatusUnavailablePolicyDisablePrimaryPDB = "disablePrimaryPDB"
+
+	// NodeStatusUnavailablePolicyFail refuses to start the operator
+	NodeStatusUnavailablePolicyFail = "fail"
+)
+
 // DefaultNodeStatusEvictionMaxAge is the default age, in seconds, after which
 // an eviction request echoed onto a primary Pod is ignored
 const DefaultNodeStatusEvictionMaxAge = 600
@@ -344,6 +359,13 @@ type Data struct {
 	// switchover. Zero means no limit
 	NodeStatusEvictionMaxAge int `json:"nodeStatusEvictionMaxAge" env:"NODE_STATUS_EVICTION_MAX_AGE"`
 
+	// NodeStatusUnavailablePolicy says what the operator does when it reads
+	// no node state, that is when NodeStatusSource resolves to "none":
+	// "keepPDB" (the default) runs in degraded mode with the
+	// PodDisruptionBudgets kept, "disablePrimaryPDB" runs in degraded mode
+	// without the primary PodDisruptionBudget, "fail" refuses to start
+	NodeStatusUnavailablePolicy string `json:"nodeStatusUnavailablePolicy" env:"NODE_STATUS_UNAVAILABLE_POLICY"`
+
 	// ManageWebhookConfigurations is true when the operator should inject the
 	// CA bundle into the mutating and validating webhook configurations. It can
 	// be disabled when the webhook configurations are managed externally (e.g.
@@ -456,6 +478,7 @@ func newDefaultConfig() *Data {
 		PropagateProxyEnv:             true,
 		OperatorStatusIdentity:        OperatorStatusIdentityVersion,
 		NodeStatusEvictionMaxAge:      DefaultNodeStatusEvictionMaxAge,
+		NodeStatusUnavailablePolicy:   NodeStatusUnavailablePolicyKeepPDB,
 	}
 }
 
@@ -563,6 +586,55 @@ func (config *Data) ResolveNodeStatusSource() error {
 		return fmt.Errorf("unknown NODE_STATUS_SOURCE %q, expected %s, %s or %s",
 			config.NodeStatusSource, NodeStatusSourceAPI, NodeStatusSourcePods, NodeStatusSourceNone)
 	}
+}
+
+// GetNodeStatusUnavailablePolicy returns the policy applied when the
+// operator reads no node state, keepPDB when unset
+func (config *Data) GetNodeStatusUnavailablePolicy() string {
+	if config.NodeStatusUnavailablePolicy == "" {
+		return NodeStatusUnavailablePolicyKeepPDB
+	}
+	return config.NodeStatusUnavailablePolicy
+}
+
+// ValidateNodeStatusUnavailablePolicy refuses an unknown
+// NODE_STATUS_UNAVAILABLE_POLICY when the configuration is loaded, before
+// the optional APIs are probed
+func (config *Data) ValidateNodeStatusUnavailablePolicy() error {
+	switch config.GetNodeStatusUnavailablePolicy() {
+	case NodeStatusUnavailablePolicyKeepPDB,
+		NodeStatusUnavailablePolicyDisablePrimaryPDB,
+		NodeStatusUnavailablePolicyFail:
+		return nil
+	default:
+		return fmt.Errorf("unknown NODE_STATUS_UNAVAILABLE_POLICY %q, expected %s, %s or %s",
+			config.NodeStatusUnavailablePolicy, NodeStatusUnavailablePolicyKeepPDB,
+			NodeStatusUnavailablePolicyDisablePrimaryPDB, NodeStatusUnavailablePolicyFail)
+	}
+}
+
+// ReadsNoNodeStatus reports whether the operator reads no node state: the
+// resolved NodeStatusSource is "none", because it was set so or because the
+// Node API was disabled or not accessible at startup
+func (config *Data) ReadsNoNodeStatus() bool {
+	return config.NodeStatusSource == NodeStatusSourceNone
+}
+
+// CheckNodeStatusUnavailablePolicy applies the fail policy once the source
+// of node state is resolved: the operator refuses to start when it would
+// read no node state. Called after ResolveNodeStatusSource
+func (config *Data) CheckNodeStatusUnavailablePolicy() error {
+	if !config.ReadsNoNodeStatus() ||
+		config.GetNodeStatusUnavailablePolicy() != NodeStatusUnavailablePolicyFail {
+		return nil
+	}
+
+	return fmt.Errorf("NODE_STATUS_UNAVAILABLE_POLICY=%s: the operator would read no node state "+
+		"(NODE_STATUS_SOURCE resolved to %s, API_NODE_ENABLED=%t after the startup probe); grant the "+
+		"operator the right to list and watch the Nodes and restart it, set NODE_STATUS_SOURCE=%s "+
+		"with a node bridge, or set NODE_STATUS_UNAVAILABLE_POLICY to %s or %s to run in degraded mode",
+		NodeStatusUnavailablePolicyFail, NodeStatusSourceNone, config.APINodeEnabled, NodeStatusSourcePods,
+		NodeStatusUnavailablePolicyKeepPDB, NodeStatusUnavailablePolicyDisablePrimaryPDB)
 }
 
 // NodeStatusUnavailableMessage says what the operator gives up when it reads

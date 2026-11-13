@@ -635,3 +635,68 @@ var _ = Describe("topology resolution by source of node state", func() {
 		Entry("pods", configuration.NodeStatusSourcePods),
 	)
 })
+
+var _ = Describe("updateNodeStatusAvailability", func() {
+	var recorder *record.FakeRecorder
+	var cluster *apiv1.Cluster
+
+	BeforeEach(func() {
+		recorder = record.NewFakeRecorder(10)
+		cluster = &apiv1.Cluster{ObjectMeta: metav1.ObjectMeta{Name: "cluster", Namespace: "default"}}
+	})
+
+	reconciler := func(source, policy string) *ClusterReconciler {
+		return &ClusterReconciler{
+			Recorder:                    recorder,
+			nodeStatusSource:            source,
+			nodeStatusUnavailablePolicy: policy,
+		}
+	}
+
+	DescribeTable("sets the condition and warns once without node state",
+		func(policy string, reason apiv1.ConditionReason, inMessage string) {
+			r := reconciler(configuration.NodeStatusSourceNone, policy)
+			r.updateNodeStatusAvailability(cluster, nil)
+
+			condition := meta.FindStatusCondition(cluster.Status.Conditions,
+				string(apiv1.ConditionNodeStatusUnavailable))
+			Expect(condition).ToNot(BeNil())
+			Expect(condition.Status).To(Equal(metav1.ConditionTrue))
+			Expect(condition.Reason).To(Equal(string(reason)))
+			Expect(condition.Message).To(ContainSubstring(inMessage))
+			Expect(recorder.Events).To(Receive(And(
+				HavePrefix(corev1.EventTypeWarning+" NodeStatusUnavailable "),
+				ContainSubstring(inMessage))))
+
+			r.updateNodeStatusAvailability(cluster, cluster.Status.Conditions)
+			Expect(recorder.Events).ToNot(Receive())
+		},
+		Entry("keepPDB", configuration.NodeStatusUnavailablePolicyKeepPDB,
+			apiv1.ConditionReasonPrimaryPDBKept, "NODE_STATUS_UNAVAILABLE_POLICY=keepPDB"),
+		Entry("disablePrimaryPDB", configuration.NodeStatusUnavailablePolicyDisablePrimaryPDB,
+			apiv1.ConditionReasonPrimaryPDBDisabled, "NODE_STATUS_UNAVAILABLE_POLICY=disablePrimaryPDB"),
+	)
+
+	DescribeTable("removes the condition when node state is read",
+		func(source string) {
+			r := reconciler(configuration.NodeStatusSourceNone, configuration.NodeStatusUnavailablePolicyKeepPDB)
+			r.updateNodeStatusAvailability(cluster, nil)
+			Expect(recorder.Events).To(Receive())
+
+			reconciler(source, configuration.NodeStatusUnavailablePolicyKeepPDB).
+				updateNodeStatusAvailability(cluster, cluster.Status.Conditions)
+			Expect(meta.FindStatusCondition(cluster.Status.Conditions,
+				string(apiv1.ConditionNodeStatusUnavailable))).To(BeNil())
+			Expect(recorder.Events).ToNot(Receive())
+		},
+		Entry("api", configuration.NodeStatusSourceAPI),
+		Entry("pods", configuration.NodeStatusSourcePods),
+	)
+
+	It("survives without a recorder", func() {
+		r := &ClusterReconciler{nodeStatusSource: configuration.NodeStatusSourceNone}
+		r.updateNodeStatusAvailability(cluster, nil)
+		Expect(meta.IsStatusConditionTrue(cluster.Status.Conditions,
+			string(apiv1.ConditionNodeStatusUnavailable))).To(BeTrue())
+	})
+})

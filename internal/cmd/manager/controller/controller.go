@@ -44,6 +44,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
@@ -294,12 +295,7 @@ func RunController(
 		return err
 	}
 
-	if err := operatormetrics.Register(mgr.GetCache(), conf); err != nil {
-		setupLog.Error(err, "unable to register the operator metrics")
-		return err
-	}
-	if err := operatormetrics.RegisterConfiguration(conf, settingsFromSecret); err != nil {
-		setupLog.Error(err, "unable to register the operator configuration metrics")
+	if err := registerOperatorMetrics(mgr, conf, settingsFromSecret); err != nil {
 		return err
 	}
 
@@ -623,15 +619,41 @@ func logProxyPropagation() {
 	setupLog.Info("Propagating the proxy settings of the operator to the workloads", "settings", summary)
 }
 
+// registerOperatorMetrics registers the metrics of the operator itself: what
+// it manages, its configuration and whether it reads the node state
+func registerOperatorMetrics(mgr manager.Manager, conf *configuration.Data, settingsFromSecret []string) error {
+	if err := operatormetrics.Register(mgr.GetCache(), conf); err != nil {
+		setupLog.Error(err, "unable to register the operator metrics")
+		return err
+	}
+	if err := operatormetrics.RegisterConfiguration(conf, settingsFromSecret); err != nil {
+		setupLog.Error(err, "unable to register the operator configuration metrics")
+		return err
+	}
+	if err := operatormetrics.RegisterNodeStatus(conf); err != nil {
+		setupLog.Error(err, "unable to register the node state availability metric")
+		return err
+	}
+	return nil
+}
+
 // resolveNodeStatusSource settles where the operator reads the state of the
-// nodes from, once the optional APIs are probed, and warns when it reads none
+// nodes from, once the optional APIs are probed, applies the fail policy of
+// NODE_STATUS_UNAVAILABLE_POLICY and warns when it reads none. The Node API
+// is probed once, at startup: granting the rights later needs a restart of
+// the operator to be noticed
 func resolveNodeStatusSource(conf *configuration.Data) error {
 	if err := conf.ResolveNodeStatusSource(); err != nil {
 		setupLog.Error(err, "invalid node status configuration")
 		return err
 	}
-	if conf.NodeStatusSource == configuration.NodeStatusSourceNone {
-		setupLog.Warning(configuration.NodeStatusUnavailableMessage)
+	if err := conf.CheckNodeStatusUnavailablePolicy(); err != nil {
+		setupLog.Error(err, "refusing to start without node state")
+		return err
+	}
+	if conf.ReadsNoNodeStatus() {
+		setupLog.Warning(configuration.NodeStatusUnavailableMessage,
+			"nodeStatusUnavailablePolicy", conf.GetNodeStatusUnavailablePolicy())
 	}
 	return nil
 }
@@ -648,7 +670,10 @@ func checkLoadedConfiguration(conf *configuration.Data) error {
 	}
 
 	setupLog.Info("Operator configuration loaded", "configuration", conf)
-	if err := conf.ValidateOperatorStatusIdentity(); err != nil {
+	if err := errors.Join(
+		conf.ValidateOperatorStatusIdentity(),
+		conf.ValidateNodeStatusUnavailablePolicy(),
+	); err != nil {
 		setupLog.Error(err, "invalid operator configuration")
 		return err
 	}
