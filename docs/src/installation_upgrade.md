@@ -103,6 +103,23 @@ For deployments on Red Hat OpenShift, EDB offers and fully supports a certified
 version of CloudNativePG, available through the
 [Red Hat OpenShift Container Platform](https://catalog.redhat.com/software/container-stacks/detail/653fd4035eece8598f66d97b).
 
+### Unofficial fork builds
+
+The releases of this fork are not CloudNativePG releases. Each one is named
+after the upstream version it is based on, followed by its own sequence
+number: `1.30.1-1`, `1.30.1-2`, and so on. In semantic versioning, the
+suffix makes it a pre-release, which sorts *below* the upstream `1.30.1`:
+
+- keep the fork bundles in their own OLM catalog, subscribed to on their own
+  channel, and do not mix them with the upstream bundles of the
+  `cloudnative-pg` package: OLM would treat the upstream `1.30.1` as an
+  upgrade of every `1.30.1-N` build, and never upgrade an upstream `1.30.1`
+  to a fork build;
+- dependency update tools such as Renovate, which compare versions the same
+  way, see a fork release as older than the upstream release it is based on,
+  and propose the upstream one as an update. Pin the fork images and
+  manifests explicitly, or restrict such tools to the fork versions.
+
 ## Details about the deployment
 
 In Kubernetes, the operator is by default installed in the `cnpg-system`
