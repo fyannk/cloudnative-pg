@@ -355,8 +355,9 @@ type Data struct {
 	NodeStatusLabelPrefix string `json:"nodeStatusLabelPrefix" env:"NODE_STATUS_LABEL_PREFIX"`
 
 	// NodeStatusEvictionMaxAge is the age, in seconds, after which an
-	// eviction request echoed onto a primary Pod no longer triggers a
-	// switchover. Zero means no limit
+	// eviction request echoed onto an instance Pod is ignored: on the
+	// primary it no longer triggers a switchover, and the instance can again
+	// be chosen as the new primary. Zero means no limit
 	NodeStatusEvictionMaxAge int `json:"nodeStatusEvictionMaxAge" env:"NODE_STATUS_EVICTION_MAX_AGE"`
 
 	// NodeStatusUnavailablePolicy says what the operator does when it reads

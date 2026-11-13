@@ -1086,6 +1086,94 @@ var _ = Describe("The node state of an instance per source", func() {
 	})
 })
 
+var _ = Describe("The new primary chosen when the primary leaves its node", func() {
+	const prefix = "bridge.example.com/"
+
+	var env *testingEnvironment
+	var cluster *apiv1.Cluster
+
+	BeforeEach(func(ctx SpecContext) {
+		env = buildTestEnvironment()
+		namespace := newFakeNamespace(env.client)
+		cluster = newFakeCNPGCluster(env.client, namespace, func(cluster *apiv1.Cluster) {
+			cluster.Spec.Instances = 3
+		})
+		cluster.Status.Instances = 3
+		cluster.Status.ReadyInstances = 3
+		cluster.Status.CurrentPrimary = cluster.Name + "-1"
+		cluster.Status.TargetPrimary = cluster.Name + "-1"
+		Expect(env.client.Status().Update(ctx, cluster)).To(Succeed())
+	})
+
+	reconciler := func(maxAge time.Duration) *ClusterReconciler {
+		return &ClusterReconciler{
+			Client:           env.client,
+			Scheme:           env.scheme,
+			Recorder:         record.NewFakeRecorder(10),
+			drainTaints:      configuration.DefaultDrainTaints,
+			nodeStatusSource: configuration.NodeStatusSourcePods,
+			nodeStatus:       utils.NodeStatusReader{KeyPrefix: prefix, EvictionMaxAge: maxAge},
+		}
+	}
+
+	evictionRequested := func(ago time.Duration) map[string]string {
+		return map[string]string{prefix + "eviction-requested": time.Now().Add(-ago).Format(time.RFC3339)}
+	}
+
+	// instances builds the status of the three instances, the primary first,
+	// each on its own node, ready and streaming, with the given annotations
+	instances := func(annotations ...map[string]string) postgres.PostgresqlStatusList {
+		var list postgres.PostgresqlStatusList
+		for idx, podAnnotations := range annotations {
+			name := fmt.Sprintf("%s-%d", cluster.Name, idx+1)
+			list.Items = append(list.Items, postgres.PostgresqlStatus{
+				Node:                fmt.Sprintf("node-%d", idx+1),
+				IsPrimary:           idx == 0,
+				IsPodReady:          true,
+				IsWalReceiverActive: idx > 0,
+				Pod: &corev1.Pod{
+					ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: cluster.Namespace, Annotations: podAnnotations},
+					Spec:       corev1.PodSpec{NodeName: fmt.Sprintf("node-%d", idx+1)},
+					Status: corev1.PodStatus{Conditions: []corev1.PodCondition{
+						{Type: corev1.PodReady, Status: corev1.ConditionTrue},
+					}},
+				},
+			})
+		}
+		return list
+	}
+
+	switchOver := func(ctx context.Context, r *ClusterReconciler, status postgres.PostgresqlStatusList) string {
+		newPrimary, err := r.setPrimaryOnSchedulableNode(ctx, cluster, status, &status.Items[0],
+			"eviction of the primary requested")
+		Expect(err).ToNot(HaveOccurred())
+		return newPrimary
+	}
+
+	It("skips a replica whose eviction was requested too", func(ctx SpecContext) {
+		status := instances(evictionRequested(time.Minute), evictionRequested(time.Minute), nil)
+		Expect(switchOver(ctx, reconciler(10*time.Minute), status)).To(Equal(cluster.Name + "-3"))
+		Expect(cluster.Status.TargetPrimary).To(Equal(cluster.Name + "-3"))
+	})
+
+	It("skips a replica whose request never expires, with no maximum age", func(ctx SpecContext) {
+		status := instances(evictionRequested(time.Minute), evictionRequested(48*time.Hour), nil)
+		Expect(switchOver(ctx, reconciler(0), status)).To(Equal(cluster.Name + "-3"))
+	})
+
+	It("keeps a replica whose request is older than the maximum age", func(ctx SpecContext) {
+		status := instances(evictionRequested(time.Minute), evictionRequested(time.Hour), nil)
+		Expect(switchOver(ctx, reconciler(10*time.Minute), status)).To(Equal(cluster.Name + "-2"))
+	})
+
+	It("does not switch over when every replica has its eviction requested", func(ctx SpecContext) {
+		status := instances(evictionRequested(time.Minute), evictionRequested(time.Minute),
+			evictionRequested(48*time.Hour))
+		Expect(switchOver(ctx, reconciler(0), status)).To(BeEmpty())
+		Expect(cluster.Status.TargetPrimary).To(Equal(cluster.Name + "-1"))
+	})
+})
+
 var _ = Describe("evaluatePodReadinessGuards", func() {
 	const (
 		primaryName    = "cluster-1"

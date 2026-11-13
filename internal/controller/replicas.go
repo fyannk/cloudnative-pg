@@ -315,7 +315,9 @@ func (r *ClusterReconciler) isEvictionRequested(instance *postgres.PostgresqlSta
 
 // setPrimaryOnSchedulableNode picks the next primary on a schedulable node,
 // when the current one must leave its node: a drain is in progress, or its
-// eviction was requested. The reason is reported in the Event and the phase.
+// eviction was requested. Candidates on a draining node or whose own
+// eviction was requested are skipped. The reason is reported in the Event
+// and the phase.
 func (r *ClusterReconciler) setPrimaryOnSchedulableNode(
 	ctx context.Context,
 	cluster *apiv1.Cluster,
@@ -357,6 +359,14 @@ func (r *ClusterReconciler) setPrimaryOnSchedulableNode(
 	for _, candidate := range podsOnOtherNodes.Items {
 		// If candidate on an unschedulable node too, skip it
 		if status, _ := r.isInstanceOnDrainingNode(ctx, &candidate); status {
+			continue
+		}
+
+		// If the eviction of the candidate was requested too, skip it: it
+		// would have to be switched over again as soon as promoted, and
+		// two instances with recent requests would pass the primary role
+		// back and forth
+		if r.isEvictionRequested(&candidate) {
 			continue
 		}
 

@@ -57,7 +57,7 @@ Name | Description
 `NODE_STATUS_SOURCE` | Where the operator learns the state of the nodes (cordon, drain taints, node labels): `api` reads the cluster-scoped `Node` API; `pods` reads the keys a node bridge echoes onto the instance Pods, see [Node state from the instance Pods](#node-state-from-the-instance-pods); `none` reads nothing, see the same section for what is lost. Unset, it follows `API_NODE_ENABLED`: `api` when the operator reads the Node API, `none` when the API is disabled or not accessible. An explicit `api` while the Node API is disabled refuses to start.
 `NODE_STATUS_POD_KEY_PREFIX` | With `NODE_STATUS_SOURCE=pods`, the prefix of the keys read on the instance Pods: `<prefix>unschedulable`, `<prefix>taints` and `<prefix>eviction-requested`. Required with `pods`.
 `NODE_STATUS_LABEL_PREFIX` | With `NODE_STATUS_SOURCE=pods`, the prefix under which the node labels are copied onto the instance Pods: the node label `<key>` is read from the Pod label `<prefix><key>`. Empty by default: the node label keys themselves.
-`NODE_STATUS_EVICTION_MAX_AGE` | With `NODE_STATUS_SOURCE=pods`, the age in seconds after which an eviction request echoed onto a primary Pod no longer triggers a switchover. Default `600`; `0` means no limit.
+`NODE_STATUS_EVICTION_MAX_AGE` | With `NODE_STATUS_SOURCE=pods`, the age in seconds after which an eviction request echoed onto an instance Pod is ignored: on the primary it no longer triggers a switchover, and the instance can again be chosen as the new primary. Default `600`; `0` means no limit.
 `NODE_STATUS_UNAVAILABLE_POLICY` | What the operator does when it reads no node state, that is when `NODE_STATUS_SOURCE` resolves to `none`: `keepPDB` (default) runs in degraded mode and keeps the `PodDisruptionBudgets`, so the primary blocks the drain of its node; `disablePrimaryPDB` runs in degraded mode without the primary `PodDisruptionBudget`, so a drain evicts the primary and a failover follows; `fail` refuses to start. Any other value refuses to start. See [Running without node state](#running-without-node-state).
 `DEFAULT_STORAGE_CLASS` | The name of the StorageClass written, when a `Cluster` is created, into every storage section (`storage`, `walStorage`, each tablespace) that sets neither `storageClass` nor `storageClassName` in its `pvcTemplate`. Clusters that already exist are not changed, and neither is a `Cluster` created again over the PVCs of a previous one with the same name (restored from a backup of the Kubernetes resources, or deleted and created again by a GitOps tool), so that its next volumes are created as its existing ones were (see [Storage](storage.md)). Empty by default: the PVCs then get the default StorageClass of the Kubernetes cluster.
 `DRAIN_TAINTS` | Specifies the taint keys that should be interpreted as indicators of node drain. By default, it includes the taints commonly applied by [kubectl](https://kubernetes.io/docs/concepts/scheduling-eviction/taint-and-toleration/), [Cluster Autoscaler](https://github.com/kubernetes/autoscaler), and [Karpenter](https://github.com/aws/karpenter-provider-aws): `node.kubernetes.io/unschedulable`, `ToBeDeletedByClusterAutoscaler`, `karpenter.sh/disrupted`, `karpenter.sh/disruption`.
@@ -655,7 +655,7 @@ facts. It expects, on each instance Pod:
 | `<prefix>unschedulable` | label or annotation | `"true"`, absent otherwise | the Node is cordoned (`spec.unschedulable`) |
 | `<prefix>taints` | annotation | JSON array of the Node taints the bridge copies (`key`, `effect`, `value`, `timeAdded`), absent when none | matched against `DRAIN_TAINTS` on the key, as the Node taints are |
 | `<labelPrefix><node label key>` | label | the Node label value | resolves the node failure domain keys and `nodeLabelsAntiAffinity` |
-| `<prefix>eviction-requested` | annotation | RFC 3339 time of the first eviction request received for the Pod | on the primary, and when not older than `NODE_STATUS_EVICTION_MAX_AGE`, triggers the same switchover as a draining node |
+| `<prefix>eviction-requested` | annotation | RFC 3339 time of the first eviction request received for the Pod | when not older than `NODE_STATUS_EVICTION_MAX_AGE`: on the primary, triggers the same switchover as a draining node; on a replica, keeps it from being chosen as the new primary |
 
 `<prefix>` is `NODE_STATUS_POD_KEY_PREFIX` and `<labelPrefix>` is
 `NODE_STATUS_LABEL_PREFIX`. The bridge must copy at least the taint keys listed
@@ -666,7 +666,16 @@ Pod at binding by itself (`PodTopologyLabelsAdmission`); other keys, such as
 `kubernetes.io/hostname`, need the bridge. An absent key means that the node is
 not cordoned or tainted, or that the bridge has not echoed the state yet: the
 operator cannot tell the two apart, and behaves as with `none` until the keys
-arrive. No new watch is needed, the instance Pods already wake their Cluster
+arrive.
+
+The new primary of such a switchover is never an instance on a draining node,
+nor one carrying an eviction request not older than
+`NODE_STATUS_EVICTION_MAX_AGE`: a replica being evicted itself would have to
+be switched over again right away, and two instances carrying recent requests
+would pass the primary role back and forth. With
+`NODE_STATUS_EVICTION_MAX_AGE=0` a request never expires, so an instance stays
+out of the candidates for as long as it carries the annotation. When no
+replica is left to choose, no switchover happens. No new watch is needed, the instance Pods already wake their Cluster
 up on any change.
 
 [NodeEcho](https://github.com/fyannk/NodeEcho) is one such bridge. This rule
