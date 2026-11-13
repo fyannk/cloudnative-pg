@@ -657,6 +657,16 @@ replica cluster is in progress, and a change of `imageName` together with
 PostgreSQL parameters when `primaryUpdateMethod` is `switchover`. The
 `cnpg.io/validation: disabled` annotation does not bypass these rules.
 
+The two major version rules compare the image with the major version recorded
+in `.status.pgDataImageInfo`, and they only apply to an update that changes
+`.spec.imageName` or `.spec.imageCatalogRef.major`. The API server evaluates
+them on every write of the `Cluster`, status writes included, so a cluster
+whose image is behind the recorded major version would otherwise see all its
+status updates refused, failover included. Such a cluster can exist when the
+webhook let the change through, for instance with `cnpg.io/validation:
+disabled`, or when the image tag does not start with the PostgreSQL major
+version, as in `1.4.0-pg18`.
+
 ## Profiling tools
 
 The operator can expose a pprof HTTP server on `localhost:6060`.

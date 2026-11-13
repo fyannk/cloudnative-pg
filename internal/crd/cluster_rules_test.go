@@ -225,6 +225,41 @@ var _ = Describe("Cluster CRD transition rules", func() {
 		})
 	})
 
+	// The major version rules sit on the object root, so the API server
+	// evaluates them on status writes too. A cluster whose image is behind
+	// the recorded major, which the validation: disabled annotation allows,
+	// must still get its status written, or its failover is blocked.
+	Context("with an image behind the major version recorded in the status", func() {
+		updateStatus := func(cluster *apiv1.Cluster) {
+			cluster.Status.Phase = apiv1.PhaseHealthy
+			cluster.Status.TargetPrimary = cluster.Name + "-2"
+			cluster.Status.CurrentPrimary = cluster.Name + "-2"
+			Expect(k8sClient.Status().Update(ctx, cluster)).To(Succeed())
+		}
+
+		It("accepts status writes and unrelated changes, and refuses a further downgrade of imageName", func() {
+			cluster := storedCluster(ctx, 18)
+			updateStatus(cluster)
+			accepted(cluster, func(c *apiv1.Cluster) { c.Spec.PostgresConfiguration.Parameters["max_connections"] = "120" })
+			refused(cluster, func(c *apiv1.Cluster) { c.Spec.ImageName = "ghcr.io/cloudnative-pg/postgresql:16.4" },
+				"the PostgreSQL major version cannot be downgraded")
+		})
+
+		It("accepts status writes and unrelated changes, and refuses a further downgrade of imageCatalogRef", func() {
+			cluster := storedCluster(ctx, 0)
+			accepted(cluster, func(c *apiv1.Cluster) {
+				c.Spec.ImageName = ""
+				c.Spec.ImageCatalogRef = catalogRef(17)
+			})
+			cluster.Status.PGDataImageInfo = &apiv1.ImageInfo{Image: image17, MajorVersion: 18}
+			Expect(k8sClient.Status().Update(ctx, cluster)).To(Succeed())
+			updateStatus(cluster)
+			accepted(cluster, func(c *apiv1.Cluster) { c.Spec.PostgresConfiguration.Parameters["max_connections"] = "120" })
+			refused(cluster, func(c *apiv1.Cluster) { c.Spec.ImageCatalogRef.Major = 16 },
+				"the PostgreSQL major version cannot be downgraded")
+		})
+	})
+
 	It("keeps accepting wal_level minimal once set at creation", func() {
 		cluster := storedCluster(ctx, 0)
 		Expect(k8sClient.Delete(ctx, cluster)).To(Succeed())
