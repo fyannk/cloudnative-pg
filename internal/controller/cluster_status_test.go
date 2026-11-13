@@ -654,10 +654,10 @@ var _ = Describe("updateNodeStatusAvailability", func() {
 		}
 	}
 
-	DescribeTable("sets the condition and warns once without node state",
+	DescribeTable("sets the condition without node state, with no Event of its own",
 		func(policy string, reason apiv1.ConditionReason, inMessage string) {
 			r := reconciler(configuration.NodeStatusSourceNone, policy)
-			r.updateNodeStatusAvailability(cluster, nil)
+			r.updateNodeStatusAvailability(cluster)
 
 			condition := meta.FindStatusCondition(cluster.Status.Conditions,
 				string(apiv1.ConditionNodeStatusUnavailable))
@@ -665,11 +665,6 @@ var _ = Describe("updateNodeStatusAvailability", func() {
 			Expect(condition.Status).To(Equal(metav1.ConditionTrue))
 			Expect(condition.Reason).To(Equal(string(reason)))
 			Expect(condition.Message).To(ContainSubstring(inMessage))
-			Expect(recorder.Events).To(Receive(And(
-				HavePrefix(corev1.EventTypeWarning+" NodeStatusUnavailable "),
-				ContainSubstring(inMessage))))
-
-			r.updateNodeStatusAvailability(cluster, cluster.Status.Conditions)
 			Expect(recorder.Events).ToNot(Receive())
 		},
 		Entry("keepPDB", configuration.NodeStatusUnavailablePolicyKeepPDB,
@@ -681,11 +676,10 @@ var _ = Describe("updateNodeStatusAvailability", func() {
 	DescribeTable("removes the condition when node state is read",
 		func(source string) {
 			r := reconciler(configuration.NodeStatusSourceNone, configuration.NodeStatusUnavailablePolicyKeepPDB)
-			r.updateNodeStatusAvailability(cluster, nil)
-			Expect(recorder.Events).To(Receive())
+			r.updateNodeStatusAvailability(cluster)
 
 			reconciler(source, configuration.NodeStatusUnavailablePolicyKeepPDB).
-				updateNodeStatusAvailability(cluster, cluster.Status.Conditions)
+				updateNodeStatusAvailability(cluster)
 			Expect(meta.FindStatusCondition(cluster.Status.Conditions,
 				string(apiv1.ConditionNodeStatusUnavailable))).To(BeNil())
 			Expect(recorder.Events).ToNot(Receive())
@@ -696,7 +690,7 @@ var _ = Describe("updateNodeStatusAvailability", func() {
 
 	It("survives without a recorder", func() {
 		r := &ClusterReconciler{nodeStatusSource: configuration.NodeStatusSourceNone}
-		r.updateNodeStatusAvailability(cluster, nil)
+		r.updateNodeStatusAvailability(cluster)
 		Expect(meta.IsStatusConditionTrue(cluster.Status.Conditions,
 			string(apiv1.ConditionNodeStatusUnavailable))).To(BeTrue())
 	})
