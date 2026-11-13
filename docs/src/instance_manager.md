@@ -513,6 +513,27 @@ stored, PostgreSQL will stop working. CloudNativePG correctly detects this issue
 by verifying that there is enough space to store the next WAL segment,
 and avoids triggering a failover, which could complicate recovery.
 
+PostgreSQL can also fail to start because another volume is full, typically
+when the crash recovery cannot write to a full PGDATA or tablespace volume
+while the WAL files are on a separate volume. When PostgreSQL stops after
+logging a disk full error, with the `53100` SQLSTATE or `No space left on
+device`, the instance manager reads the filesystem of each volume, and treats
+the volumes with less than 64MiB, or less than 1% of their size, available, or
+with 1% of their inodes free or less, as full.
+
+In both cases the instance manager exits with code `4`, and writes the full
+volumes to the termination log of the container, `/dev/termination-log`, which
+the kubelet reports in `lastState.terminated.message`:
+
+```json
+{"reason":"DiskFull","volumes":["wal"]}
+```
+
+The volumes are named `pgdata`, `wal`, and `tbs-` followed by the name of the
+tablespace. The operator reads this message to grow the full volumes with
+[`autoGrow`](storage.md#the-full-disk-stop-of-an-instance), and does not
+trigger a failover for an instance that exited with code `4`.
+
 That allows the root cause to be addressed.
 
 In such a case, if supported by the storage class, the quickest course of action

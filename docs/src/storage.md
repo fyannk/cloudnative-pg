@@ -341,22 +341,32 @@ spec:
   of their current size, or a quantity such as `5Gi`.
 
 Each instance reports the space used on each of its volumes in its status,
-which the operator reads at least every 30 seconds. When the most used instance
-crosses the threshold, the operator grows the PVCs of
-that volume on every instance together, by one step, through the same path as a
-change of the size, and records a `Normal` event `VolumeAutoGrow`. It grows them
-again only once every PVC of the volume got the size of the previous step: a
-PVC whose expansion was refused, by a quota or by its `StorageClass`, still
-requests its old size and holds the next step back, so the other PVCs are not
-grown up to `maxSize` while it stays behind. An
-instance whose PostgreSQL stopped because the disk holding the WAL files is full
-counts as fully used for that volume, once per stop: the PostgreSQL container
-stays terminated, then not ready, until the kubelet restarts it, which can
-take minutes in `CrashLoopBackOff`. The operator records the stop it grew the
-volume for, by the time the container finished, in the
-`cnpg.io/autoGrowLastTermination` annotation of the PVC of the instance, and
-grows the volume again only for a new stop. A stop while the volume is already
-being grown is attributed to that growth.
+which the operator reads at least every 30 seconds. The operator grows a volume
+only on one of these signals:
+
+- **the usage reported while PostgreSQL is up**: the most used filesystem of
+  the volume, among the instances, crosses the threshold;
+- **an explicit full-disk stop**: the instance manager of an instance stopped
+  PostgreSQL, or saw it stop, because the volume is full, and named it when
+  exiting, as described below. The instance counts as fully used for that
+  volume, once per stop: the PostgreSQL container stays terminated, then not
+  ready, until the kubelet restarts it, which can take minutes in
+  `CrashLoopBackOff`. The operator records the stop it grew the volume for, by
+  the time the container finished, in the `cnpg.io/autoGrowLastTermination`
+  annotation of the PVC of the instance, and grows the volume again only for a
+  new stop. A stop while the volume is already being grown is attributed to
+  that growth.
+
+An instance that cannot report its usage for another reason, PostgreSQL
+failing to start or the instance manager unreachable, never grows a volume.
+
+On a signal, the operator grows the PVCs of that volume on every instance
+together, by one step, through the same path as a change of the size, and
+records a `Normal` event `VolumeAutoGrow`. It grows them again only once every
+PVC of the volume got the size of the previous step: a PVC whose expansion was
+refused, by a quota or by its `StorageClass`, still requests its old size and
+holds the next step back, so the other PVCs are not grown up to `maxSize` while
+it stays behind.
 
 The size in the `Cluster` is never changed: the PVCs are the record of the
 growth. A manifest kept in Git therefore stays in sync, and a `Cluster`
@@ -393,6 +403,35 @@ expansion, preferably online. It reads the filesystem of the volume as the
 instance sees it: with a provisioner backing the volumes with a directory of a
 shared filesystem, such as `local-path` or NFS, that filesystem is not the one
 of the PVC, and the operator does not grow the volume.
+
+#### The full-disk stop of an instance
+
+The instance manager exits with code `4` when PostgreSQL cannot run because a
+volume is full, and writes the full volumes in the termination message of the
+PostgreSQL container, `/dev/termination-log`, which the kubelet reports in
+`lastState.terminated.message` of the container status:
+
+```json
+{"reason":"DiskFull","volumes":["tbs-alpha"]}
+```
+
+The volumes are named `pgdata`, `wal`, and `tbs-` followed by the name of the
+tablespace. The instance manager does so:
+
+- before starting PostgreSQL, when the volume holding the WAL files has no room
+  left for a WAL segment: it names `wal`, or `pgdata` without a WAL volume;
+- when PostgreSQL stops after logging a disk full error, with the `53100`
+  (`disk_full`) SQLSTATE or `No space left on device`, for example a crash
+  recovery that cannot write to a full PGDATA or tablespace volume while the
+  WAL volume has room. It reads the filesystem of each volume and names those
+  with less than 64MiB, or less than 1% of their size, available, or with 1% of
+  their inodes free or less. When no volume is full, it exits as for any other
+  failure of PostgreSQL, and no volume is grown.
+
+An exit code `4` without such a message, written by an instance manager older
+than this feature, stands for the volume holding the WAL files. In every case,
+the operator does not fail over to another instance, as described in
+["Disk Full Failure"](instance_manager.md#disk-full-failure).
 
 ### Re-creating storage
 
