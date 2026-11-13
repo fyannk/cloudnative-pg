@@ -220,6 +220,12 @@ const (
 	// The status can be "initializing", "ready" or "detached"
 	PVCStatusAnnotationName = MetadataNamespace + "/pvcStatus"
 
+	// AutoGrowLastTerminationAnnotationName is the name of the annotation
+	// recording, on a PVC, the last termination of the PostgreSQL container of
+	// its instance for a full volume that autoGrow handled, by the time the
+	// container finished: each such termination grows the volume at most once
+	AutoGrowLastTerminationAnnotationName = MetadataNamespace + "/autoGrowLastTermination"
+
 	// LegacyBackupAnnotationName is the name of the annotation represents whether taking a backup without passing
 	// the name argument even on barman version 3.3.0+. The value can be "true" or "false"
 	LegacyBackupAnnotationName = MetadataNamespace + "/forceLegacyBackup"

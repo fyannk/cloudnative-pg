@@ -20,6 +20,8 @@ SPDX-License-Identifier: Apache-2.0
 package specs
 
 import (
+	"time"
+
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
@@ -157,5 +159,40 @@ var _ = Describe("Pod termination reason detection", func() {
 		}
 
 		Expect(IsWALSpaceAvailableOnPod(pod)).To(BeFalse())
+	})
+})
+
+var _ = Describe("GetMissingDiskSpaceTermination", func() {
+	finishedAt := metav1.NewTime(time.Date(2026, 11, 13, 10, 0, 0, 0, time.UTC))
+	full := corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{
+		ExitCode: apiv1.MissingWALDiskSpaceExitCode, FinishedAt: finishedAt,
+	}}
+	podWith := func(status corev1.ContainerStatus) *corev1.Pod {
+		status.Name = PostgresContainerName
+		return &corev1.Pod{Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{status}}}
+	}
+
+	It("returns the current termination for a lack of disk space", func() {
+		termination := GetMissingDiskSpaceTermination(podWith(corev1.ContainerStatus{State: full}))
+		Expect(termination).ToNot(BeNil())
+		Expect(termination.FinishedAt).To(Equal(finishedAt))
+	})
+
+	It("returns the last termination while the restarted container is not ready", func() {
+		pod := podWith(corev1.ContainerStatus{
+			State:                corev1.ContainerState{Running: &corev1.ContainerStateRunning{}},
+			LastTerminationState: full,
+		})
+		Expect(GetMissingDiskSpaceTermination(pod)).To(HaveField("FinishedAt", finishedAt))
+
+		pod.Status.ContainerStatuses[0].Ready = true
+		Expect(GetMissingDiskSpaceTermination(pod)).To(BeNil())
+	})
+
+	It("ignores the other terminations and the Pods without PostgreSQL", func() {
+		Expect(GetMissingDiskSpaceTermination(podWith(corev1.ContainerStatus{
+			State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 1}},
+		}))).To(BeNil())
+		Expect(GetMissingDiskSpaceTermination(&corev1.Pod{})).To(BeNil())
 	})
 })
