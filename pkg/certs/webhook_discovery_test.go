@@ -26,7 +26,9 @@ import (
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
@@ -162,11 +164,45 @@ var _ = Describe("Webhook certificate DNS names", func() {
 		Expect(pki.servicesSelectingDeployment(ctx, kubeClient, deployment)).To(BeEmpty())
 	})
 
-	It("skip the Services when they cannot be listed", func(ctx SpecContext) {
-		kubeClient := generateFakeClientWithListError(errors.New("services is forbidden"))
+	It("skip the Services when the operator is not allowed to list them", func(ctx SpecContext) {
+		kubeClient := generateFakeClientWithListError(
+			apierrors.NewForbidden(schema.GroupResource{Resource: "services"}, "", errors.New("denied")))
 		Expect(pki.servicesSelectingDeployment(ctx, kubeClient, deployment)).To(BeEmpty())
 		Expect(pki.webhookAltDNSNames(ctx, kubeClient, deployment)).To(HaveLen(2))
 	})
+
+	It("fail when the Services cannot be listed for another reason", func(ctx SpecContext) {
+		kubeClient := generateFakeClientWithListError(apierrors.NewTimeoutError("list services", 1))
+		names, err := pki.servicesSelectingDeployment(ctx, kubeClient, deployment)
+		Expect(err).To(HaveOccurred())
+		Expect(names).To(BeEmpty())
+
+		dnsNames, err := pki.webhookAltDNSNames(ctx, kubeClient, deployment)
+		Expect(err).To(MatchError(ContainSubstring("while listing the Services")))
+		Expect(dnsNames).To(HaveLen(2))
+	})
+
+	It("fail when a webhook configuration cannot be read for another reason than not found",
+		func(ctx SpecContext) {
+			kubeClient := fakeClientBuilder(controllerScheme.BuildWithAllKnownScheme()).
+				WithInterceptorFuncs(interceptor.Funcs{
+					Get: func(
+						ctx context.Context, c client.WithWatch, key client.ObjectKey,
+						obj client.Object, opts ...client.GetOption,
+					) error {
+						if _, ok := obj.(*admissionregistrationv1.ValidatingWebhookConfiguration); ok {
+							return apierrors.NewServiceUnavailable("etcd leader changed")
+						}
+						return c.Get(ctx, key, obj, opts...)
+					},
+				}).Build()
+
+			// The mutating configuration is not found, which is not an error
+			_, err := pki.servicesOfWebhookConfigurations(ctx, kubeClient)
+			Expect(err).To(MatchError(ContainSubstring("ValidatingWebhookConfiguration")))
+			_, err = pki.webhookAltDNSNames(ctx, kubeClient, deployment)
+			Expect(err).To(HaveOccurred())
+		})
 
 	It("add the Services the managed webhook configurations point at, in the operator namespace",
 		func(ctx SpecContext) {
@@ -294,6 +330,64 @@ var _ = Describe("Webhook certificate from the operator deployment", func() {
 		Expect(kubeClient.Delete(ctx, again)).To(Succeed())
 		_, err = pki.ensureCertificate(ctx, kubeClient, ca)
 		Expect(err).To(MatchError(ContainSubstring("OPERATOR_DEPLOYMENT_NAME")))
+	})
+
+	// A transient error of the discovery must not drop the discovered names
+	// from the certificate: the renewal is skipped for this round
+	It("keeps the certificate when the Services cannot be discovered, "+
+		"and does not create one", func(ctx SpecContext) {
+		pki := pkiEnvironmentTemplate
+		pki.CertDir = webhookCertDir
+		pki.OperatorDeploymentName = "cnpg-toto"
+		pki.ServiceName = "cnpg-toto-webhook-service"
+		pki.WebhookPort = 9443
+		pki.ManageWebhookConfigurations = false
+		podSelector := map[string]string{"app.kubernetes.io/name": "cnpg-toto"}
+
+		failing := false
+		kubeClient := fakeClientBuilder(controllerScheme.BuildWithAllKnownScheme()).
+			WithInterceptorFuncs(interceptor.Funcs{
+				List: func(
+					ctx context.Context, c client.WithWatch, list client.ObjectList, opts ...client.ListOption,
+				) error {
+					if _, ok := list.(*corev1.ServiceList); ok && failing {
+						return apierrors.NewTimeoutError("list services", 1)
+					}
+					return c.List(ctx, list, opts...)
+				},
+			}).Build()
+		Expect(kubeClient.Create(ctx, operatorDeploymentWithMount("toto-webhook-tls"))).To(Succeed())
+		Expect(kubeClient.Create(ctx, serviceSelecting("cnpg-toto-service", podSelector, intstr.FromInt32(9443)))).
+			To(Succeed())
+		ca, err := pki.ensureRootCACertificate(ctx, kubeClient)
+		Expect(err).ToNot(HaveOccurred())
+
+		By("refusing to create the certificate without the discovered names")
+		failing = true
+		_, err = pki.ensureCertificate(ctx, kubeClient, ca)
+		Expect(err).To(MatchError(ContainSubstring("while listing the Services")))
+		Expect(apierrors.IsNotFound(kubeClient.Get(ctx,
+			client.ObjectKey{Namespace: operatorNamespaceName, Name: "toto-webhook-tls"}, &corev1.Secret{}))).
+			To(BeTrue())
+
+		By("creating it once the discovery works")
+		failing = false
+		secret, err := pki.ensureCertificate(ctx, kubeClient, ca)
+		Expect(err).ToNot(HaveOccurred())
+
+		By("keeping it as it is when the discovery fails")
+		failing = true
+		kept, err := pki.ensureCertificate(ctx, kubeClient, ca)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(kept.Data).To(Equal(secret.Data))
+		stored := &corev1.Secret{}
+		Expect(kubeClient.Get(ctx, client.ObjectKeyFromObject(secret), stored)).To(Succeed())
+		Expect(stored.Data).To(Equal(secret.Data))
+		pair, err := ParseServerSecret(stored)
+		Expect(err).ToNot(HaveOccurred())
+		cert, err := pair.ParseCertificate()
+		Expect(err).ToNot(HaveOccurred())
+		Expect(cert.DNSNames).To(ContainElement("cnpg-toto-service." + operatorNamespaceName + ".svc"))
 	})
 })
 
