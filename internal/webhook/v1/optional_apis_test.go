@@ -269,7 +269,7 @@ var _ = Describe("Objects asking for an unavailable optional API", func() {
 			Expect((&ClusterCustomDefaulter{}).Default(ctx, cluster)).To(Succeed())
 			_, validationErr := (&ClusterCustomValidator{}).ValidateCreate(ctx, cluster)
 			Expect(validationErr).ToNot(HaveOccurred())
-			result, err := NewClusterAdmissionGuard().EnsureResourceIsAdmitted(ctx,
+			result, err := NewClusterAdmissionGuard(nil).EnsureResourceIsAdmitted(ctx,
 				guard.AdmissionParams[*apiv1.Cluster]{Object: cluster, ApplyChanges: false})
 			Expect(err).ToNot(HaveOccurred())
 			Expect(result.IsZero()).To(BeTrue(), "the guard requeues an invalid object")
