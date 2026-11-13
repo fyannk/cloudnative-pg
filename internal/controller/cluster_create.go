@@ -1225,6 +1225,7 @@ func (r *ClusterReconciler) createPrimaryInstance(
 	if !res.IsZero() || err != nil {
 		return res, err
 	}
+	r.warnAboutNodeStatus(cluster)
 
 	// Generate a new node serial
 	nodeSerial := r.generateNodeSerial(cluster)
@@ -1281,6 +1282,14 @@ func (r *ClusterReconciler) createPrimaryInstance(
 	}
 
 	return ctrl.Result{RequeueAfter: 30 * time.Second}, ErrNextLoop
+}
+
+func (r *ClusterReconciler) warnAboutNodeStatus(cluster *apiv1.Cluster) {
+	if r.nodeStatusSource != configuration.NodeStatusSourceNone || r.Recorder == nil {
+		return
+	}
+	r.Recorder.Event(cluster, corev1.EventTypeWarning, "NodeStatusUnavailable",
+		configuration.NodeStatusUnavailableMessage)
 }
 
 // isPrimaryPDBDisabledByNodeStatus reports whether the primary

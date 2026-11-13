@@ -331,7 +331,7 @@ var _ = Describe("The policy when no node state is read", func() {
 		Entry("an unknown value", "ignore", false),
 	)
 
-	DescribeTable("fail refuses to start only when no node state is read",
+	DescribeTable("fail refuses to start only when the Node API is not accessible",
 		func(source string, apiNode bool, policy string, refused bool) {
 			config := NewConfiguration()
 			config.NodeStatusSource = source
@@ -347,7 +347,8 @@ var _ = Describe("The policy when no node state is read", func() {
 			}
 		},
 		Entry("unset source, Node API not accessible", "", false, NodeStatusUnavailablePolicyFail, true),
-		Entry("explicit none", NodeStatusSourceNone, true, NodeStatusUnavailablePolicyFail, true),
+		Entry("explicit none", NodeStatusSourceNone, true, NodeStatusUnavailablePolicyFail, false),
+		Entry("explicit none without the Node API", NodeStatusSourceNone, false, NodeStatusUnavailablePolicyFail, false),
 		Entry("unset source, Node API read", "", true, NodeStatusUnavailablePolicyFail, false),
 		Entry("pods source without the Node API", NodeStatusSourcePods, false, NodeStatusUnavailablePolicyFail, false),
 		Entry("keepPDB without the Node API", "", false, NodeStatusUnavailablePolicyKeepPDB, false),
