@@ -104,4 +104,45 @@ var _ = Describe("volume usage", func() {
 			Volume: "pgdata", TotalBytes: 409600, AvailableBytes: 409600,
 		}))
 	})
+
+	It("names the volume holding the WAL files", func() {
+		Expect(GetWALVolumeName(paths)).To(Equal("pgdata"))
+		Expect(os.Mkdir(paths.WalVolume, 0o700)).To(Succeed())
+		Expect(GetWALVolumeName(paths)).To(Equal("wal"))
+	})
+})
+
+var _ = Describe("full volumes", func() {
+	const mebibyte = uint64(1024 * 1024)
+
+	usage := func(volume string, totalMiB, availableMiB uint64) postgres.VolumeUsage {
+		return postgres.VolumeUsage{
+			Volume:         volume,
+			TotalBytes:     totalMiB * mebibyte,
+			AvailableBytes: availableMiB * mebibyte,
+		}
+	}
+
+	It("is below 64MiB or 1% of the volume available, or below 1% of the inodes free", func() {
+		Expect(IsFull(usage("pgdata", 1024, 63))).To(BeTrue())
+		Expect(IsFull(usage("pgdata", 1024, 65))).To(BeFalse())
+		// 1% of 100GiB is 1GiB
+		Expect(IsFull(usage("pgdata", 100*1024, 1000))).To(BeTrue())
+		Expect(IsFull(usage("pgdata", 100*1024, 1100))).To(BeFalse())
+
+		noInodes := usage("pgdata", 1024, 512)
+		noInodes.Inodes, noInodes.InodesFree = 1000, 10
+		Expect(IsFull(noInodes)).To(BeTrue())
+		noInodes.InodesFree = 11
+		Expect(IsFull(noInodes)).To(BeFalse())
+	})
+
+	It("names the full volumes", func() {
+		Expect(GetFullVolumes([]postgres.VolumeUsage{
+			usage("pgdata", 1024, 512),
+			usage("wal", 1024, 512),
+			usage("tbs-alpha", 1024, 0),
+		})).To(Equal([]string{"tbs-alpha"}))
+		Expect(GetFullVolumes([]postgres.VolumeUsage{usage("pgdata", 1024, 512)})).To(BeEmpty())
+	})
 })

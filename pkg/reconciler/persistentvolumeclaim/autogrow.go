@@ -261,22 +261,47 @@ func isUsageOfVolume(usage postgres.VolumeUsage, pvc *corev1.PersistentVolumeCla
 	return total >= capacity.AsApproximateFloat64()/2 && total <= capacity.AsApproximateFloat64()*1.1
 }
 
-// getTerminationID returns the identity of a termination of the PostgreSQL
-// container of an instance for a full volume, and whether there is one
-func getTerminationID(pod *corev1.Pod) (string, bool) {
+// diskFullTermination is a termination of the PostgreSQL container of an
+// instance for a lack of disk space
+type diskFullTermination struct {
+	// id identifies the termination, as the time the container finished
+	id string
+	// volumes are the full volumes named by the termination message of the
+	// instance manager, nil when it named none
+	volumes []string
+}
+
+// getDiskFullTermination returns the termination of the PostgreSQL container
+// of an instance for a lack of disk space, nil when there is none
+func getDiskFullTermination(pod *corev1.Pod) *diskFullTermination {
 	termination := specs.GetMissingDiskSpaceTermination(pod)
 	if termination == nil {
-		return "", false
+		return nil
 	}
-	return termination.FinishedAt.UTC().Format(time.RFC3339), true
+	return &diskFullTermination{
+		id:      termination.FinishedAt.UTC().Format(time.RFC3339),
+		volumes: postgres.GetDiskFullVolumes(termination.Message),
+	}
+}
+
+// isAbout tells whether the termination is for a full volume: one of the
+// volumes named by the instance manager or, when it named none as an older
+// instance manager does, the volume holding the WAL files
+func (termination *diskFullTermination) isAbout(cluster *apiv1.Cluster, group pvcGroup) bool {
+	if len(termination.volumes) == 0 {
+		return group.holdsWAL(cluster)
+	}
+	return slices.Contains(termination.volumes, group.volumeName())
 }
 
 // getVolumeState returns the most used filesystem of a volume among the
 // instances, and the instance reporting it. An instance whose PostgreSQL
-// stopped because the volume holding the WAL files is full counts as 100%
-// used for that volume, as it cannot report its usage anymore, once per
-// termination: a termination recorded on the PVC of the instance was handled
-// already, and only the usage the instance reports counts.
+// stopped because the volume is full counts as 100% used for that volume, as
+// it cannot report its usage anymore, once per termination: a termination
+// recorded on the PVC of the instance was handled already, and only the usage
+// the instance reports counts. The instance manager names the full volumes in
+// the termination message, and an older one, naming none, stops only for the
+// volume holding the WAL files.
 func getVolumeState(
 	cluster *apiv1.Cluster,
 	group pvcGroup,
@@ -298,10 +323,11 @@ func getVolumeState(
 			continue
 		}
 
-		if id, ok := getTerminationID(status.Pod); ok && group.holdsWAL(cluster) &&
-			pvc.Annotations[utils.AutoGrowLastTerminationAnnotationName] != id {
+		if termination := getDiskFullTermination(status.Pod); termination != nil &&
+			termination.isAbout(cluster, group) &&
+			pvc.Annotations[utils.AutoGrowLastTerminationAnnotationName] != termination.id {
 			state.terminations = append(state.terminations, autoGrowTermination{
-				group: group, pvcName: pvc.Name, finishedAt: id,
+				group: group, pvcName: pvc.Name, finishedAt: termination.id,
 			})
 			if !state.diskFull {
 				state.usedPercent, state.instance, state.diskFull = 100, status.Pod.Name, true

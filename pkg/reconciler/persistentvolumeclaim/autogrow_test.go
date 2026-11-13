@@ -393,6 +393,53 @@ var _ = Describe("autoGrow plan", func() {
 		}))
 	})
 
+	It("grows only the volumes named full by the instance manager", func() {
+		cluster.Spec.WalStorage = &apiv1.StorageConfiguration{
+			Size:     "2Gi",
+			AutoGrow: &apiv1.AutoGrowConfiguration{MaxSize: "4Gi", Step: "1Gi"},
+		}
+		cluster.Spec.Tablespaces = []apiv1.TablespaceConfiguration{{
+			Name: "alpha",
+			Storage: apiv1.StorageConfiguration{
+				Size:     "5Gi",
+				AutoGrow: &apiv1.AutoGrowConfiguration{MaxSize: "50Gi", Step: "5Gi"},
+			},
+		}}
+		pvcs := append(dataPVCs("10Gi"),
+			autoGrowPVC("1", NewPgWalCalculator(), "2Gi", "2Gi"),
+			autoGrowPVC("1", NewPgTablespaceCalculator("alpha"), "5Gi", "5Gi"),
+		)
+		withMessage := func(message string) postgres.PostgresqlStatus {
+			status := outOfWALSpace()
+			status.Pod.Status.ContainerStatuses[0].LastTerminationState.Terminated.Message = message
+			return status
+		}
+
+		// the recovery of PostgreSQL fails on the full tablespace
+		plan, err := planAutoGrow(cluster, pvcs, instancesReporting(
+			withMessage(`{"reason":"DiskFull","volumes":["tbs-alpha"]}`)))
+		Expect(err).ToNot(HaveOccurred())
+		Expect(sizesOf(plan)).To(Equal(map[pvcGroup]string{pgData: "10Gi", wal: "2Gi", tablespace: "10Gi"}))
+		Expect(plan.steps).To(HaveLen(1))
+		Expect(plan.steps[0].diskFull).To(BeTrue())
+		Expect(plan.terminations).To(ConsistOf(autoGrowTermination{
+			group: tablespace, pvcName: autoGrowCluster + "-1-tbs-alpha", finishedAt: crashID,
+		}))
+
+		// PGDATA and the tablespace are full
+		plan, err = planAutoGrow(cluster, pvcs, instancesReporting(
+			withMessage(`{"reason":"DiskFull","volumes":["pgdata","tbs-alpha"]}`)))
+		Expect(err).ToNot(HaveOccurred())
+		Expect(sizesOf(plan)).To(Equal(map[pvcGroup]string{pgData: "12Gi", wal: "2Gi", tablespace: "10Gi"}))
+
+		// an older instance manager names no volume: the WAL volume is full
+		for _, message := range []string{"", "not a termination message"} {
+			plan, err = planAutoGrow(cluster, pvcs, instancesReporting(withMessage(message)))
+			Expect(err).ToNot(HaveOccurred())
+			Expect(sizesOf(plan)).To(Equal(map[pvcGroup]string{pgData: "10Gi", wal: "3Gi", tablespace: "5Gi"}))
+		}
+	})
+
 	It("attributes a termination for a full volume to the expansion in progress", func() {
 		pvcs := dataPVCs("12Gi")
 		pvcs[0].Status.Capacity[corev1.ResourceStorage] = quantity("10Gi")

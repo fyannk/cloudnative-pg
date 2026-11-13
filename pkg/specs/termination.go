@@ -26,7 +26,8 @@ import (
 )
 
 // IsWALSpaceAvailableOnPod checks that the PostgreSQL container of a Pod did
-// not terminate because it has no disk space for WALs
+// not terminate because it has no disk space for WALs, or because another
+// volume is full, see GetMissingDiskSpaceTermination
 func IsWALSpaceAvailableOnPod(pod *corev1.Pod) bool {
 	// Return true if WAL space IS available (i.e., NOT terminated for missing disk space)
 	return GetMissingDiskSpaceTermination(pod) == nil
