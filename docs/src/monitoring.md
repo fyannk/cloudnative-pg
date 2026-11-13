@@ -1080,6 +1080,15 @@ cnpg_operator_config_info{name="WATCH_NAMESPACE",value="tenant-a,tenant-b"} 1
 cnpg_operator_config_info{name="PULL_SECRET_NAME",value="<redacted>"} 1
 ```
 
+A fourth family tells whether the operator runs without node state (see
+["Running without node state"](operator_conf.md#running-without-node-state)):
+
+- `cnpg_operator_node_status_unavailable{policy}`: `1` when
+  `NODE_STATUS_SOURCE` resolved to `none` at startup, `0` otherwise, with
+  `NODE_STATUS_UNAVAILABLE_POLICY` in the `policy` label. The same facts are
+  in `cnpg_operator_config_info`, under `NODE_STATUS_SOURCE` and
+  `NODE_STATUS_UNAVAILABLE_POLICY`: this gauge is the one to alert on.
+
 ```text
 # HELP cnpg_operator_build_info Build of the running operator
 # TYPE cnpg_operator_build_info gauge

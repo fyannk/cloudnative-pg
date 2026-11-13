@@ -48,6 +48,7 @@ var _ = Describe("The operator configuration metrics", func() {
 		Expect(series).To(HaveKeyWithValue(setting("API_NODE_ENABLED", "false"), 1.0))
 		Expect(series).To(HaveKeyWithValue(setting("API_POD_MONITOR_ENABLED", "true"), 1.0))
 		Expect(series).To(HaveKeyWithValue(setting("STANDBY_TCP_USER_TIMEOUT", ""), 1.0))
+		Expect(series).To(HaveKeyWithValue(setting("NODE_STATUS_UNAVAILABLE_POLICY", "keepPDB"), 1.0))
 		Expect(series).To(HaveKeyWithValue(setting("PULL_SECRET_NAME", "<redacted>"), 1.0))
 		Expect(series).ToNot(HaveKey(ContainSubstring("registry-token")))
 	})

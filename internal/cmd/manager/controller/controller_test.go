@@ -134,6 +134,30 @@ var _ = Describe("Operator status identity", func() {
 	})
 })
 
+// NODE_STATUS_UNAVAILABLE_POLICY: an unknown value stops the start when the
+// configuration is loaded, fail stops it once the Node API is found missing
+var _ = Describe("The policy when no node state is read", func() {
+	It("refuses an unknown policy when the configuration is loaded", func() {
+		conf := configuration.NewConfiguration()
+		conf.NodeStatusUnavailablePolicy = "ignore"
+		Expect(checkLoadedConfiguration(conf)).To(MatchError(ContainSubstring("NODE_STATUS_UNAVAILABLE_POLICY")))
+	})
+
+	It("refuses to start with fail when the Node API is not accessible", func() {
+		conf := configuration.NewConfiguration()
+		conf.APINodeEnabled = false
+		conf.NodeStatusUnavailablePolicy = configuration.NodeStatusUnavailablePolicyFail
+		Expect(resolveNodeStatusSource(conf)).To(MatchError(ContainSubstring("NODE_STATUS_UNAVAILABLE_POLICY=fail")))
+	})
+
+	It("runs in degraded mode with the default policy", func() {
+		conf := configuration.NewConfiguration()
+		conf.APINodeEnabled = false
+		Expect(resolveNodeStatusSource(conf)).To(Succeed())
+		Expect(conf.ReadsNoNodeStatus()).To(BeTrue())
+	})
+})
+
 // Reading the configuration ConfigMap sets every field again from the
 // environment, the data or the defaults: without OPERATOR_NAMESPACE, it
 // dropped the namespace found from the service account

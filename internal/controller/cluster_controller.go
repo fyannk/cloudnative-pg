@@ -111,6 +111,9 @@ type ClusterReconciler struct {
 	nodeStatus       utils.NodeStatusReader
 	rolloutManager   *rolloutManager.Manager
 	admission        *guard.Admission[*apiv1.Cluster]
+
+	// nodeStatusUnavailablePolicy is applied when nodeStatusSource is none
+	nodeStatusUnavailablePolicy string
 }
 
 // NewClusterReconciler creates a new ClusterReconciler initializing it
@@ -140,7 +143,8 @@ func NewClusterReconciler(
 			LabelPrefix:    configuration.Current.NodeStatusLabelPrefix,
 			EvictionMaxAge: configuration.Current.GetNodeStatusEvictionMaxAge(),
 		},
-		admission: admission,
+		nodeStatusUnavailablePolicy: configuration.Current.GetNodeStatusUnavailablePolicy(),
+		admission:                   admission,
 	}
 }
 
