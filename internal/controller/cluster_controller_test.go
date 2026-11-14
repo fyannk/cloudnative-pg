@@ -1676,4 +1676,43 @@ var _ = Describe("ensureNoFailoverOnFullDisk", func() {
 			Expect(stored.Spec.Resources.Requests.Storage().String()).To(Equal("2G"))
 		}
 	})
+
+	// The Job creating a replica can run for hours: the volumes of the
+	// running instances keep filling meanwhile
+	DescribeTable("resizes the PVCs while an instance Job is running, with autoGrow only",
+		func(ctx SpecContext, autoGrow *apiv1.AutoGrowConfiguration, resized bool) {
+			env := buildTestEnvironment()
+			namespace := newFakeNamespace(env.client)
+			cluster := newFakeCNPGCluster(env.client, namespace)
+			pvcs := generateClusterPVC(env.client, cluster, persistentvolumeclaim.StatusReady)
+			previous := pvcs[0].Spec.Resources.Requests.Storage().String()
+			cluster.Spec.StorageConfiguration.Size = "2G"
+			cluster.Spec.StorageConfiguration.AutoGrow = autoGrow
+
+			resources := &managedResources{
+				pvcs: corev1.PersistentVolumeClaimList{Items: pvcs},
+				jobs: batchv1.JobList{Items: []batchv1.Job{{
+					ObjectMeta: metav1.ObjectMeta{Name: cluster.Name + "-2-join", Namespace: namespace},
+					Status:     batchv1.JobStatus{Active: 1},
+				}}},
+			}
+
+			res, err := env.clusterReconciler.reconcileResources(ctx, cluster, resources, postgres.PostgresqlStatusList{})
+			Expect(err).ToNot(HaveOccurred())
+			Expect(res.RequeueAfter).To(BeNumerically(">", 0))
+
+			expected := previous
+			if resized {
+				expected = "2G"
+			}
+			for _, pvc := range pvcs {
+				var stored corev1.PersistentVolumeClaim
+				Expect(env.client.Get(ctx, types.NamespacedName{Name: pvc.Name, Namespace: namespace}, &stored)).
+					To(Succeed())
+				Expect(stored.Spec.Resources.Requests.Storage().String()).To(Equal(expected))
+			}
+		},
+		Entry("with autoGrow", &apiv1.AutoGrowConfiguration{MaxSize: "10G"}, true),
+		Entry("without autoGrow, as upstream", nil, false),
+	)
 })

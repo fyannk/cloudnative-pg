@@ -889,6 +889,23 @@ func (r *ClusterReconciler) registerFailedInstanceJobs(
 	return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 }
 
+// growVolumesDuringInstanceJob keeps autoGrow going while a Job creates an
+// instance: creating a replica can take hours, during which the volumes of
+// the running instances keep filling
+func (r *ClusterReconciler) growVolumesDuringInstanceJob(
+	ctx context.Context,
+	cluster *apiv1.Cluster,
+	resources *managedResources,
+	instancesStatus postgres.PostgresqlStatusList,
+) error {
+	if !persistentvolumeclaim.HasAutoGrow(cluster) {
+		return nil
+	}
+	_, err := persistentvolumeclaim.ReconcileExisting(
+		ctx, r.Client, r.Recorder, cluster, resources.pvcs.Items, instancesStatus)
+	return err
+}
+
 // reconcileResources updates all the objects managed by the controller
 func (r *ClusterReconciler) reconcileResources(
 	ctx context.Context, cluster *apiv1.Cluster,
@@ -927,6 +944,9 @@ func (r *ClusterReconciler) reconcileResources(
 	// Act on Pods and PVCs only if there is nothing that is currently being created or deleted
 
 	if len(runningJobs) > 0 {
+		if err := r.growVolumesDuringInstanceJob(ctx, cluster, resources, instancesStatus); err != nil {
+			return ctrl.Result{}, err
+		}
 		contextLogger.Debug("A job is currently running. Waiting", "runningJobs", runningJobs)
 		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 	}
