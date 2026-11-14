@@ -171,6 +171,7 @@ func RunController(
 	logOperatorNamespace(conf.DiscoverOperatorNamespace(configuration.ServiceAccountNamespaceFile), conf)
 
 	if err := validateOperatorIdentity(conf); err != nil {
+		setupLog.Error(err, "invalid operator identity")
 		return err
 	}
 
