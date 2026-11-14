@@ -216,6 +216,12 @@ that did not set it never do: once such a Job has completed and its instance
 is running, delete it or add the label by hand
 (`kubectl label job <name> cnpg.io/reconcile=true`).
 
+The same holds for the objects that come from elsewhere while a filtered
+mode is on. A PVC restored by a backup tool without the label is not adopted
+by its Cluster, and a `VolumeSnapshot` taken before the label existed is not
+counted in the first recoverability point of the Cluster: add the label to
+them (`kubectl label pvc,volumesnapshot <name> cnpg.io/reconcile=true`).
+
 With a filtered mode, the Pods matched by `podSelectorRefs` must carry the
 `cnpg.io/reconcile=true` label, typically from the pod template of the
 application, to be seen by the operator; unlabeled Pods resolve to nothing,
