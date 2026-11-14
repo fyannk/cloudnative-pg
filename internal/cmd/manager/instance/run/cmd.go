@@ -26,6 +26,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"syscall"
 
 	"github.com/cloudnative-pg/machinery/pkg/log"
 	"github.com/spf13/cobra"
@@ -125,10 +126,18 @@ func NewCmd() *cobra.Command {
 				return runSubCommand(ctx, instance, pprofHTTPServer, skipNameValidation)
 			})
 
+			// Whatever the reason of the exit, the volumes nothing can be
+			// written to anymore are named for autoGrow: an instance that
+			// keeps failing on a full volume reports its usage no other way.
+			// Only a full WAL volume changes the exit code, and holds the
+			// failover back
+			fullVolumes := getVolumesWithoutSpace(ctx, volumeusage.DefaultPaths, syscall.Statfs)
 			if errors.Is(err, postgres.ErrNoFreeWALSpace) {
-				writeDiskFullTerminationMessage(ctx, volumeusage.GetWALVolumeName(volumeusage.DefaultPaths))
+				fullVolumes = append(fullVolumes, volumeusage.GetWALVolumeName(volumeusage.DefaultPaths))
+				writeDiskFullTerminationMessage(ctx, fullVolumes...)
 				os.Exit(apiv1.MissingWALDiskSpaceExitCode)
 			}
+			writeDiskFullTerminationMessage(ctx, fullVolumes...)
 			if errors.Is(err, errWALArchivePluginNotAvailable) {
 				os.Exit(apiv1.MissingWALArchivePlugin)
 			}
