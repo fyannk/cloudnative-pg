@@ -321,6 +321,12 @@ doesn't support that, you must delete the pod to trigger the resize.
 The best way to proceed is to delete one pod at a time, starting from replicas
 and waiting for each pod to be back up.
 
+The operator tells when this is needed: when the filesystem of a resized volume
+still waits for its resize after two minutes, the `Cluster` gets the
+`VolumeResizePending` condition and a `Warning` event naming the instances to
+restart. The operator does not restart them itself. The condition turns
+`False` once no volume waits anymore.
+
 For a volume with [`autoGrow`](#growing-the-volumes-automatically), a PVC
 created for a new or re-created instance gets the largest size among the
 existing PVCs of its volume, when it is above the size of the `Cluster`: a
@@ -450,7 +456,8 @@ described in ["Disk Full Failure"](instance_manager.md#disk-full-failure).
 
 - A resize that stalls in the storage backend leaves `autoGrow` waiting, with
   no condition on the `Cluster`: the PVC keeps requesting more than its
-  capacity, and no step is taken until it gets it. Some backends limit the
+  capacity, and no step is taken until it gets it. A resize waiting for a
+  restart of the Pod is reported by the `VolumeResizePending` condition. Some backends limit the
   number of modifications of a volume, such as AWS EBS, which accepts one
   modification every six hours.
 - An instance manager older than `autoGrow` reports no usage of its volumes:

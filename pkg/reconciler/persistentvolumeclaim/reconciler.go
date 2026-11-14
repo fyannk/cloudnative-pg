@@ -84,6 +84,10 @@ func ReconcileExisting(
 		return ctrl.Result{}, err
 	}
 
+	if err := reportPendingFileSystemResize(ctx, c, recorder, cluster, pvcs); err != nil {
+		return ctrl.Result{}, err
+	}
+
 	if err := recordAutoGrowTerminations(ctx, c, pvcs, plan.terminations, refusals); err != nil {
 		return ctrl.Result{}, err
 	}

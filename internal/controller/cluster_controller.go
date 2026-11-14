@@ -609,6 +609,11 @@ func (r *ClusterReconciler) reconcile(ctx context.Context, cluster *apiv1.Cluste
 		// would retry it
 		return ctrl.Result{RequeueAfter: persistentvolumeclaim.VolumeExpansionRetryInterval}, nil
 	}
+	if err == nil && final.IsZero() && persistentvolumeclaim.IsFileSystemResizeAwaited(resources.pvcs.Items) {
+		// a filesystem still waiting after the grace period means a Pod
+		// to restart, which nothing else would tell
+		return ctrl.Result{RequeueAfter: persistentvolumeclaim.FileSystemResizeGracePeriod}, nil
+	}
 	if err == nil && final.IsZero() && persistentvolumeclaim.HasAutoGrow(cluster) {
 		// a volume filling up changes nothing the operator watches
 		return ctrl.Result{RequeueAfter: persistentvolumeclaim.AutoGrowCheckInterval}, nil
