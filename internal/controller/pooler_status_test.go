@@ -326,7 +326,7 @@ var _ = Describe("pooler phase from its Deployment", func() {
 				Message: "pods \"pooler-rw-679866557-48wkx\" is forbidden: exceeded quota: pods-cap",
 			},
 		}
-		Expect(env.poolerReconciler.updatePoolerPhaseFromDeployment(ctx, pooler, resources)).To(Succeed())
+		Expect(env.poolerReconciler.updatePoolerStatus(ctx, pooler, resources)).To(Succeed())
 		Expect(pooler.Status.Phase).To(Equal(apiv1.PoolerPhaseInactive))
 		Expect(pooler.Status.PhaseReason).To(Equal("Deployment " + resources.Deployment.Name +
 			": FailedCreate: pods \"pooler-rw-679866557-48wkx\" is forbidden: exceeded quota: pods-cap"))
@@ -334,6 +334,19 @@ var _ = Describe("pooler phase from its Deployment", func() {
 		var stored apiv1.Pooler
 		Expect(env.client.Get(ctx, client.ObjectKeyFromObject(pooler), &stored)).To(Succeed())
 		Expect(stored.Status.Phase).To(Equal(apiv1.PoolerPhaseInactive))
+
+		By("not writing the status again while the Deployment stays blocked")
+		Expect(env.poolerReconciler.updatePoolerStatus(ctx, pooler, resources)).To(Succeed())
+		var again apiv1.Pooler
+		Expect(env.client.Get(ctx, client.ObjectKeyFromObject(pooler), &again)).To(Succeed())
+		Expect(again.ResourceVersion).To(Equal(stored.ResourceVersion))
+		Expect(again.Status.Phase).To(Equal(apiv1.PoolerPhaseInactive))
+
+		By("turning active again once the Deployment recovers")
+		resources.Deployment.Status.Conditions = nil
+		Expect(env.poolerReconciler.updatePoolerStatus(ctx, pooler, resources)).To(Succeed())
+		Expect(pooler.Status.Phase).To(Equal(apiv1.PoolerPhaseActive))
+		Expect(pooler.Status.PhaseReason).To(BeEmpty())
 	})
 
 	It("stays active during a rollout that is still progressing", func(ctx SpecContext) {
@@ -341,7 +354,7 @@ var _ = Describe("pooler phase from its Deployment", func() {
 			{Type: appsv1.DeploymentAvailable, Status: corev1.ConditionFalse, Reason: "MinimumReplicasUnavailable"},
 			{Type: appsv1.DeploymentProgressing, Status: corev1.ConditionTrue, Reason: "ReplicaSetUpdated"},
 		}
-		Expect(env.poolerReconciler.updatePoolerPhaseFromDeployment(ctx, pooler, resources)).To(Succeed())
+		Expect(env.poolerReconciler.updatePoolerStatus(ctx, pooler, resources)).To(Succeed())
 		Expect(pooler.Status.Phase).To(Equal(apiv1.PoolerPhaseActive))
 		Expect(pooler.Status.PhaseReason).To(BeEmpty())
 	})
