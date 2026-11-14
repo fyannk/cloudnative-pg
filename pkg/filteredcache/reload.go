@@ -46,7 +46,7 @@ import (
 )
 
 // ReloadWatch is a metadata-only cache of the Secrets and ConfigMaps that
-// carry cnpg.io/reload=true without the cache label: the user objects the
+// carry the cnpg.io/reload label without the cache label: the user objects the
 // operator must notice changes of, held as a few hundred bytes each. The
 // controllers watch it with the predicates and mappers they use on the
 // full objects, through a typed stub carrying the metadata.
@@ -62,9 +62,10 @@ type ReloadWatchConfig struct {
 	Mapper     meta.RESTMapper
 }
 
-// reloadSelector selects the user objects to watch
+// reloadSelector selects the user objects to watch: the ones carrying the
+// reload label, whatever its value, as the predicates of the controllers do
 func reloadSelector() (labels.Selector, error) {
-	reload, err := labels.NewRequirement(utils.WatchedLabelName, selection.Equals, []string{"true"})
+	reload, err := labels.NewRequirement(utils.WatchedLabelName, selection.Exists, nil)
 	if err != nil {
 		return nil, err
 	}

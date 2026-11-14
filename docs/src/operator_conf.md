@@ -82,7 +82,7 @@ Name | Description
 `OPERATOR_STATUS_IDENTITY` | How much the operator says about itself in the `status.operator` block of the Clusters it reconciles: `off` nothing, `version` (the default) its version, `name` its version and its Deployment name, `full` its version, its Deployment name and its namespace. With `name` and `full`, the Deployment name is also the field manager of every write of the operator, visible in the `managedFields` of every object it creates or updates. It must be a Pod environment variable, the field manager is fixed before the operator configuration objects are read. See [Several operators in one namespace](#several-operators-in-one-namespace).
 `PGBOUNCER_IMAGE_NAME` | The name of the PgBouncer image used by default for new poolers. Defaults to the version specified in the operator.
 `POSTGRES_IMAGE_NAME` | The name of the PostgreSQL image used by default for new clusters. Defaults to the version specified in the operator.
-`FILTERED_CACHE_MODE` | Restricts the operator cache to the objects it manages, the ones carrying the `cnpg.io/reconcile=true` label. `off` (the default) caches every object of the watched kinds; `strict` caches only the managed objects and reads the others from the API server when a reconciliation needs them; `reload` is `strict` plus a metadata-only watch on the Secrets and ConfigMaps carrying `cnpg.io/reload=true`, so that changing them still triggers a reconciliation. See [Operator cache](#operator-cache).
+`FILTERED_CACHE_MODE` | Restricts the operator cache to the objects it manages, the ones carrying the `cnpg.io/reconcile=true` label. `off` (the default) caches every object of the watched kinds; `strict` caches only the managed objects and reads the others from the API server when a reconciliation needs them; `reload` is `strict` plus a metadata-only watch on the Secrets and ConfigMaps carrying the `cnpg.io/reload` label (whatever its value), so that changing them still triggers a reconciliation. See [Operator cache](#operator-cache).
 `PROPAGATE_PROXY_ENV` | When set to `true` (default), the proxy settings of the operator (`HTTP_PROXY`, `HTTPS_PROXY` and `NO_PROXY`, read from its environment) are set on the PostgreSQL instances, bootstrap included, on the major upgrade jobs and on the PgBouncer poolers, unless the `Cluster` or the `Pooler` defines any of them. Set to `false` to keep the proxy settings to the operator. See [Proxy settings](#proxy-settings).
 `PULL_SECRET_NAME` | Name of an additional pull secret to be defined in the operator's namespace and to be used to download images
 `SCHEDULED_BACKUP_CRON_FORMAT` | How the `schedule` of a `ScheduledBackup` is read when it has five fields, the standard cron format, instead of the six fields with seconds described in [Backup](backup.md#cron-schedule). `seconds` (default): the five fields are read with the seconds field first, with an admission warning and a `ScheduleFieldCount` Warning event on the object. `seconds-strict`: a five-field schedule is rejected when the `ScheduledBackup` is created, with its six-field equivalent in the message; existing objects can still be updated. `standard`: the five fields are read as standard cron, with the minute field first. Six-field schedules and descriptors such as `@daily` are read the same way whatever the value.
@@ -150,9 +150,10 @@ operator sets on everything it creates:
   the next reconciliation. Label such objects with `cnpg.io/reconcile=true`
   to cache them;
 - `reload` is `strict` plus a metadata-only watch on the Secrets and
-  ConfigMaps carrying `cnpg.io/reload=true` without the cache label, so that
-  changing them triggers a reconciliation exactly as in `off` mode. The
-  metadata of each such object costs a few hundred bytes, whatever its size.
+  ConfigMaps carrying the `cnpg.io/reload` label, whatever its value,
+  without the cache label, so that changing them triggers a reconciliation
+  exactly as in `off` mode. The metadata of each such object costs a few
+  hundred bytes, whatever its size.
 
 For an object referenced by a `Cluster` without the `cnpg.io/reconcile=true`
 label, such as a Secret holding a certificate:
@@ -160,11 +161,11 @@ label, such as a Secret holding a certificate:
 | | `off` | `strict` | `reload` |
 |---|---|---|---|
 | Read | from the cache | from the API server, at each read | from the API server, at each read |
-| Change, object labeled `cnpg.io/reload=true` | reconciliation | next reconciliation | reconciliation |
+| Change, object labeled `cnpg.io/reload` | reconciliation | next reconciliation | reconciliation |
 | Change, object without `cnpg.io/reload` | next reconciliation | next reconciliation | next reconciliation |
 
 With the `cnpg.io/reconcile=true` label, the object is read from the cache
-in every mode, and, labeled `cnpg.io/reload=true` too, its changes trigger a
+in every mode, and, labeled `cnpg.io/reload` too, its changes trigger a
 reconciliation in every mode.
 
 In the operator namespace, Secrets, ConfigMaps and Services are always
