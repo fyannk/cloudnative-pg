@@ -53,9 +53,10 @@ from upstream, starting with what changes without any new setting.
   annotation, except for the decrease of a storage size, which stays with
   the webhook as upstream;
   see [Defaulting and validation without admission webhooks](operator_conf.md#defaulting-and-validation-without-admission-webhooks).
-- The `Cluster` CRD limits the length of some fields: 1024 characters for
-  `imageName`, 63 for a tablespace name and for the replication slot prefix,
-  64 for a storage `size`, and 64 tablespaces per cluster.
+- The `Cluster` CRD accepts at most 64 tablespaces per cluster, and 63
+  characters for a tablespace name, the limit of a PostgreSQL identifier: the
+  API server requires these bounds to evaluate the rule refusing the removal
+  of a tablespace.
 - A validating webhook, `vclusterscale.cnpg.io`, checks the writes of the
   `scale` subresource: a `Cluster` holding an invalid field cannot be scaled
   with `kubectl scale` until it is fixed.
