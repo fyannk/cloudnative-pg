@@ -404,9 +404,8 @@ spec:
 
 A cluster accepts the following targets:
 
-- `pgPods`: the PostgreSQL instance pods, from their creation: the
-  initialization, join, or recovery of an instance runs in an init container
-  of its pod.
+- `pgPods`: the PostgreSQL instance pods, and the pods of the jobs that
+  initialize, join, or recover an instance.
 - `majorUpgradePods`: the pods of the major upgrade job.
 - `allPods`: both kinds of pods.
 - `services`: the default services (`-rw`, `-ro`, `-r`, and `-any`). The

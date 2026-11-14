@@ -1436,13 +1436,29 @@ func (cluster *Cluster) GetClusterLabelsFor(target metadatarules.Target) map[str
 // default and the mandatory metadata of the operator. The instance Pods also
 // get the monitoring discovery annotations, over everything else
 func (cluster *Cluster) GetInheritedAnnotationsFor(target metadatarules.Target) map[string]string {
-	annotations := configuration.Current.MetadataLayers(metadatarules.ClusterResource, cluster.GetMetadataRules()).
-		Annotations(target, cluster.getInheritedAnnotations())
+	annotations := cluster.getRuledAnnotationsFor(target)
 	if target == metadatarules.PgPods {
 		maps.Copy(annotations, cluster.GetMonitoringDiscoveryAnnotations())
 	}
 
 	return annotations
+}
+
+// getRuledAnnotationsFor gets the annotations of a kind of object, without
+// the monitoring discovery annotations
+func (cluster *Cluster) getRuledAnnotationsFor(target metadatarules.Target) map[string]string {
+	return configuration.Current.MetadataLayers(metadatarules.ClusterResource, cluster.GetMetadataRules()).
+		Annotations(target, cluster.getInheritedAnnotations())
+}
+
+// SetInheritedDataForInstanceJobPods sets, on the Pods of a Job initializing,
+// joining or recovering an instance, the annotations and labels of the
+// instance Pods: they are the first Pods of an instance, and a policy
+// requiring a label on every Pod applies to them. The monitoring discovery
+// annotations are left out, as such a Pod serves no metrics
+func (cluster *Cluster) SetInheritedDataForInstanceJobPods(obj *metav1.ObjectMeta) {
+	utils.SetAnnotations(obj, cluster.getRuledAnnotationsFor(metadatarules.PgPods))
+	utils.SetLabels(obj, cluster.GetInheritedLabelsFor(metadatarules.PgPods))
 }
 
 // GetMonitoringDiscoveryAnnotations gets the annotations telling monitoring
