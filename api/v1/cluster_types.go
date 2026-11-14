@@ -1241,6 +1241,12 @@ const (
 	// False once every PVC accepts it. Only set after a first refusal.
 	ConditionVolumeExpansionRefused ClusterConditionType = "VolumeExpansionRefused"
 
+	// ConditionVolumeResizePending is True while the filesystem of a resized
+	// volume waits for a restart of its Pod, because its storage class does
+	// not resize a volume in use, and False once none does. Only set after a
+	// first wait.
+	ConditionVolumeResizePending ClusterConditionType = "VolumeResizePending"
+
 	// ConditionVolumeAutoGrowStopped is True while a volume with autoGrow
 	// is above its threshold and is not grown, because it reached its
 	// maxSize or because its growth would hide failing WAL archiving, and
@@ -1328,6 +1334,14 @@ const (
 	// ConditionReasonVolumeExpansionAccepted means every PVC accepts the size
 	// requested by the cluster again
 	ConditionReasonVolumeExpansionAccepted ConditionReason = "VolumeExpansionAccepted"
+
+	// ConditionReasonFileSystemResizePending means the filesystem of a
+	// resized volume is resized when its Pod restarts
+	ConditionReasonFileSystemResizePending ConditionReason = "FileSystemResizePending"
+
+	// ConditionReasonVolumeResizeCompleted means no volume waits for a
+	// restart of its Pod to be resized anymore
+	ConditionReasonVolumeResizeCompleted ConditionReason = "VolumeResizeCompleted"
 
 	// ConditionReasonMaxSizeReached means a volume above its autoGrow
 	// threshold already has the autoGrow maxSize
