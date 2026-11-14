@@ -1,0 +1,14 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: fork-scale
+spec:
+  instances: 2
+
+  # a single instance would not leave room for one synchronous replica
+  minSyncReplicas: 1
+  maxSyncReplicas: 1
+
+  storage:
+    storageClass: ${E2E_DEFAULT_STORAGE_CLASS}
+    size: 1Gi
