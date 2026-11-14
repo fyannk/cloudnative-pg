@@ -486,7 +486,10 @@ and avoids triggering a failover, which could complicate recovery.
 A full `PGDATA` or tablespace volume, with the WAL files on a separate
 volume, does not stop PostgreSQL: the writes fail with `No space left on
 device` and the instance keeps running. It is handled as any other failure,
-failover included.
+failover included. When it exits, whatever the reason, the instance manager
+names the volumes nothing can be written to anymore in the termination log
+described below, without changing its exit code, for
+[`autoGrow`](storage.md#the-full-disk-stop-of-an-instance) to grow them.
 
 When the volume holding the WAL files is full, the instance manager exits with
 code `4`, and names the volume in the termination log of the container,

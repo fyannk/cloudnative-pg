@@ -38,17 +38,30 @@ func IsWALSpaceAvailableOnPod(pod *corev1.Pod) bool {
 // MissingWALDiskSpaceExitCode exit code: the current one, or the last one
 // while the container is not ready again. It returns nil when there is none.
 func GetMissingDiskSpaceTermination(pod *corev1.Pod) *corev1.ContainerStateTerminated {
-	isTerminatedForMissingDiskSpace := func(state *corev1.ContainerState) bool {
-		return state.Terminated != nil && state.Terminated.ExitCode == apiv1.MissingWALDiskSpaceExitCode
+	return GetPostgresContainerTermination(pod, func(terminated *corev1.ContainerStateTerminated) bool {
+		return terminated.ExitCode == apiv1.MissingWALDiskSpaceExitCode
+	})
+}
+
+// GetPostgresContainerTermination returns the termination of the PostgreSQL
+// container of a Pod matching the given condition: the current one, or the
+// last one while the container is not ready again. It returns nil when there
+// is none.
+func GetPostgresContainerTermination(
+	pod *corev1.Pod,
+	matches func(terminated *corev1.ContainerStateTerminated) bool,
+) *corev1.ContainerStateTerminated {
+	isMatching := func(state *corev1.ContainerState) bool {
+		return state.Terminated != nil && matches(state.Terminated)
 	}
 
 	pgContainerStatus := getPostgresContainerStatus(pod)
 	switch {
 	case pgContainerStatus == nil:
 		return nil
-	case isTerminatedForMissingDiskSpace(&pgContainerStatus.State):
+	case isMatching(&pgContainerStatus.State):
 		return pgContainerStatus.State.Terminated
-	case !pgContainerStatus.Ready && isTerminatedForMissingDiskSpace(&pgContainerStatus.LastTerminationState):
+	case !pgContainerStatus.Ready && isMatching(&pgContainerStatus.LastTerminationState):
 		return pgContainerStatus.LastTerminationState.Terminated
 	default:
 		return nil

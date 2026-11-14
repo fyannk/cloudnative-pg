@@ -122,6 +122,19 @@ func Get(paths Paths, statfs Statfs) ([]postgres.VolumeUsage, error) {
 	return usages, errors.Join(errs...)
 }
 
+// minExtensionBytes is the size of a PostgreSQL block: a volume with less
+// available cannot take the extension of any relation
+const minExtensionBytes = 8192
+
+// HasNoSpaceLeft tells whether nothing can be written to a volume anymore:
+// less than a PostgreSQL block is available, or no inode is free
+func HasNoSpaceLeft(usage postgres.VolumeUsage) bool {
+	if usage.AvailableBytes < minExtensionBytes {
+		return true
+	}
+	return usage.Inodes > 0 && usage.InodesFree == 0
+}
+
 // GetWALVolumeName returns the name of the volume holding the WAL files: the
 // WAL volume when there is one, PGDATA otherwise
 func GetWALVolumeName(paths Paths) string {
