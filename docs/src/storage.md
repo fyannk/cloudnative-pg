@@ -262,6 +262,53 @@ $ kubectl get storageclass -o jsonpath='{$.allowVolumeExpansion}' premium-storag
 true
 ```
 
+### When the expansion is refused
+
+The API server refuses to expand a PVC when its `StorageClass` does not allow
+it, when a `ResourceQuota` on `requests.storage` is full, or when an admission
+webhook denies the request. The operator then sets the
+`VolumeExpansionRefused` condition of the `Cluster` to `True`, with a reason
+telling which of the three it is (`StorageClassForbidsExpansion`,
+`QuotaExceeded` or `Forbidden`), and a message naming the refused PVCs, the
+size requested, the answer of the API server and the ways out. It records a
+`Warning` event with the same reason and message when the condition appears or
+its message changes:
+
+```sh
+kubectl get cluster cluster-example \
+  -o jsonpath='{.status.conditions[?(@.type=="VolumeExpansionRefused")]}'
+kubectl get events --field-selector involvedObject.name=cluster-example,type=Warning
+```
+
+A refused expansion does not stop the management of the `Cluster`: every PVC
+is attempted, and the reconciliation goes on with the instances (scaling,
+rolling updates, re-creation of a missing instance). The refused PVCs keep
+their size, while the PVCs created from then on get the requested one. The
+operator retries the expansion every minute, so a `StorageClass` or a quota
+fixed in the meantime is picked up without any change to the `Cluster`.
+
+The size of the `Cluster` storage cannot be lowered back below the size
+already requested, so the ways out are:
+
+- allow the expansion: set `allowVolumeExpansion: true` on the `StorageClass`,
+  or raise the `ResourceQuota`;
+- keep the existing volumes at their size: set `resizeInUseVolumes: false` in
+  the storage section, as described in [Re-creating storage](#re-creating-storage).
+
+Once every PVC accepts the requested size, or no longer needs to be resized,
+the condition turns `False` with the `VolumeExpansionAccepted` reason, and a
+`Normal` event says so. A `Cluster` that never had a refused expansion has no
+such condition.
+
+:::note[Known issue]
+    Any `403 Forbidden` answer to the patch of a PVC is reported as a refused
+    expansion, including an RBAC error, such as a missing `patch` permission
+    of the operator on `persistentvolumeclaims`. Such a case shows up with
+    the `Forbidden` reason: read the answer of the API server quoted in the
+    message of the condition before acting on the `StorageClass` or the
+    quota.
+:::
+
 ### Using the volume expansion Kubernetes feature
 
 Given the storage class supports volume expansion, you can change the size
@@ -273,6 +320,173 @@ doesn't support that, you must delete the pod to trigger the resize.
 
 The best way to proceed is to delete one pod at a time, starting from replicas
 and waiting for each pod to be back up.
+
+The operator tells when this is needed: when the filesystem of a resized volume
+still waits for its resize after two minutes, the `Cluster` gets the
+`VolumeResizePending` condition and a `Warning` event naming the instances to
+restart. The operator does not restart them itself. The condition turns
+`False` once no volume waits anymore.
+
+For a volume with [`autoGrow`](#growing-the-volumes-automatically), a PVC
+created for a new or re-created instance gets the largest size among the
+existing PVCs of its volume, when it is above the size of the `Cluster`: a
+grown volume keeps that size on every instance. Without `autoGrow`, a new PVC
+always gets the size of the `Cluster`.
+
+### Growing the volumes automatically
+
+The `autoGrow` stanza of a storage section grows its PVCs when their filesystem
+is almost full, up to a maximum size, without changing the size in the
+`Cluster`. It can be set in `storage`, in `walStorage` and in the `storage` of
+each tablespace, and applies to the volumes of its own section:
+
+```yaml
+spec:
+  storage:
+    size: 10Gi
+    autoGrow:
+      maxSize: 100Gi
+      threshold: 80
+      step: 20%
+```
+
+- `maxSize` (required) is the size the PVCs are never grown beyond.
+- `threshold` (default `80`, from `50` to `95`) is the percentage of the
+  filesystem used, on any instance, above which the PVCs are grown.
+- `step` (default `20%`) is how much the PVCs are grown at a time: a percentage
+  of their current size, or a quantity such as `5Gi`.
+
+Each instance reports the space used on each of its volumes in its status,
+which the operator reads at least every 30 seconds. The operator grows a volume
+only on one of these signals:
+
+- **the usage reported while PostgreSQL is up**: the most used filesystem of
+  the volume, among the instances, crosses the threshold;
+- **an explicit full-disk stop**: the instance manager of an instance named
+  the volume as full when exiting, as described below. The instance counts as fully used for that
+  volume, once per stop: the PostgreSQL container stays terminated, then not
+  ready, until the kubelet restarts it, which can take minutes in
+  `CrashLoopBackOff`. The operator records the stop it grew the volume for, by
+  the time the container finished, in the `cnpg.io/autoGrowLastTermination`
+  annotation of the PVC of the instance, and grows the volume again only for a
+  new stop. A stop while the volume is already being grown is attributed to
+  that growth.
+
+An instance that cannot report its usage for another reason, the instance
+manager being unreachable for example, never grows a volume.
+
+On a signal, the operator grows the PVCs of that volume on every instance
+together, by one step, through the same path as a change of the size, and
+records a `Normal` event `VolumeAutoGrow`. It grows them again only once every
+PVC of the volume got the size of the previous step: a PVC whose expansion was
+refused, by a quota or by its `StorageClass`, still requests its old size and
+holds the next step back, so the other PVCs are not grown up to `maxSize` while
+it stays behind.
+
+The size in the `Cluster` is never changed: the PVCs are the record of the
+growth. A manifest kept in Git therefore stays in sync, and a `Cluster`
+re-created from it keeps the size of its existing PVCs. Raising the size in the
+`Cluster` above the grown size still works, and lowering it is still refused.
+
+The operator does not grow a volume, and sets the `VolumeAutoGrowStopped`
+condition of the `Cluster` to `True` with a `Warning` event, when the volume is
+above its threshold and:
+
+- it reached `maxSize` (reason `MaxSizeReached`);
+- it holds the WAL files and the WAL archiving is failing (reason
+  `WALArchivingFailing`): the WAL files that cannot be archived are kept, and
+  growing the volume would only hide the failure until `maxSize`.
+
+The WAL archiving is failing when the `ContinuousArchiving` condition of the
+`Cluster` is `False`. Only the instances set this condition, each time they
+archive a WAL file, so a failure would stay reported once the archiving
+configuration is removed, if no WAL file is archived again, for example while
+PostgreSQL is stopped by the full disk. The operator therefore removes a
+`False` `ContinuousArchiving` condition from a `Cluster` that has no Barman
+object store and no enabled plugin, or that disables the WAL archiving with the
+`cnpg.io/skipWalArchiving` annotation: removing the archiving configuration
+lets `autoGrow` grow the volume again.
+
+The `VolumeAutoGrowStopped` condition turns `False` with the
+`VolumeAutoGrowResumed` reason once no
+volume is in these cases. A refused expansion is reported by the
+`VolumeExpansionRefused` condition, described above, and the same step is
+retried.
+
+`autoGrow` requires `resizeInUseVolumes`, and a `StorageClass` allowing volume
+expansion, preferably online. It reads the filesystem of the volume as the
+instance sees it: with a provisioner backing the volumes with a directory of a
+shared filesystem, such as `local-path` or NFS, that filesystem is not the one
+of the PVC, and the operator does not grow the volume.
+
+#### The full-disk stop of an instance
+
+The instance manager exits with code `4` when the volume holding the WAL files
+has no room left for a WAL segment, and names it in the termination message of
+the PostgreSQL container, `/dev/termination-log`, which the kubelet reports in
+`lastState.terminated.message` of the container status:
+
+```json
+{"reason":"DiskFull","volumes":["wal"]}
+```
+
+The volume is named `wal`, or `pgdata` without a WAL volume.
+
+A full `PGDATA` or tablespace volume, with the WAL files on a separate volume,
+does not stop PostgreSQL, and the usage reported by the instance grows it.
+PostgreSQL may still fail to run on such a volume, typically a replica that
+cannot replay, and its instance, restarting in a loop, reports no usage.
+Whenever it exits, for any reason and with its usual exit code, the instance
+manager therefore names the volumes with less than a PostgreSQL block (8kB)
+available, or with no free inode, in the same message:
+
+```json
+{"reason":"DiskFull","volumes":["pgdata","tbs-alpha"]}
+```
+
+The volumes are named `pgdata`, `wal`, and `tbs-` followed by the name of the
+tablespace.
+
+An exit code `4` without such a message, written by an instance manager older
+than this feature, stands for the volume holding the WAL files. With the exit
+code `4` only, the operator does not fail over to another instance, as
+described in ["Disk Full Failure"](instance_manager.md#disk-full-failure).
+
+#### Known limitations
+
+- A resize that stalls in the storage backend leaves `autoGrow` waiting, with
+  no condition on the `Cluster`: the PVC keeps requesting more than its
+  capacity, and no step is taken until it gets it. A resize waiting for a
+  restart of the Pod is reported by the `VolumeResizePending` condition. Some backends limit the
+  number of modifications of a volume, such as AWS EBS, which accepts one
+  modification every six hours.
+- An instance manager older than `autoGrow` reports no usage of its volumes:
+  the usage of its instance is ignored, and only a full WAL volume stopping its
+  PostgreSQL counts. `autoGrow` is fully active once every instance manager is
+  upgraded.
+- Turning `autoGrow` off after it grew a volume leaves the PVCs larger than the
+  size in the `Cluster`: the operator logs `cannot decrease storage
+  requirement` at each reconciliation, and the PVC of a new instance gets the
+  size in the `Cluster`, which may be too small for the data. Set the size in
+  the `Cluster` to the grown size before removing `autoGrow`.
+- [Reducing a volume](#volume-reduction) requires removing its `autoGrow`
+  stanza first: with `autoGrow`, a re-created instance gets the size of the
+  other instances, not the smaller size in the `Cluster`.
+- `autoGrow` keeps growing the volumes while a replica is being created. It
+  does not while the `Cluster` is hibernated, while a switchover or a failover
+  is in progress, or while the primary does not report its status: it resumes
+  with the next complete reconciliation.
+- A new `Cluster` restored from a `VolumeSnapshot` of a grown volume, with a
+  smaller size in its specification, fails to create its PVCs: a PVC cannot be
+  smaller than the snapshot it is restored from. Give the new `Cluster` at least
+  the grown size.
+- When the expansion of a step is refused to some PVCs of a volume, no
+  `VolumeAutoGrow` event is recorded for that volume, even for the PVCs that
+  accepted it: the `VolumeExpansionRefused` condition reports the refusal.
+- Outside of the volume holding the WAL files, a full-disk stop is detected
+  from the logs of PostgreSQL, and only a volume below the thresholds given
+  above counts as full: a write failing on a volume with more room left, or a
+  stop with no disk full error logged, grows no volume.
 
 ### Re-creating storage
 
@@ -325,6 +539,26 @@ $ kubectl delete pvc/cluster-example-3 pod/cluster-example-3
     this process. The same procedure applies if you want to regenerate the WAL
     volume PVC. You can do this by also disabling `resizeInUseVolumes` for the
     `.spec.walStorage` section.
+:::
+
+:::note
+    `resizeInUseVolumes` applies to the volumes of its own section only:
+    `.spec.storage` for the PGDATA volumes, `.spec.walStorage` for the WAL
+    volumes, and the `storage` of each tablespace for its volumes. The same
+    holds for the `volumeAttributesClassName` of each `pvcTemplate`.
+:::
+
+:::warning
+    In upstream releases, `resizeInUseVolumes: false` in `.spec.storage` also
+    prevents the resize of the WAL and tablespace volumes. Here each section
+    has its own flag, defaulting to `true`, so after the operator upgrade the
+    existing WAL and tablespace PVCs whose requested size in the `Cluster` is
+    larger than their current one are resized. When their
+    `StorageClass` doesn't allow the expansion, the API server refuses the
+    change of these PVCs.
+    To keep the previous behavior, set `resizeInUseVolumes: false` in
+    `.spec.walStorage` and in the `storage` of each tablespace as well,
+    before upgrading the operator.
 :::
 
 For example, if a PVC dedicated to WAL storage is present:

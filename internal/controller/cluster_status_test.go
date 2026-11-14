@@ -453,46 +453,6 @@ var _ = Describe("updateClusterStatusThatRequiresInstancesState tests", func() {
 	})
 
 	Context("Pod termination reason detection", func() {
-		It("should detect when a pod has no PostgreSQL container", func() {
-			pod := &corev1.Pod{
-				ObjectMeta: metav1.ObjectMeta{Name: "test-pod"},
-				Status: corev1.PodStatus{
-					ContainerStatuses: []corev1.ContainerStatus{
-						{Name: "other-container"},
-					},
-				},
-			}
-
-			// When no postgres container exists, hasPostgresContainerTerminationReason returns false
-			result := hasPostgresContainerTerminationReason(pod, func(state *corev1.ContainerState) bool {
-				return state.Terminated != nil
-			})
-			Expect(result).To(BeFalse())
-		})
-
-		It("should detect termination with specific exit code in current state", func() {
-			pod := &corev1.Pod{
-				ObjectMeta: metav1.ObjectMeta{Name: "test-pod"},
-				Status: corev1.PodStatus{
-					ContainerStatuses: []corev1.ContainerStatus{
-						{
-							Name: "postgres",
-							State: corev1.ContainerState{
-								Terminated: &corev1.ContainerStateTerminated{
-									ExitCode: apiv1.MissingWALDiskSpaceExitCode,
-								},
-							},
-						},
-					},
-				},
-			}
-
-			result := hasPostgresContainerTerminationReason(pod, func(state *corev1.ContainerState) bool {
-				return state.Terminated != nil && state.Terminated.ExitCode == apiv1.MissingWALDiskSpaceExitCode
-			})
-			Expect(result).To(BeTrue())
-		})
-
 		It("isTerminatedBecauseOfMissingWALArchivePlugin should detect a restarted container", func() {
 			pod := &corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{Name: "test-pod"},
@@ -515,95 +475,6 @@ var _ = Describe("updateClusterStatusThatRequiresInstancesState tests", func() {
 			}
 
 			Expect(isTerminatedBecauseOfMissingWALArchivePlugin(pod)).To(BeTrue())
-		})
-
-		It("should return false when termination reason does not match", func() {
-			pod := &corev1.Pod{
-				ObjectMeta: metav1.ObjectMeta{Name: "test-pod"},
-				Status: corev1.PodStatus{
-					ContainerStatuses: []corev1.ContainerStatus{
-						{
-							Name: "postgres",
-							State: corev1.ContainerState{
-								Terminated: &corev1.ContainerStateTerminated{
-									ExitCode: 1, // Different exit code
-								},
-							},
-						},
-					},
-				},
-			}
-
-			result := hasPostgresContainerTerminationReason(pod, func(state *corev1.ContainerState) bool {
-				return state.Terminated != nil && state.Terminated.ExitCode == apiv1.MissingWALDiskSpaceExitCode
-			})
-			Expect(result).To(BeFalse())
-		})
-
-		It("should return false when container is ready despite last termination", func() {
-			pod := &corev1.Pod{
-				ObjectMeta: metav1.ObjectMeta{Name: "test-pod"},
-				Status: corev1.PodStatus{
-					ContainerStatuses: []corev1.ContainerStatus{
-						{
-							Name: "postgres",
-							State: corev1.ContainerState{
-								Running: &corev1.ContainerStateRunning{},
-							},
-							Ready: true,
-							LastTerminationState: corev1.ContainerState{
-								Terminated: &corev1.ContainerStateTerminated{
-									ExitCode: apiv1.MissingWALDiskSpaceExitCode,
-								},
-							},
-						},
-					},
-				},
-			}
-
-			result := hasPostgresContainerTerminationReason(pod, func(state *corev1.ContainerState) bool {
-				return state.Terminated != nil && state.Terminated.ExitCode == apiv1.MissingWALDiskSpaceExitCode
-			})
-			Expect(result).To(BeFalse())
-		})
-
-		It("isWALSpaceAvailableOnPod should return true when space is available", func() {
-			pod := &corev1.Pod{
-				ObjectMeta: metav1.ObjectMeta{Name: "test-pod"},
-				Status: corev1.PodStatus{
-					ContainerStatuses: []corev1.ContainerStatus{
-						{
-							Name: "postgres",
-							State: corev1.ContainerState{
-								Running: &corev1.ContainerStateRunning{},
-							},
-							Ready: true,
-						},
-					},
-				},
-			}
-
-			Expect(isWALSpaceAvailableOnPod(pod)).To(BeTrue())
-		})
-
-		It("isWALSpaceAvailableOnPod should return false when terminated due to missing disk space", func() {
-			pod := &corev1.Pod{
-				ObjectMeta: metav1.ObjectMeta{Name: "test-pod"},
-				Status: corev1.PodStatus{
-					ContainerStatuses: []corev1.ContainerStatus{
-						{
-							Name: "postgres",
-							State: corev1.ContainerState{
-								Terminated: &corev1.ContainerStateTerminated{
-									ExitCode: apiv1.MissingWALDiskSpaceExitCode,
-								},
-							},
-						},
-					},
-				},
-			}
-
-			Expect(isWALSpaceAvailableOnPod(pod)).To(BeFalse())
 		})
 
 		It("isTerminatedBecauseOfMissingWALArchivePlugin should return true when terminated due to missing plugin",
@@ -966,5 +837,74 @@ var _ = Describe("failedBootstrapPodNames", func() {
 		pod := corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "cluster-2"}}
 		resources := &managedResources{instances: corev1.PodList{Items: []corev1.Pod{pod}}}
 		Expect(resources.failedBootstrapPodNames()).To(BeEmpty())
+	})
+})
+
+var _ = Describe("stale ContinuousArchiving condition", func() {
+	failing := metav1.Condition{
+		Type:   string(apiv1.ConditionContinuousArchiving),
+		Status: metav1.ConditionFalse,
+		Reason: string(apiv1.ConditionReasonContinuousArchivingFailing),
+	}
+	ready := metav1.Condition{
+		Type:   string(apiv1.ConditionClusterReady),
+		Status: metav1.ConditionTrue,
+		Reason: string(apiv1.ClusterReady),
+	}
+
+	It("is removed when the cluster has no WAL archiver anymore", func() {
+		cluster := &apiv1.Cluster{Status: apiv1.ClusterStatus{Conditions: []metav1.Condition{failing, ready}}}
+
+		removeStaleContinuousArchivingCondition(cluster)
+
+		Expect(cluster.Status.Conditions).To(ConsistOf(ready))
+	})
+
+	It("is removed when the WAL archiving is disabled by annotation", func() {
+		cluster := &apiv1.Cluster{
+			ObjectMeta: metav1.ObjectMeta{Annotations: map[string]string{utils.SkipWalArchiving: "enabled"}},
+			Spec: apiv1.ClusterSpec{Backup: &apiv1.BackupConfiguration{
+				BarmanObjectStore: &apiv1.BarmanObjectStoreConfiguration{},
+			}},
+			Status: apiv1.ClusterStatus{Conditions: []metav1.Condition{failing}},
+		}
+
+		removeStaleContinuousArchivingCondition(cluster)
+
+		Expect(cluster.Status.Conditions).To(BeEmpty())
+	})
+
+	It("is kept while a Barman object store or a plugin may archive the WAL files", func() {
+		withBarman := &apiv1.Cluster{
+			Spec: apiv1.ClusterSpec{Backup: &apiv1.BackupConfiguration{
+				BarmanObjectStore: &apiv1.BarmanObjectStoreConfiguration{},
+			}},
+			Status: apiv1.ClusterStatus{Conditions: []metav1.Condition{failing}},
+		}
+		withPlugin := &apiv1.Cluster{
+			Spec: apiv1.ClusterSpec{Plugins: []apiv1.PluginConfiguration{{
+				Name: "barman-cloud.cloudnative-pg.io", IsWALArchiver: ptr.To(true),
+			}}},
+			Status: apiv1.ClusterStatus{Conditions: []metav1.Condition{failing}},
+		}
+
+		removeStaleContinuousArchivingCondition(withBarman)
+		removeStaleContinuousArchivingCondition(withPlugin)
+
+		Expect(withBarman.Status.Conditions).To(ConsistOf(failing))
+		Expect(withPlugin.Status.Conditions).To(ConsistOf(failing))
+	})
+
+	It("keeps a condition reporting a working archiving", func() {
+		working := metav1.Condition{
+			Type:   string(apiv1.ConditionContinuousArchiving),
+			Status: metav1.ConditionTrue,
+			Reason: string(apiv1.ConditionReasonContinuousArchivingSuccess),
+		}
+		cluster := &apiv1.Cluster{Status: apiv1.ClusterStatus{Conditions: []metav1.Condition{working}}}
+
+		removeStaleContinuousArchivingCondition(cluster)
+
+		Expect(cluster.Status.Conditions).To(ConsistOf(working))
 	})
 })
