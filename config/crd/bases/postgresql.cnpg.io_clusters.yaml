@@ -3340,7 +3340,6 @@ spec:
                   Name of the container image, supporting both tags (`<image>:<tag>`)
                   and digests for deterministic and repeatable deployments
                   (`<image>:<tag>@sha256:<digestValue>`)
-                maxLength: 1024
                 type: string
               imagePullPolicy:
                 description: |-
@@ -5856,7 +5855,6 @@ spec:
                           Prefix for replication slots managed by the operator for HA.
                           It may only contain lower case letters, numbers, and the underscore character.
                           This can only be set at creation time. By default set to `_cnpg_`.
-                        maxLength: 63
                         pattern: ^[0-9a-z_]*$
                         type: string
                       synchronizeLogicalDecoding:
@@ -6474,7 +6472,6 @@ spec:
                       Size of the storage. Required if not already specified in the PVC template.
                       Changes to this field are automatically reapplied to the created PVCs.
                       Size cannot be decreased.
-                    maxLength: 64
                     type: string
                   storageClass:
                     description: |-
@@ -6732,7 +6729,6 @@ spec:
                             Size of the storage. Required if not already specified in the PVC template.
                             Changes to this field are automatically reapplied to the created PVCs.
                             Size cannot be decreased.
-                          maxLength: 64
                           type: string
                         storageClass:
                           description: |-
@@ -7144,7 +7140,6 @@ spec:
                       Size of the storage. Required if not already specified in the PVC template.
                       Changes to this field are automatically reapplied to the created PVCs.
                       Size cannot be decreased.
-                    maxLength: 64
                     type: string
                   storageClass:
                     description: |-

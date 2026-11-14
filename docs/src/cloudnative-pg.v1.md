@@ -627,7 +627,7 @@ _Appears in:_
 | --- | --- | --- | --- | --- |
 | `description` _string_ | Description of this PostgreSQL cluster |  |  |  |
 | `inheritedMetadata` _[EmbeddedObjectMetadata](#embeddedobjectmetadata)_ | Metadata that will be inherited by all objects related to the Cluster |  |  |  |
-| `imageName` _string_ | Name of the container image, supporting both tags (`<image>:<tag>`)<br />and digests for deterministic and repeatable deployments<br />(`<image>:<tag>@sha256:<digestValue>`) |  |  | MaxLength: 1024 <br /> |
+| `imageName` _string_ | Name of the container image, supporting both tags (`<image>:<tag>`)<br />and digests for deterministic and repeatable deployments<br />(`<image>:<tag>@sha256:<digestValue>`) |  |  |  |
 | `imageCatalogRef` _[ImageCatalogRef](#imagecatalogref)_ | Defines the major PostgreSQL version we want to use within an ImageCatalog |  |  |  |
 | `imagePullPolicy` _[PullPolicy](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.34/#pullpolicy-v1-core)_ | Image pull policy.<br />One of `Always`, `Never` or `IfNotPresent`.<br />If not defined, it defaults to `IfNotPresent`.<br />Cannot be updated.<br />More info: https://kubernetes.io/docs/concepts/containers/images#updating-images |  |  |  |
 | `schedulerName` _string_ | If specified, the pod will be dispatched by specified Kubernetes<br />scheduler. If not specified, the pod will be dispatched by the default<br />scheduler. More info:<br />https://kubernetes.io/docs/concepts/scheduling-eviction/kube-scheduler/ |  |  |  |
@@ -2739,7 +2739,7 @@ _Appears in:_
 | Field | Description | Required | Default | Validation |
 | --- | --- | --- | --- | --- |
 | `enabled` _boolean_ | If enabled (default), the operator will automatically manage replication slots<br />on the primary instance and use them in streaming replication<br />connections with all the standby instances that are part of the HA<br />cluster. If disabled, the operator will not take advantage<br />of replication slots in streaming connections with the replicas.<br />This feature also controls replication slots in replica cluster,<br />from the designated primary to its cascading replicas. |  | true |  |
-| `slotPrefix` _string_ | Prefix for replication slots managed by the operator for HA.<br />It may only contain lower case letters, numbers, and the underscore character.<br />This can only be set at creation time. By default set to `_cnpg_`. |  | _cnpg_ | MaxLength: 63 <br />Pattern: `^[0-9a-z_]*$` <br /> |
+| `slotPrefix` _string_ | Prefix for replication slots managed by the operator for HA.<br />It may only contain lower case letters, numbers, and the underscore character.<br />This can only be set at creation time. By default set to `_cnpg_`. |  | _cnpg_ | Pattern: `^[0-9a-z_]*$` <br /> |
 | `synchronizeLogicalDecoding` _boolean_ | When enabled, the operator automatically manages synchronization of logical<br />decoding (replication) slots across high-availability clusters.<br />Requires one of the following conditions:<br />- PostgreSQL version 17 or later<br />- PostgreSQL version < 17 with pg_failover_slots extension enabled |  |  |  |
 
 
@@ -3130,7 +3130,7 @@ _Appears in:_
 | Field | Description | Required | Default | Validation |
 | --- | --- | --- | --- | --- |
 | `storageClass` _string_ | StorageClass to use for PVCs. Applied after<br />evaluating the PVC template, if available.<br />If not specified, the generated PVCs will use the<br />default storage class |  |  |  |
-| `size` _string_ | Size of the storage. Required if not already specified in the PVC template.<br />Changes to this field are automatically reapplied to the created PVCs.<br />Size cannot be decreased. |  |  | MaxLength: 64 <br /> |
+| `size` _string_ | Size of the storage. Required if not already specified in the PVC template.<br />Changes to this field are automatically reapplied to the created PVCs.<br />Size cannot be decreased. |  |  |  |
 | `resizeInUseVolumes` _boolean_ | Resize existent PVCs, defaults to true |  | true |  |
 | `pvcTemplate` _[PersistentVolumeClaimSpec](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.34/#persistentvolumeclaimspec-v1-core)_ | Template to be used to generate the Persistent Volume Claim |  |  |  |
 
