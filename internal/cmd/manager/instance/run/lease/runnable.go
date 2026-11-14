@@ -329,6 +329,7 @@ func (r *Runnable) tryTakeOver(ctx context.Context) (bool, error) {
 
 	// Already ours: nothing to do here, le.Run will refresh the RenewTime.
 	if record.HolderIdentity == identity {
+		r.setWaitReason("")
 		return true, nil
 	}
 
@@ -336,7 +337,7 @@ func (r *Runnable) tryTakeOver(ctx context.Context) (bool, error) {
 	// unambiguous regardless of clocks, so claim it immediately. A switchover or
 	// a clean shutdown takes this path, keeping that hand-over fast.
 	if record.HolderIdentity == "" {
-		return r.claim(ctx, record)
+		return r.claimWithReason(ctx, record)
 	}
 
 	// Another pod still holds the lease. Take over only once the record has sat
@@ -357,7 +358,22 @@ func (r *Runnable) tryTakeOver(ctx context.Context) (bool, error) {
 			(r.config.LeaseDuration - now.Sub(r.observedTime)).Round(time.Second)))
 		return false, nil
 	}
-	return r.claim(ctx, record)
+	return r.claimWithReason(ctx, record)
+}
+
+// claimWithReason claims the lease, and keeps the wait reason in line with
+// the outcome: the reason of a previous attempt must not outlive it
+func (r *Runnable) claimWithReason(ctx context.Context, record *resourcelock.LeaderElectionRecord) (bool, error) {
+	claimed, err := r.claim(ctx, record)
+	switch {
+	case err != nil:
+		r.setWaitReason("cannot take lease " + r.lock.Describe() + ": " + err.Error())
+	case claimed:
+		r.setWaitReason("")
+	default:
+		r.setWaitReason("lease " + r.lock.Describe() + " was taken by another instance")
+	}
+	return claimed, err
 }
 
 func (r *Runnable) setWaitReason(reason string) {
