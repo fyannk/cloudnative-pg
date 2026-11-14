@@ -690,7 +690,9 @@ func (instance *Instance) TryShuttingDownSmartFast(ctx context.Context) error {
 
 	if smartTimeout > 0 {
 		contextLogger.Info("Requesting smart shutdown of the PostgreSQL instance")
-		fast := shutdownOptions{Mode: shutdownModeFast, Wait: true, Timeout: &maxStopDelay}
+		// The escalation skips the CHECKPOINT: the smart shutdown in progress
+		// refuses new connections, and ran its own before starting
+		fast := shutdownOptions{Mode: shutdownModeFast, Wait: true, Timeout: &maxStopDelay, SkipCheckpoint: true}
 		err = runSmartShutdownUnlessDemoted(
 			ctx,
 			func() error {
