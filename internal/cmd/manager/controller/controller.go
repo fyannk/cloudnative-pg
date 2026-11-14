@@ -228,6 +228,14 @@ func RunController(
 			"as a pod environment variable (typically via the Downward API fieldRef.fieldPath = metadata.namespace)")
 	}
 
+	if !conf.IsScheduledBackupCronFormatValid() {
+		setupLog.Error(
+			fmt.Errorf("SCHEDULED_BACKUP_CRON_FORMAT %q is not one of %q, %q or %q", conf.ScheduledBackupCronFormat,
+				utils.CronFormatSeconds, utils.CronFormatSecondsStrict, utils.CronFormatStandard),
+			"invalid operator configuration, the schedules are read with the default format",
+			"format", conf.GetScheduledBackupCronFormat())
+	}
+
 	discoveryClient, err := utils.GetDiscoveryClient()
 	if err != nil {
 		return err

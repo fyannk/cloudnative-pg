@@ -246,6 +246,27 @@ The schedule `"0 0 0 * * *"` triggers a backup every day at midnight
 (00:00:00). In Kubernetes CronJobs, the equivalent expression would be `0 0 * * *`,
 since seconds are not supported.
 
+A five-field schedule such as `0 2 * * *` is accepted but read with the
+seconds field first: it runs every hour at minute 2, not every day at 02:00.
+The admission warning that says so is shown by `kubectl` only, and a
+`ScheduleFieldCount` Warning event is recorded on the `ScheduledBackup`. The
+[`SCHEDULED_BACKUP_CRON_FORMAT`](operator_conf.md#available-options) operator
+setting can reject five-field schedules when they are created
+(`seconds-strict`) or read them as standard cron (`standard`).
+
+:::warning
+    With `standard`, a five-field schedule only means what it says as long as
+    the operator keeps that setting. After a switch back to `seconds`, or a
+    downgrade to an upstream release, which always reads the seconds field
+    first, the same `0 2 * * *` (every day at 02:00) is read as second 0,
+    minute 2 of every hour: the backups become hourly. The only signal is the
+    `ScheduleFieldCount` Warning event recorded on the `ScheduledBackup` after
+    a switch back to `seconds`; an upstream release records none for the
+    existing objects. If a downgrade or a change of the setting is possible,
+    write the schedules with six fields, such as `0 0 2 * * *`, which are
+    read the same way whatever the setting and the version.
+:::
+
 :::warning
     The `spec.cluster` field is immutable after creation. To schedule backups
     for a different `Cluster`, create a new `ScheduledBackup` resource instead
