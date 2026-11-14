@@ -74,10 +74,6 @@ type PublicKeyInfrastructure struct {
 	// serving certificate (e.g. the historical name when ServiceName is derived)
 	AlternativeServiceNames []string
 
-	// The port the webhook server listens on, used to find the Services
-	// exposing it; zero disables that discovery
-	WebhookPort int
-
 	// The name of the namespace where the operator is set up
 	OperatorNamespace string
 
@@ -350,15 +346,15 @@ func (pki PublicKeyInfrastructure) schedulePeriodicMaintenance(
 // no deployment matching the labels, is not transient either
 func isTransientAPIError(err error) bool {
 	var status apierrors.APIStatus
-	return errors.As(err, &status) && !isStableDiscoveryError(err)
+	return errors.As(err, &status) && !apierrors.IsNotFound(err) && !apierrors.IsForbidden(err)
 }
 
 // ensureCertificate will ensure that a webhook certificate exists and is usable.
 // The Secret is the one mounted in the operator deployment when it can be read,
-// and the certificate carries every DNS name the webhook server is reachable
-// through, see webhookAltDNSNames. When these names cannot all be discovered,
-// an existing certificate is kept as it is for this round, and a missing one is
-// created with the names that could be read: the next round adds the others.
+// and the certificate carries the configured names of the webhook Service, see
+// webhookAltDNSNames. When the deployment cannot be read for a while, the
+// mounted Secret is not known: an existing certificate is kept as it is for
+// this round.
 func (pki PublicKeyInfrastructure) ensureCertificate(
 	ctx context.Context, kubeClient client.Client, caSecret *corev1.Secret,
 ) (*corev1.Secret, error) {
@@ -366,14 +362,7 @@ func (pki PublicKeyInfrastructure) ensureCertificate(
 	// renewed even when the deployment cannot be read
 	deployment, deploymentErr := pki.operatorDeployment(ctx, kubeClient)
 	secretName := pki.webhookSecretName(deployment)
-	altDNSNames, discoveryErr := pki.webhookAltDNSNames(ctx, kubeClient, deployment)
-	if isTransientAPIError(deploymentErr) {
-		// Without the deployment, neither the mounted Secret nor the Services
-		// selecting its pods are known: as for the discovery, the names are
-		// not all there
-		discoveryErr = errors.Join(discoveryErr,
-			fmt.Errorf("while reading the operator deployment: %w", deploymentErr))
-	}
+	altDNSNames := pki.webhookAltDNSNames()
 	webhookHostname := fmt.Sprintf(
 		"%v.%v.svc",
 		pki.ServiceName,
@@ -385,14 +374,13 @@ func (pki PublicKeyInfrastructure) ensureCertificate(
 		types.NamespacedName{Namespace: pki.OperatorNamespace, Name: secretName},
 		secret,
 	); err == nil {
-		if discoveryErr != nil {
-			// Renewing now would compare, and issue the certificate, without the
-			// names that could not be discovered: the Services only known
-			// through the discovery would fail the TLS handshake until the
-			// next round. The current certificate is kept until then.
-			pkiLog.Info("Cannot discover every name of the webhook Services, "+
+		if isTransientAPIError(deploymentErr) {
+			// The Secret read is the configured one, which may not be the
+			// one the deployment mounts: nothing is renewed until the
+			// deployment tells
+			pkiLog.Info("Cannot read the operator deployment, "+
 				"the webhook certificate is not renewed this round",
-				"secret", secretName, "error", discoveryErr.Error())
+				"secret", secretName, "error", deploymentErr.Error())
 			return secret, nil
 		}
 		// Verify the temporal validity of this certificate and
@@ -404,15 +392,6 @@ func (pki PublicKeyInfrastructure) ensureCertificate(
 
 	if deploymentErr != nil {
 		return nil, deploymentErr
-	}
-	if discoveryErr != nil {
-		// The operator must start: the certificate is created with the
-		// names that could be read, the configured ones included, which is
-		// never less than what upstream issues. The next periodic
-		// maintenance sees the missing names and reissues it with them.
-		pkiLog.Info("Cannot discover every name of the webhook Services, "+
-			"the webhook certificate is created with the names that could be read",
-			"secret", secretName, "error", discoveryErr.Error())
 	}
 
 	// Let's generate the pki certificate
