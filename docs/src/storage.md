@@ -327,6 +327,26 @@ $ kubectl delete pvc/cluster-example-3 pod/cluster-example-3
     `.spec.walStorage` section.
 :::
 
+:::note
+    `resizeInUseVolumes` applies to the volumes of its own section only:
+    `.spec.storage` for the PGDATA volumes, `.spec.walStorage` for the WAL
+    volumes, and the `storage` of each tablespace for its volumes. The same
+    holds for the `volumeAttributesClassName` of each `pvcTemplate`.
+:::
+
+:::warning
+    In upstream releases, `resizeInUseVolumes: false` in `.spec.storage` also
+    prevents the resize of the WAL and tablespace volumes. Here each section
+    has its own flag, defaulting to `true`, so after the operator upgrade the
+    existing WAL and tablespace PVCs whose requested size in the `Cluster` is
+    larger than their current one are resized. When their
+    `StorageClass` doesn't allow the expansion, the API server refuses the
+    change of these PVCs.
+    To keep the previous behavior, set `resizeInUseVolumes: false` in
+    `.spec.walStorage` and in the `storage` of each tablespace as well,
+    before upgrading the operator.
+:::
+
 For example, if a PVC dedicated to WAL storage is present:
 
 ```
