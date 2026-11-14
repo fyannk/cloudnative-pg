@@ -365,6 +365,7 @@ type provided.
 | `cluster-metadata`                |
 | `recovery`                        |
 | `importing-databases`             |
+| `fork`                            |
 | `storage`                         |
 | `security`                        |
 | `maintenance`                     |
