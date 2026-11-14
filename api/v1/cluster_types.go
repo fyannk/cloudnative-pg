@@ -234,7 +234,6 @@ type ClusterSpec struct {
 	// Name of the container image, supporting both tags (`<image>:<tag>`)
 	// and digests for deterministic and repeatable deployments
 	// (`<image>:<tag>@sha256:<digestValue>`)
-	// +kubebuilder:validation:MaxLength=1024
 	// +optional
 	ImageName string `json:"imageName,omitempty"`
 
@@ -1478,7 +1477,6 @@ type ReplicationSlotsHAConfiguration struct {
 	// This can only be set at creation time. By default set to `_cnpg_`.
 	// +kubebuilder:default:=_cnpg_
 	// +kubebuilder:validation:Pattern=^[0-9a-z_]*$
-	// +kubebuilder:validation:MaxLength=63
 	// +optional
 	SlotPrefix string `json:"slotPrefix,omitempty"`
 
@@ -2378,7 +2376,6 @@ type StorageConfiguration struct {
 	// Size of the storage. Required if not already specified in the PVC template.
 	// Changes to this field are automatically reapplied to the created PVCs.
 	// Size cannot be decreased.
-	// +kubebuilder:validation:MaxLength=64
 	// +optional
 	Size string `json:"size,omitempty"`
 
