@@ -24,7 +24,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"syscall"
+	"time"
 
 	"github.com/cloudnative-pg/machinery/pkg/log"
 	"github.com/prometheus/client_golang/prometheus"
@@ -165,6 +167,52 @@ func (e *Exporter) updateDiskMetrics() {
 	}
 }
 
+// diskCollectTimeout bounds the reading of a filesystem in a scrape
+const diskCollectTimeout = 5 * time.Second
+
+// errFilesystemNotAnswering is returned when the filesystem of a volume does
+// not answer, such as a network mount whose server is gone
+var errFilesystemNotAnswering = errors.New("the filesystem does not answer")
+
+// filesystemNotAnswering is set while a read that ran out of time is still
+// blocked: no other read is started until it returns, so that the blocked
+// reads do not pile up
+var filesystemNotAnswering atomic.Bool
+
+// statfsWithTimeout reads a filesystem, giving up after the timeout: the
+// read cannot be interrupted, and must not hold a scrape forever
+func statfsWithTimeout(
+	statfs func(path string, stat *syscall.Statfs_t) error,
+	path string,
+	timeout time.Duration,
+) (syscall.Statfs_t, error) {
+	if filesystemNotAnswering.Load() {
+		return syscall.Statfs_t{}, errFilesystemNotAnswering
+	}
+
+	type result struct {
+		stat syscall.Statfs_t
+		err  error
+	}
+	done := make(chan result, 1)
+	go func() {
+		var read result
+		read.err = statfs(path, &read.stat)
+		filesystemNotAnswering.Store(false)
+		done <- read
+	}()
+
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case read := <-done:
+		return read.stat, read.err
+	case <-timer.C:
+		filesystemNotAnswering.Store(true)
+		return syscall.Statfs_t{}, fmt.Errorf("%w after %s", errFilesystemNotAnswering, timeout)
+	}
+}
+
 // collectDiskMetrics reads the filesystem of each volume of the instance.
 // It only reads the mount points, so it works while PostgreSQL is down.
 // A volume that cannot be read is left out, and the others are reported.
@@ -174,8 +222,8 @@ func collectDiskMetrics(e *Exporter) error {
 	volumes, err := listDiskVolumes(e.diskPaths)
 	errs := []error{err}
 	for _, volume := range volumes {
-		var stat syscall.Statfs_t
-		if err := e.statfs(volume.path, &stat); err != nil {
+		stat, err := statfsWithTimeout(e.statfs, volume.path, diskCollectTimeout)
+		if err != nil {
 			errs = append(errs, fmt.Errorf("volume %s: %w", volume.name, err))
 			continue
 		}

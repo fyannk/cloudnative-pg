@@ -23,7 +23,9 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"syscall"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
@@ -203,5 +205,31 @@ var _ = Describe("disk metrics", func() {
 		Expect(names).To(ContainElements("cnpg_disk_total_bytes", "cnpg_disk_inodes_free", "cnpg_collector_fencing_on"))
 		Expect(gaugeValue(exporter.Metrics.Disk.InodesFree.WithLabelValues("pgdata"))).To(BeZero())
 		Expect(gaugeValue(exporter.Metrics.FencingOn)).To(BeEquivalentTo(1))
+	})
+})
+
+var _ = Describe("reading a filesystem with a timeout", func() {
+	It("gives up on a filesystem that does not answer, and starts no other read meanwhile", func() {
+		release := make(chan struct{})
+		var calls atomic.Int32
+		//nolint:unparam // the signature of statfs
+		blocked := func(_ string, stat *syscall.Statfs_t) error {
+			calls.Add(1)
+			<-release
+			*stat = syscall.Statfs_t{Bsize: 4096, Blocks: 100}
+			return nil
+		}
+
+		_, err := statfsWithTimeout(blocked, "/data", 20*time.Millisecond)
+		Expect(err).To(MatchError(errFilesystemNotAnswering))
+		_, err = statfsWithTimeout(blocked, "/data", 20*time.Millisecond)
+		Expect(err).To(MatchError(errFilesystemNotAnswering))
+		Expect(calls.Load()).To(Equal(int32(1)))
+
+		close(release)
+		Eventually(func() error {
+			_, err := statfsWithTimeout(blocked, "/data", time.Second)
+			return err
+		}).Should(Succeed())
 	})
 })
