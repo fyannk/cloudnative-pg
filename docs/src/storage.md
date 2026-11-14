@@ -453,6 +453,10 @@ the operator does not fail over to another instance, as described in
 - [Reducing a volume](#volume-reduction) requires removing its `autoGrow`
   stanza first: with `autoGrow`, a re-created instance gets the size of the
   other instances, not the smaller size in the `Cluster`.
+- `autoGrow` keeps growing the volumes while a replica is being created. It
+  does not while the `Cluster` is hibernated, while a switchover or a failover
+  is in progress, or while the primary does not report its status: it resumes
+  with the next complete reconciliation.
 - A new `Cluster` restored from a `VolumeSnapshot` of a grown volume, with a
   smaller size in its specification, fails to create its PVCs: a PVC cannot be
   smaller than the snapshot it is restored from. Give the new `Cluster` at least
