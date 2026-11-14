@@ -285,6 +285,7 @@ Cluster Summary
 Name:                default/sandbox
 System ID:           7423474350493388827
 PostgreSQL Image:    ghcr.io/cloudnative-pg/postgresql:16.4
+Operator:            1.24.1
 Primary instance:    sandbox-1
 Primary start time:  2024-10-08 18:31:57 +0000 UTC (uptime 1m14s)
 Status:              Cluster in healthy state
@@ -323,6 +324,7 @@ Cluster Summary
 Name:                default/sandbox
 System ID:           7423474350493388827
 PostgreSQL Image:    ghcr.io/cloudnative-pg/postgresql:16.4
+Operator:            1.24.1
 Primary instance:    sandbox-1
 Primary start time:  2024-10-08 18:31:57 +0000 UTC (uptime 2m4s)
 Status:              Cluster in healthy state
