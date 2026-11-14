@@ -471,6 +471,26 @@ var _ = Describe("autoGrow plan", func() {
 		Expect(err).ToNot(HaveOccurred())
 		Expect(sizesOf(plan)).To(Equal(map[pvcGroup]string{pgData: "12Gi", wal: "2Gi", tablespace: "10Gi"}))
 
+		// an instance that keeps failing on a full volume exits with any
+		// code, and names the volume: it is grown the same way
+		withExitCode := func(exitCode int32, message string) postgres.PostgresqlStatus {
+			status := withMessage(message)
+			status.Pod.Status.ContainerStatuses[0].LastTerminationState.Terminated.ExitCode = exitCode
+			return status
+		}
+		for _, exitCode := range []int32{0, 1} {
+			plan, err = planAutoGrow(cluster, pvcs, instancesReporting(
+				withExitCode(exitCode, `{"reason":"DiskFull","volumes":["pgdata"]}`)))
+			Expect(err).ToNot(HaveOccurred())
+			Expect(sizesOf(plan)).To(Equal(map[pvcGroup]string{pgData: "12Gi", wal: "2Gi", tablespace: "5Gi"}))
+		}
+
+		// such an exit without a message is no full volume
+		plan, err = planAutoGrow(cluster, pvcs, instancesReporting(withExitCode(1, "")))
+		Expect(err).ToNot(HaveOccurred())
+		Expect(sizesOf(plan)).To(Equal(map[pvcGroup]string{pgData: "10Gi", wal: "2Gi", tablespace: "5Gi"}))
+		Expect(plan.steps).To(BeEmpty())
+
 		// an older instance manager names no volume: the WAL volume is full
 		for _, message := range []string{"", "not a termination message"} {
 			plan, err = planAutoGrow(cluster, pvcs, instancesReporting(withMessage(message)))

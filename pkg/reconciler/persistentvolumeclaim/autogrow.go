@@ -276,9 +276,15 @@ type diskFullTermination struct {
 }
 
 // getDiskFullTermination returns the termination of the PostgreSQL container
-// of an instance for a lack of disk space, nil when there is none
+// of an instance with a full volume, nil when there is none: the instance
+// manager exited for a lack of space for the WAL files, or named full volumes
+// in its termination message whatever the reason of its exit
 func getDiskFullTermination(pod *corev1.Pod) *diskFullTermination {
-	termination := specs.GetMissingDiskSpaceTermination(pod)
+	termination := specs.GetPostgresContainerTermination(pod,
+		func(terminated *corev1.ContainerStateTerminated) bool {
+			return terminated.ExitCode == apiv1.MissingWALDiskSpaceExitCode ||
+				len(postgres.GetDiskFullVolumes(terminated.Message)) > 0
+		})
 	if termination == nil {
 		return nil
 	}

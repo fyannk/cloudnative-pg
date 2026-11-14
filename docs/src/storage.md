@@ -380,9 +380,8 @@ only on one of these signals:
 
 - **the usage reported while PostgreSQL is up**: the most used filesystem of
   the volume, among the instances, crosses the threshold;
-- **an explicit full-disk stop**: the instance manager of an instance did not
-  start PostgreSQL, or stopped it, because the volume holding the WAL files is
-  full, and named it when exiting, as described below. The instance counts as fully used for that
+- **an explicit full-disk stop**: the instance manager of an instance named
+  the volume as full when exiting, as described below. The instance counts as fully used for that
   volume, once per stop: the PostgreSQL container stays terminated, then not
   ready, until the kubelet restarts it, which can take minutes in
   `CrashLoopBackOff`. The operator records the stop it grew the volume for, by
@@ -391,8 +390,8 @@ only on one of these signals:
   new stop. A stop while the volume is already being grown is attributed to
   that growth.
 
-An instance that cannot report its usage for another reason, PostgreSQL
-failing to start or the instance manager unreachable, never grows a volume.
+An instance that cannot report its usage for another reason, the instance
+manager being unreachable for example, never grows a volume.
 
 On a signal, the operator grows the PVCs of that volume on every instance
 together, by one step, through the same path as a change of the size, and
@@ -449,14 +448,27 @@ the PostgreSQL container, `/dev/termination-log`, which the kubelet reports in
 {"reason":"DiskFull","volumes":["wal"]}
 ```
 
-The volume is named `wal`, or `pgdata` without a WAL volume. A full `PGDATA`
-or tablespace volume, with the WAL files on a separate volume, does not stop
-PostgreSQL: the usage reported by the instance grows it.
+The volume is named `wal`, or `pgdata` without a WAL volume.
+
+A full `PGDATA` or tablespace volume, with the WAL files on a separate volume,
+does not stop PostgreSQL, and the usage reported by the instance grows it.
+PostgreSQL may still fail to run on such a volume, typically a replica that
+cannot replay, and its instance, restarting in a loop, reports no usage.
+Whenever it exits, for any reason and with its usual exit code, the instance
+manager therefore names the volumes with less than a PostgreSQL block (8kB)
+available, or with no free inode, in the same message:
+
+```json
+{"reason":"DiskFull","volumes":["pgdata","tbs-alpha"]}
+```
+
+The volumes are named `pgdata`, `wal`, and `tbs-` followed by the name of the
+tablespace.
 
 An exit code `4` without such a message, written by an instance manager older
-than this feature, stands for the volume holding the WAL files. In every case,
-the operator does not fail over to another instance, as described in
-["Disk Full Failure"](instance_manager.md#disk-full-failure).
+than this feature, stands for the volume holding the WAL files. With the exit
+code `4` only, the operator does not fail over to another instance, as
+described in ["Disk Full Failure"](instance_manager.md#disk-full-failure).
 
 #### Known limitations
 
