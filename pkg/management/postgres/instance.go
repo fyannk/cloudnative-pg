@@ -119,6 +119,9 @@ type shutdownOptions struct {
 	// Timeout is the maximum number of seconds to wait for the shutdown to complete
 	// Used only if Wait is true. Defaulted by PostgreSQL to 60 seconds.
 	Timeout *int32
+
+	// SkipCheckpoint skips the CHECKPOINT that precedes a non-immediate shutdown
+	SkipCheckpoint bool
 }
 
 // defaultShutdownOptions are the default shutdown options. That is:
@@ -594,7 +597,9 @@ func (instance *Instance) Shutdown(ctx context.Context, options shutdownOptions)
 		return fmt.Errorf("instance is not running")
 	}
 
-	instance.tryCheckpointBeforeShutdown(ctx, options.Mode)
+	if !options.SkipCheckpoint {
+		instance.tryCheckpointBeforeShutdown(ctx, options.Mode)
+	}
 	instance.ShutdownConnections()
 
 	pgCtlOptions := []string{
@@ -658,7 +663,9 @@ func (instance *Instance) TryShuttingDownSmartFast(ctx context.Context) error {
 
 	if smartTimeout > 0 {
 		contextLogger.Info("Requesting smart shutdown of the PostgreSQL instance")
-		fast := shutdownOptions{Mode: shutdownModeFast, Wait: true, Timeout: &maxStopDelay}
+		// The escalation skips the CHECKPOINT: the smart shutdown in progress
+		// refuses new connections, and ran its own before starting
+		fast := shutdownOptions{Mode: shutdownModeFast, Wait: true, Timeout: &maxStopDelay, SkipCheckpoint: true}
 		err = runSmartShutdownUnlessDemoted(
 			ctx,
 			func() error {
