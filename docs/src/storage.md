@@ -453,10 +453,13 @@ tablespace. The instance manager does so:
 
 - before starting PostgreSQL, when the volume holding the WAL files has no room
   left for a WAL segment: it names `wal`, or `pgdata` without a WAL volume;
-- when PostgreSQL stops after logging a disk full error, with the `53100`
-  (`disk_full`) SQLSTATE or `No space left on device`, for example a crash
+- when PostgreSQL stops within five minutes of logging a disk full error, the
+  `53100` (`disk_full`) SQLSTATE in any language, for example a crash
   recovery that cannot write to a full PGDATA or tablespace volume while the
-  WAL volume has room. It reads the filesystem of each volume and names those
+  WAL volume has room. A disk full error that PostgreSQL survived, such as a
+  query that could not write a temporary file, is forgotten after these five
+  minutes, so that a later stop for another reason is not taken for a full
+  disk, which would hold the failover back. It reads the filesystem of each volume and names those
   with less than 64MiB, or less than 1% of their size, available, or with 1% of
   their inodes free or less. When no volume is full, it exits as for any other
   failure of PostgreSQL, and no volume is grown.

@@ -21,6 +21,7 @@ package logpipe
 
 import (
 	"strings"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -35,10 +36,11 @@ var _ = Describe("disk full errors in the PostgreSQL logs", func() {
 		translated = `2026-11-13 10:00:01.000 UTC,,,9300,,601c20b5.2454,1,,2026-11-13 09:00:00 UTC,1/0,0,` +
 			`FATAL,53100,"n'a pas pu étendre le fichier « pg_tblspc/16385/PG_17/5/16386 » : ` +
 			`Aucun espace disponible sur le périphérique",,,,,,,,,"",startup` + "\n"
-		// the same in English, as reported with another SQLSTATE
-		english = `2026-11-13 10:00:01.000 UTC,,,9300,,601c20b5.2454,1,,2026-11-13 09:00:00 UTC,1/0,0,` +
-			`PANIC,58030,"could not write to file ""pg_wal/xlogtemp.9300"": No space left on device",` +
-			`,,,,,,,,"",startup` + "\n"
+		// a text of ENOSPC that is not a disk full error of PostgreSQL: a
+		// statement logged with log_statement
+		quoted = `2026-11-13 10:00:02.000 UTC,app,app,9400,"10.0.0.1:5432",601c20b5.2500,1,"SELECT",` +
+			`2026-11-13 09:00:00 UTC,3/0,0,LOG,00000,"statement: SELECT 'No space left on device'",` +
+			`,,,,,,,,"psql",client backend` + "\n"
 	)
 
 	read := func(ctx SpecContext, lines string) {
@@ -64,8 +66,23 @@ var _ = Describe("disk full errors in the PostgreSQL logs", func() {
 		Expect(IsDiskFullLogged()).To(BeFalse())
 	})
 
-	It("is reported by the text of ENOSPC, in the first record too", func(ctx SpecContext) {
-		read(ctx, english)
+	It("is not reported by the text of ENOSPC alone", func(ctx SpecContext) {
+		read(ctx, quoted)
+		Expect(IsDiskFullLogged()).To(BeFalse())
+	})
+
+	It("is forgotten when PostgreSQL kept running after the error", func(ctx SpecContext) {
+		clock := time.Date(2026, 11, 13, 10, 0, 0, 0, time.UTC)
+		now = func() time.Time { return clock }
+		DeferCleanup(func() { now = time.Now })
+
+		read(ctx, translated)
 		Expect(IsDiskFullLogged()).To(BeTrue())
+
+		clock = clock.Add(diskFullWindow)
+		Expect(IsDiskFullLogged()).To(BeTrue())
+
+		clock = clock.Add(time.Second)
+		Expect(IsDiskFullLogged()).To(BeFalse())
 	})
 })
