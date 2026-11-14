@@ -591,6 +591,14 @@ wins, whatever the order of the rules: a kind of pod over `allPods`, `allPods`
 or any other kind over `all`. Two rules giving the same key two values on the
 same target of the same resource are an error.
 
+:::warning
+    A rule reaching the pods of the poolers (`all`, `allPods` or `poolerPods`)
+    changes the pod template of every `Pooler` Deployment: adding, changing or
+    removing such a rule in the operator configuration rolls out all the
+    poolers the operator manages at the same time, when it restarts. The
+    instance pods are patched in place, without a restart.
+:::
+
 On a given object, by increasing precedence:
 
 1. `DEFAULT_METADATA`
