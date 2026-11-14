@@ -168,7 +168,9 @@ func (d *ClusterCustomDefaulter) setDefaultStorageClass(ctx context.Context, clu
 
 // hasPersistentVolumeClaims tells whether a PVC labeled as belonging to the
 // named Cluster exists in the namespace. A Cluster without a name yet (one
-// created with generateName) has none.
+// created with generateName) has none. The PVCs being deleted do not count:
+// they are those of a deleted Cluster of the same name, on their way out
+// while its Pods stop, and the new Cluster will not use them.
 func hasPersistentVolumeClaims(
 	ctx context.Context,
 	reader client.Reader,
@@ -184,12 +186,16 @@ func hasPersistentVolumeClaims(
 		&pvcs,
 		client.InNamespace(namespace),
 		client.MatchingLabels{utils.ClusterLabelName: clusterName},
-		client.Limit(1),
 	); err != nil {
 		return false, err
 	}
 
-	return len(pvcs.Items) > 0, nil
+	for idx := range pvcs.Items {
+		if pvcs.Items[idx].DeletionTimestamp == nil {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // TODO(user): change verbs to "verbs=create;update;delete" if you want to enable deletion validation.

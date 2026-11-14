@@ -172,6 +172,10 @@ spec:
     the existing ones were: with the class named in the `Cluster`, or with the
     default storage class of the Kubernetes cluster. Name the class in the
     `Cluster` definition you restore or synchronize to make that explicit.
+    The PVCs being deleted do not count: after a `Cluster` is deleted, its
+    PVCs stay in the `Terminating` state until its Pods are gone, and a
+    `Cluster` created again with the same name in the meantime is a new one,
+    which gets the default class.
 :::
 
 ## Configuration via a PVC template
