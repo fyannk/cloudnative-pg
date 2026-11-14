@@ -89,7 +89,8 @@ func (c *CacheCollector) Describe(ch chan<- *prometheus.Desc) {
 // Collect implements prometheus.Collector. A kind that cannot be listed is
 // left out of the scrape, and logged.
 func (c *CacheCollector) Collect(ch chan<- prometheus.Metric) {
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), collectTimeout)
+	defer cancel()
 	contextLogger := log.FromContext(ctx)
 
 	for _, object := range c.objects {
