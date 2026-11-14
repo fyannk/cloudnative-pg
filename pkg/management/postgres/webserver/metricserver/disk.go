@@ -20,6 +20,8 @@ SPDX-License-Identifier: Apache-2.0
 package metricserver
 
 import (
+	"time"
+
 	"github.com/cloudnative-pg/machinery/pkg/log"
 	"github.com/prometheus/client_golang/prometheus"
 
@@ -109,12 +111,15 @@ func (e *Exporter) updateDiskMetrics() {
 	}
 }
 
+// diskCollectTimeout bounds the reading of the filesystems in a scrape
+const diskCollectTimeout = 5 * time.Second
+
 // collectDiskMetrics reads the filesystem of each volume of the instance.
 // A volume that cannot be read is left out, and the others are reported.
 func collectDiskMetrics(e *Exporter) error {
 	e.Metrics.Disk.reset()
 
-	usages, err := volumeusage.Get(e.diskPaths, e.statfs)
+	usages, err := volumeusage.GetWithTimeout(e.diskPaths, e.statfs, diskCollectTimeout)
 	for _, usage := range usages {
 		e.Metrics.Disk.TotalBytes.WithLabelValues(usage.Volume).Set(float64(usage.TotalBytes))
 		e.Metrics.Disk.AvailableBytes.WithLabelValues(usage.Volume).Set(float64(usage.AvailableBytes))
