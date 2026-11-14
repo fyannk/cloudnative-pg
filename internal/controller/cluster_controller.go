@@ -1477,7 +1477,7 @@ func (r *ClusterReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manag
 func jobOwnerIndexFunc(rawObj client.Object) []string {
 	job := rawObj.(*batchv1.Job)
 
-	if ownerName, ok := IsOwnedByCluster(job); ok {
+	if ownerName, ok := apiv1.IsOwnedByCluster(job); ok {
 		return []string{ownerName}
 	}
 
@@ -1494,7 +1494,7 @@ func (r *ClusterReconciler) createFieldIndexes(ctx context.Context, mgr ctrl.Man
 		podOwnerKey, func(rawObj client.Object) []string {
 			pod := rawObj.(*corev1.Pod)
 
-			if ownerName, ok := IsOwnedByCluster(pod); ok {
+			if ownerName, ok := apiv1.IsOwnedByCluster(pod); ok {
 				return []string{ownerName}
 			}
 
@@ -1557,7 +1557,7 @@ func (r *ClusterReconciler) createFieldIndexes(ctx context.Context, mgr ctrl.Man
 		pvcOwnerKey, func(rawObj client.Object) []string {
 			persistentVolumeClaim := rawObj.(*corev1.PersistentVolumeClaim)
 
-			if ownerName, ok := IsOwnedByCluster(persistentVolumeClaim); ok {
+			if ownerName, ok := apiv1.IsOwnedByCluster(persistentVolumeClaim); ok {
 				return []string{ownerName}
 			}
 
@@ -1620,25 +1620,6 @@ func (r *ClusterReconciler) createFieldIndexes(ctx context.Context, mgr ctrl.Man
 		ctx,
 		&batchv1.Job{},
 		jobOwnerKey, jobOwnerIndexFunc)
-}
-
-// IsOwnedByCluster checks that an object is owned by a Cluster and returns
-// the owner name
-func IsOwnedByCluster(obj client.Object) (string, bool) {
-	owner := metav1.GetControllerOf(obj)
-	if owner == nil {
-		return "", false
-	}
-
-	if owner.Kind != apiv1.ClusterKind {
-		return "", false
-	}
-
-	if owner.APIVersion != apiSGVString {
-		return "", false
-	}
-
-	return owner.Name, true
 }
 
 // mapSecretsToClusters returns a function mapping cluster events watched to cluster reconcile requests
@@ -1828,7 +1809,7 @@ func (r *ClusterReconciler) mapNodeToClusters() handler.MapFunc {
 		var requests []reconcile.Request
 		// build requests for nodes the pods are running on
 		for idx := range childPods.Items {
-			if cluster, ok := IsOwnedByCluster(&childPods.Items[idx]); ok {
+			if cluster, ok := apiv1.IsOwnedByCluster(&childPods.Items[idx]); ok {
 				requests = append(requests,
 					reconcile.Request{
 						NamespacedName: types.NamespacedName{

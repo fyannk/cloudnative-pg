@@ -123,7 +123,7 @@ var _ = Describe("backup_controller starting a backup", func() {
 		store = fake.NewClientBuilder().WithScheme(scheme).
 			WithStatusSubresource(&apiv1.Cluster{}, &apiv1.Backup{}).
 			WithIndex(&corev1.Pod{}, podOwnerKey, func(rawObj client.Object) []string {
-				if owner, ok := IsOwnedByCluster(rawObj.(*corev1.Pod)); ok {
+				if owner, ok := apiv1.IsOwnedByCluster(rawObj.(*corev1.Pod)); ok {
 					return []string{owner}
 				}
 				return nil

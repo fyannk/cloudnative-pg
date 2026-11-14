@@ -2039,3 +2039,30 @@ var _ = Describe("FailureDomainKeys", func() {
 		Expect(sync.FailureDomainKeys()).To(Equal([]string{"topology.kubernetes.io/zone"}))
 	})
 })
+
+var _ = Describe("IsOwnedByCluster", func() {
+	ownedBy := func(owner metav1.OwnerReference) *corev1.Pod {
+		return &corev1.Pod{ObjectMeta: metav1.ObjectMeta{OwnerReferences: []metav1.OwnerReference{owner}}}
+	}
+
+	DescribeTable("reads the Cluster from the controller reference",
+		func(obj *corev1.Pod, expectedName string, expectedOwned bool) {
+			name, owned := IsOwnedByCluster(obj)
+			Expect(owned).To(Equal(expectedOwned))
+			Expect(name).To(Equal(expectedName))
+		},
+		Entry("controlled by a Cluster", ownedBy(metav1.OwnerReference{
+			APIVersion: SchemeGroupVersion.String(), Kind: ClusterKind, Name: "cluster-example", Controller: ptr.To(true),
+		}), "cluster-example", true),
+		Entry("without owner", &corev1.Pod{}, "", false),
+		Entry("owned by a Cluster that is not its controller", ownedBy(metav1.OwnerReference{
+			APIVersion: SchemeGroupVersion.String(), Kind: ClusterKind, Name: "cluster-example",
+		}), "", false),
+		Entry("controlled by another kind", ownedBy(metav1.OwnerReference{
+			APIVersion: SchemeGroupVersion.String(), Kind: PoolerKind, Name: "pooler-example", Controller: ptr.To(true),
+		}), "", false),
+		Entry("controlled by a Cluster of another API group", ownedBy(metav1.OwnerReference{
+			APIVersion: "example.com/v1", Kind: ClusterKind, Name: "cluster-example", Controller: ptr.To(true),
+		}), "", false),
+	)
+})
