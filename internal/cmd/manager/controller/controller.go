@@ -264,7 +264,7 @@ func RunController(
 		"availableArchitectures", utils.GetAvailableArchitectures(),
 	)
 
-	if err := ensurePKI(ctx, kubeClient, webhookServer.Options.CertDir, port, conf); err != nil {
+	if err := ensurePKI(ctx, kubeClient, webhookServer.Options.CertDir, conf); err != nil {
 		return err
 	}
 
@@ -558,7 +558,6 @@ func ensurePKI(
 	ctx context.Context,
 	kubeClient client.Client,
 	mgrCertDir string,
-	webhookPort int,
 	conf *configuration.Data,
 ) error {
 	if conf.WebhookCertDir != "" {
@@ -575,7 +574,6 @@ func ensurePKI(
 		SecretName:                         conf.GetWebhookSecretName(),
 		ServiceName:                        webhookServiceNames[0],
 		AlternativeServiceNames:            webhookServiceNames[1:],
-		WebhookPort:                        webhookPort,
 		OperatorNamespace:                  conf.OperatorNamespace,
 		MutatingWebhookConfigurationName:   conf.GetMutatingWebhookConfigurationName(),
 		ValidatingWebhookConfigurationName: conf.GetValidatingWebhookConfigurationName(),

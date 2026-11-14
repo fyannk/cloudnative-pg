@@ -21,18 +21,11 @@ package certs
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"path/filepath"
 	"slices"
 
-	"github.com/cloudnative-pg/machinery/pkg/log"
-	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	appsv1 "k8s.io/api/apps/v1"
-	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/apimachinery/pkg/util/intstr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -85,28 +78,12 @@ func mountedSecretName(deployment *appsv1.Deployment, mountPath string) string {
 	return ""
 }
 
-// webhookAltDNSNames returns the DNS names the serving certificate must carry,
+// webhookAltDNSNames returns the DNS names the serving certificate carries,
 // sorted and without duplicates: the configured Service name and the
-// alternative ones, the Services of the operator namespace selecting the pods
-// of the deployment on the webhook port, and the Services the managed webhook
-// configurations point at.
-//
-// What the operator is not allowed to read, or what does not exist, is skipped
-// with a log line: the answer is the same on every round. Any other error,
-// transient, is returned with the names found so far: the caller must not
-// compare them with the certificate, which would lose the names that could not
-// be discovered this time.
-func (pki PublicKeyInfrastructure) webhookAltDNSNames(
-	ctx context.Context,
-	kubeClient client.Client,
-	deployment *appsv1.Deployment,
-) ([]string, error) {
-	selecting, selectingErr := pki.servicesSelectingDeployment(ctx, kubeClient, deployment)
-	configured, configuredErr := pki.servicesOfWebhookConfigurations(ctx, kubeClient)
-
+// alternative ones. A webhook Service with another name is declared with
+// WEBHOOK_SERVICE_NAME
+func (pki PublicKeyInfrastructure) webhookAltDNSNames() []string {
 	serviceNames := append([]string{pki.ServiceName}, pki.AlternativeServiceNames...)
-	serviceNames = append(serviceNames, selecting...)
-	serviceNames = append(serviceNames, configured...)
 
 	dnsNames := make([]string, 0, len(serviceNames))
 	for _, name := range serviceNames {
@@ -116,133 +93,5 @@ func (pki PublicKeyInfrastructure) webhookAltDNSNames(
 		dnsNames = append(dnsNames, fmt.Sprintf("%v.%v.svc", name, pki.OperatorNamespace))
 	}
 	slices.Sort(dnsNames)
-	return slices.Compact(dnsNames), errors.Join(selectingErr, configuredErr)
-}
-
-// isStableDiscoveryError tells whether a discovery error gives the same answer
-// on every round, so that the names can be computed without what it hides: the
-// object does not exist, or the operator is not allowed to read it
-func isStableDiscoveryError(err error) bool {
-	return apierrors.IsNotFound(err) || apierrors.IsForbidden(err)
-}
-
-// servicesSelectingDeployment returns the names of the Services of the
-// operator namespace whose selector matches the pod template of the
-// deployment and which expose the webhook port. Not being allowed to list
-// them is not an error: the configured names are used.
-func (pki PublicKeyInfrastructure) servicesSelectingDeployment(
-	ctx context.Context,
-	kubeClient client.Client,
-	deployment *appsv1.Deployment,
-) ([]string, error) {
-	if deployment == nil || pki.WebhookPort == 0 {
-		return nil, nil
-	}
-
-	services := &corev1.ServiceList{}
-	if err := kubeClient.List(ctx, services, client.InNamespace(pki.OperatorNamespace)); err != nil {
-		if !isStableDiscoveryError(err) {
-			return nil, fmt.Errorf("while listing the Services of the operator namespace %q: %w",
-				pki.OperatorNamespace, err)
-		}
-		log.FromContext(ctx).Info("Cannot list the Services of the operator namespace, "+
-			"the webhook certificate carries the configured names only",
-			"namespace", pki.OperatorNamespace, "error", err.Error())
-		return nil, nil
-	}
-
-	podTemplate := deployment.Spec.Template.Spec
-	podLabels := deployment.Spec.Template.Labels
-	var names []string
-	for _, service := range services.Items {
-		if !selectorMatches(service.Spec.Selector, podLabels) {
-			continue
-		}
-		for _, port := range service.Spec.Ports {
-			if targetsPort(port.TargetPort, pki.WebhookPort, podTemplate.Containers) {
-				names = append(names, service.Name)
-				break
-			}
-		}
-	}
-	return names, nil
-}
-
-// selectorMatches is true when the selector is not empty and every one of its
-// labels is carried by the pod labels
-func selectorMatches(selector, podLabels map[string]string) bool {
-	if len(selector) == 0 {
-		return false
-	}
-	for key, value := range selector {
-		if podLabels[key] != value {
-			return false
-		}
-	}
-	return true
-}
-
-// targetsPort is true when the target port of a Service port is the given
-// port number, directly or through the name of a container port
-func targetsPort(target intstr.IntOrString, port int, containers []corev1.Container) bool {
-	switch target.Type {
-	case intstr.Int:
-		return int(target.IntVal) == port
-	case intstr.String:
-		for _, container := range containers {
-			for _, containerPort := range container.Ports {
-				if containerPort.Name == target.StrVal && int(containerPort.ContainerPort) == port {
-					return true
-				}
-			}
-		}
-	}
-	return false
-}
-
-// servicesOfWebhookConfigurations returns the names of the Services of the
-// operator namespace the managed webhook configurations point at. A
-// configuration that does not exist, or that the operator is not allowed to
-// read, points at none.
-func (pki PublicKeyInfrastructure) servicesOfWebhookConfigurations(
-	ctx context.Context,
-	kubeClient client.Client,
-) ([]string, error) {
-	if !pki.ManageWebhookConfigurations {
-		return nil, nil
-	}
-
-	var clientConfigs []admissionregistrationv1.WebhookClientConfig
-
-	mutating := &admissionregistrationv1.MutatingWebhookConfiguration{}
-	err := kubeClient.Get(ctx, types.NamespacedName{Name: pki.MutatingWebhookConfigurationName}, mutating)
-	switch {
-	case err == nil:
-		for _, webhook := range mutating.Webhooks {
-			clientConfigs = append(clientConfigs, webhook.ClientConfig)
-		}
-	case !isStableDiscoveryError(err):
-		return nil, fmt.Errorf("while reading the MutatingWebhookConfiguration %q: %w",
-			pki.MutatingWebhookConfigurationName, err)
-	}
-
-	validating := &admissionregistrationv1.ValidatingWebhookConfiguration{}
-	err = kubeClient.Get(ctx, types.NamespacedName{Name: pki.ValidatingWebhookConfigurationName}, validating)
-	switch {
-	case err == nil:
-		for _, webhook := range validating.Webhooks {
-			clientConfigs = append(clientConfigs, webhook.ClientConfig)
-		}
-	case !isStableDiscoveryError(err):
-		return nil, fmt.Errorf("while reading the ValidatingWebhookConfiguration %q: %w",
-			pki.ValidatingWebhookConfigurationName, err)
-	}
-
-	var names []string
-	for _, clientConfig := range clientConfigs {
-		if clientConfig.Service != nil && clientConfig.Service.Namespace == pki.OperatorNamespace {
-			names = append(names, clientConfig.Service.Name)
-		}
-	}
-	return names, nil
+	return slices.Compact(dnsNames)
 }
