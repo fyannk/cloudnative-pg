@@ -20,9 +20,11 @@ SPDX-License-Identifier: Apache-2.0
 package specs
 
 import (
+	policyv1 "k8s.io/api/policy/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
+	"github.com/cloudnative-pg/cloudnative-pg/internal/configuration"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/utils"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -67,5 +69,45 @@ var _ = Describe("POD Disruption Budget specifications", func() {
 	It("require at least one primary instance to be available at all times", func() {
 		result := BuildPrimaryPodDisruptionBudget(cluster)
 		Expect(result.Spec.MinAvailable.IntVal).To(Equal(int32(minAvailablePrimary)))
+	})
+})
+
+// The PodDisruptionBudgets get the metadata of their kind
+var _ = Describe("The metadata of the PodDisruptionBudgets", func() {
+	It("comes from podDisruptionBudgets, never from the Pods'", func() {
+		previous := configuration.Current
+		configuration.Current = configuration.NewConfiguration()
+		DeferCleanup(func() { configuration.Current = previous })
+		configuration.Current.DefaultMetadata = `[` +
+			`{"targets": ["podDisruptionBudgets"], "labels": {"team": "platform"}},` +
+			`{"targets": ["pgPods"], "labels": {"tier": "pods"}}` +
+			`]`
+		Expect(configuration.Current.ParseDefaultAndMandatoryMetadata()).To(Succeed())
+
+		cluster := &apiv1.Cluster{
+			ObjectMeta: metav1.ObjectMeta{Name: "payments", Namespace: "payments"},
+			Spec: apiv1.ClusterSpec{
+				Instances: 3,
+				MetadataPropagation: []apiv1.MetadataPropagationRule{
+					{
+						Targets:     []apiv1.MetadataPropagationTarget{"podDisruptionBudgets"},
+						Annotations: map[string]string{"example.com/note": "pdb"},
+					},
+					{
+						Targets:     []apiv1.MetadataPropagationTarget{"pgPods"},
+						Annotations: map[string]string{"vault.hashicorp.com/agent-inject": "true"},
+					},
+				},
+			},
+		}
+		for _, pdb := range []*policyv1.PodDisruptionBudget{
+			BuildPrimaryPodDisruptionBudget(cluster), BuildReplicasPodDisruptionBudget(cluster),
+		} {
+			Expect(pdb.Annotations).To(HaveKeyWithValue("example.com/note", "pdb"), pdb.Name)
+			Expect(pdb.Annotations).NotTo(HaveKey("vault.hashicorp.com/agent-inject"), pdb.Name)
+			Expect(pdb.Labels).To(HaveKeyWithValue("team", "platform"), pdb.Name)
+			Expect(pdb.Labels).NotTo(HaveKey("tier"), pdb.Name)
+			Expect(pdb.Labels).To(HaveKeyWithValue(utils.ClusterLabelName, "payments"), pdb.Name)
+		}
 	})
 })

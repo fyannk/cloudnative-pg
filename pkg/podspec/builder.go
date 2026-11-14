@@ -42,8 +42,9 @@ func NewFrom(podTemplate *apiv1.PodTemplateSpec) *Builder {
 	if podTemplate == nil {
 		podTemplate = &apiv1.PodTemplateSpec{}
 	}
+	// Work on a copy: the template belongs to the caller's object
 	return &Builder{
-		status: *podTemplate,
+		status: *podTemplate.DeepCopy(),
 	}
 }
 

@@ -34,6 +34,7 @@ import (
 	config "github.com/cloudnative-pg/cloudnative-pg/internal/configuration"
 	pgBouncerConfig "github.com/cloudnative-pg/cloudnative-pg/pkg/management/pgbouncer/config"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/management/url"
+	"github.com/cloudnative-pg/cloudnative-pg/pkg/metadatarules"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/podspec"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/postgres"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/specs"
@@ -138,7 +139,7 @@ func Deployment(pooler *apiv1.Pooler, cluster *apiv1.Cluster) (*appsv1.Deploymen
 		}, false).
 		Build()
 
-	return &appsv1.Deployment{
+	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      pooler.Name,
 			Namespace: pooler.Namespace,
@@ -171,7 +172,36 @@ func Deployment(pooler *apiv1.Pooler, cluster *apiv1.Cluster) (*appsv1.Deploymen
 			},
 			Strategy: getDeploymentStrategy(pooler.Spec.DeploymentStrategy),
 		},
-	}, nil
+	}
+	pooler.ApplyMetadataTo(&deployment.ObjectMeta, metadatarules.PoolerDeployments)
+	pooler.ApplyMetadataTo(&deployment.Spec.Template.ObjectMeta, metadatarules.PoolerPods)
+	reachesPods := pooler.MetadataReaches(metadatarules.PoolerPods)
+	reachesDeployment := pooler.MetadataReaches(metadatarules.PoolerDeployments)
+	if reachesPods || reachesDeployment {
+		// The Deployment is updated when its hash changes, and the hash of
+		// the Pooler spec misses the rules of the operator: include the
+		// metadata of the Pods and of the Deployment, each only when a rule
+		// reaches it, so that the Deployment follows every rule and keeps
+		// its hash otherwise
+		var podMetadata, deploymentMetadata metav1.ObjectMeta
+		if reachesPods {
+			podMetadata = deployment.Spec.Template.ObjectMeta
+		}
+		if reachesDeployment {
+			deploymentMetadata = deployment.ObjectMeta
+		}
+		templateHash, err := hash.ComputeHash(struct {
+			poolerHash string
+			metadata   metav1.ObjectMeta
+			deployment metav1.ObjectMeta
+		}{poolerHash, podMetadata, deploymentMetadata})
+		if err != nil {
+			return nil, err
+		}
+		deployment.Annotations[utils.PoolerSpecHashAnnotationName] = templateHash
+	}
+
+	return deployment, nil
 }
 
 func computeTemplateHash(pooler *apiv1.Pooler, operatorImageName string) (string, error) {

@@ -270,3 +270,31 @@ var _ = Describe("Pod template builder", func() {
 		Expect(template.Spec.Containers[0].Env[0].Value).To(Equal("two"))
 	})
 })
+
+// The template given to the builder belongs to the caller's object, a
+// Pooler's spec: building a Pod template must leave it as it was, or the
+// next build of the same object starts from what the previous one added
+var _ = Describe("Pod template builder and the template it starts from", func() {
+	It("never writes into the passed template", func() {
+		template := &apiv1.PodTemplateSpec{
+			ObjectMeta: apiv1.Metadata{
+				Labels:      map[string]string{"team": "payments"},
+				Annotations: map[string]string{"note": "x"},
+			},
+			Spec: corev1.PodSpec{
+				Containers: []corev1.Container{{Name: "pgbouncer", Env: []corev1.EnvVar{{Name: "A", Value: "1"}}}},
+				Volumes:    []corev1.Volume{{Name: "existing"}},
+			},
+		}
+		original := template.DeepCopy()
+
+		NewFrom(template).
+			WithLabel("cnpg.io/poolerName", "pooler").
+			WithAnnotation("added", "yes").
+			WithVolume(&corev1.Volume{Name: "added"}).
+			WithContainerEnv("pgbouncer", corev1.EnvVar{Name: "B", Value: "2"}, true).
+			Build()
+
+		Expect(template).To(Equal(original))
+	})
+})

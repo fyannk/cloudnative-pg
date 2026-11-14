@@ -26,6 +26,7 @@ import (
 
 	"github.com/cloudnative-pg/machinery/pkg/log"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	apierrs "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -33,6 +34,7 @@ import (
 
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
 	"github.com/cloudnative-pg/cloudnative-pg/internal/configuration"
+	"github.com/cloudnative-pg/cloudnative-pg/pkg/metadatarules"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/servicespec"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/specs/pgbouncer"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/utils"
@@ -244,6 +246,7 @@ func (r *PoolerReconciler) updateRBAC(
 //
 //   - the ServiceAccount exits
 //   - it contains the ImagePullSecret if required
+//   - it has the metadata the rules give to every object of the Pooler
 //
 // Any other property of the ServiceAccount is preserved.
 //
@@ -282,6 +285,7 @@ func (r *PoolerReconciler) updateServiceAccount(
 
 	origServiceAccount := resources.ServiceAccount.DeepCopy()
 	ensureServiceAccountHaveImagePullSecret(resources.ServiceAccount, pullSecretName)
+	pooler.ApplyMetadataTo(&resources.ServiceAccount.ObjectMeta, metadatarules.All)
 	if !reflect.DeepEqual(origServiceAccount, resources.ServiceAccount) {
 		contextLog.Info("Updating service account")
 		if err := r.Patch(ctx, resources.ServiceAccount, client.MergeFrom(origServiceAccount)); err != nil {
@@ -354,6 +358,7 @@ func (r *PoolerReconciler) ensureServiceAccountPullSecret(
 		Data: operatorSecret.Data,
 		Type: operatorSecret.Type,
 	}
+	pooler.ApplyMetadataTo(&secret.ObjectMeta, metadatarules.Secrets)
 
 	if err := ctrl.SetControllerReference(pooler, secret, r.Scheme); err != nil {
 		return "", err
@@ -374,12 +379,13 @@ func (r *PoolerReconciler) ensureServiceAccountPullSecret(
 	if _, isOwned := isOwnedByPoolerKind(&remoteSecret); !isOwned {
 		return pullSecretName, nil
 	}
-	if reflect.DeepEqual(remoteSecret.Data, secret.Data) && reflect.DeepEqual(remoteSecret.Type, secret.Type) {
-		return pullSecretName, nil
-	}
 	patchedSecret := remoteSecret.DeepCopy()
 	patchedSecret.Data = secret.Data
 	patchedSecret.Type = secret.Type
+	pooler.ApplyMetadataTo(&patchedSecret.ObjectMeta, metadatarules.Secrets)
+	if equality.Semantic.DeepEqual(patchedSecret, &remoteSecret) {
+		return pullSecretName, nil
+	}
 
 	contextLog.Info("patching the pull secret")
 	return pullSecretName, r.Patch(ctx, patchedSecret, client.MergeFrom(&remoteSecret))
