@@ -344,6 +344,15 @@ func (pki PublicKeyInfrastructure) schedulePeriodicMaintenance(
 	return nil
 }
 
+// isTransientAPIError tells whether the API server answered with an error
+// that the next round may not get: a missing object and a missing permission
+// are stable answers, and an error that is not one of the API server, such as
+// no deployment matching the labels, is not transient either
+func isTransientAPIError(err error) bool {
+	var status apierrors.APIStatus
+	return errors.As(err, &status) && !isStableDiscoveryError(err)
+}
+
 // ensureCertificate will ensure that a webhook certificate exists and is usable.
 // The Secret is the one mounted in the operator deployment when it can be read,
 // and the certificate carries every DNS name the webhook server is reachable
@@ -358,6 +367,13 @@ func (pki PublicKeyInfrastructure) ensureCertificate(
 	deployment, deploymentErr := pki.operatorDeployment(ctx, kubeClient)
 	secretName := pki.webhookSecretName(deployment)
 	altDNSNames, discoveryErr := pki.webhookAltDNSNames(ctx, kubeClient, deployment)
+	if isTransientAPIError(deploymentErr) {
+		// Without the deployment, neither the mounted Secret nor the Services
+		// selecting its pods are known: as for the discovery, the names are
+		// not all there
+		discoveryErr = errors.Join(discoveryErr,
+			fmt.Errorf("while reading the operator deployment: %w", deploymentErr))
+	}
 	webhookHostname := fmt.Sprintf(
 		"%v.%v.svc",
 		pki.ServiceName,
