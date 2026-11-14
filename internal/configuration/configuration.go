@@ -192,6 +192,13 @@ type Data struct {
 	// be disabled when the webhook configurations are managed externally (e.g.
 	// by cert-manager's CA injector or by GitOps).
 	ManageWebhookConfigurations bool `json:"manageWebhookConfigurations" env:"MANAGE_WEBHOOK_CONFIGURATIONS"`
+
+	// PropagateProxyEnv is true when the proxy settings of the operator
+	// (HTTP_PROXY, HTTPS_PROXY and NO_PROXY, read from its environment) are
+	// set on the workloads it creates, in both the upper and the lower case
+	// spelling, unless the resource defines any of them itself. Enabled by
+	// default, as the OLM bundle declares the operator proxy-aware.
+	PropagateProxyEnv bool `json:"propagateProxyEnv" env:"PROPAGATE_PROXY_ENV"`
 }
 
 // Current is the configuration used by the operator
@@ -212,6 +219,7 @@ func newDefaultConfig() *Data {
 		KubernetesClusterDomain:     DefaultKubernetesClusterDomain,
 		DrainTaints:                 DefaultDrainTaints,
 		ManageWebhookConfigurations: true,
+		PropagateProxyEnv:           true,
 	}
 }
 
