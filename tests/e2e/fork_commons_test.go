@@ -22,6 +22,7 @@ package e2e
 import (
 	"maps"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -132,4 +133,84 @@ func setOperatorConfiguration(settings map[string]string) {
 	Expect(err).ToNot(HaveOccurred())
 
 	Expect(operator.ReloadDeployment(env.Ctx, env.Client, operatorReloadTimeout)).To(Succeed())
+}
+
+// setOperatorDeploymentEnv replaces the environment variables of the
+// operator container having the names of the given ones, adds the others,
+// and waits for the operator to be rolled out. It returns the environment
+// the container had before.
+func setOperatorDeploymentEnv(variables []corev1.EnvVar) []corev1.EnvVar {
+	GinkgoHelper()
+
+	var previous []corev1.EnvVar
+	updateOperatorDeploymentEnv(func(current []corev1.EnvVar) []corev1.EnvVar {
+		previous = append([]corev1.EnvVar(nil), current...)
+
+		result := make([]corev1.EnvVar, 0, len(current)+len(variables))
+		for _, envVar := range current {
+			replaced := false
+			for _, variable := range variables {
+				replaced = replaced || variable.Name == envVar.Name
+			}
+			if !replaced {
+				result = append(result, envVar)
+			}
+		}
+		return append(result, variables...)
+	})
+	return previous
+}
+
+// restoreOperatorDeploymentEnv puts back the environment returned by
+// setOperatorDeploymentEnv, and waits for the operator to be rolled out
+func restoreOperatorDeploymentEnv(previous []corev1.EnvVar) {
+	GinkgoHelper()
+	updateOperatorDeploymentEnv(func([]corev1.EnvVar) []corev1.EnvVar { return previous })
+}
+
+func updateOperatorDeploymentEnv(mutate func(current []corev1.EnvVar) []corev1.EnvVar) {
+	GinkgoHelper()
+
+	var key ctrlclient.ObjectKey
+	err := retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+		deployment, err := operator.GetDeployment(env.Ctx, env.Client)
+		if err != nil {
+			return err
+		}
+		key = ctrlclient.ObjectKeyFromObject(&deployment)
+		container := &deployment.Spec.Template.Spec.Containers[0]
+		container.Env = mutate(container.Env)
+		return env.Client.Update(env.Ctx, &deployment)
+	})
+	Expect(err).ToNot(HaveOccurred())
+
+	// the rollout is over once the only Pod left is one of the new template
+	Eventually(func(g Gomega) {
+		deployment := &appsv1.Deployment{}
+		g.Expect(env.Client.Get(env.Ctx, key, deployment)).To(Succeed())
+		g.Expect(deployment.Status.ObservedGeneration).To(Equal(deployment.Generation))
+		g.Expect(deployment.Status.UpdatedReplicas).To(Equal(*deployment.Spec.Replicas))
+		g.Expect(deployment.Status.Replicas).To(Equal(*deployment.Spec.Replicas))
+		g.Expect(deployment.Status.AvailableReplicas).To(Equal(*deployment.Spec.Replicas))
+
+		_, err := operator.GetPod(env.Ctx, env.Client)
+		g.Expect(err).ToNot(HaveOccurred())
+	}, operatorReloadTimeout).Should(Succeed())
+
+	Expect(operator.WaitForReady(env.Ctx, env.Client, operatorReloadTimeout, true)).To(Succeed())
+}
+
+// postgresContainerEnv returns the environment variables set in the
+// specification of the PostgreSQL container of an instance Pod, by name
+func postgresContainerEnv(pod corev1.Pod) map[string]string {
+	result := map[string]string{}
+	for _, container := range pod.Spec.Containers {
+		if container.Name != "postgres" {
+			continue
+		}
+		for _, envVar := range container.Env {
+			result[envVar.Name] = envVar.Value
+		}
+	}
+	return result
 }
