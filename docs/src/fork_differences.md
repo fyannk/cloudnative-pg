@@ -43,7 +43,6 @@ from upstream, starting with what changes without any new setting.
 | A `Pooler` whose Deployment cannot run its Pods (quota, rollout past its deadline) goes to the `inactive` phase, with the message of the Deployment as the reason | |
 | A `Cluster` whose major upgrade Job failed goes to the `Unrecoverable` phase instead of staying in the upgrade phase | |
 | An error ending a reconciliation of a `Cluster`, `Pooler`, `Backup` or `ScheduledBackup` is reported by a `ReconciliationFailed` Warning event on the object | |
-| The immediate `Backup` of a `ScheduledBackup` is named after the creation time of the `ScheduledBackup`, which is also its `status.lastScheduleTime`, instead of the time the operator creates it | |
 | A `ScheduledBackup` with a five-field schedule gets a `ScheduleFieldCount` Warning event; schedule descriptors such as `@daily` do not raise the admission warning anymore | [Cron schedule](backup.md#cron-schedule) |
 | New Warning events and metrics: `BackupDelayed`, `BackupPending`, `cnpg_pgbouncer_up`, `cnpg_disk_*`, `cnpg_operator_*` | [Monitoring](monitoring.md) |
 | `kubectl cnpg report operator` finds the operator by its Deployment, and only includes its own webhook configurations | [Plugin](kubectl-plugin.md) |
