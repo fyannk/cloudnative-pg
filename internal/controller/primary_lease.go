@@ -61,7 +61,11 @@ func (r *ClusterReconciler) reconcilePrimaryLease(ctx context.Context, cluster *
 	err := r.Get(ctx, client.ObjectKeyFromObject(&lease), existing)
 	if apierrs.IsNotFound(err) {
 		if err := r.Create(ctx, &lease); err != nil {
-			// Here we can have AlreadyExists errors due to a stale cache
+			if apierrs.IsAlreadyExists(err) {
+				// The cache is stale: the Lease is there, and the next
+				// reconciliation reads it
+				return nil
+			}
 			return err
 		}
 		contextLogger.Info("Created primary lease", "leaseName", lease.Name)
