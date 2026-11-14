@@ -86,8 +86,11 @@ func (r *ClusterReconciler) reconcilePrimaryLease(ctx context.Context, cluster *
 		if isReconcileLabelled(existing) {
 			return nil
 		}
+		// A patch of the label only: the primary renews this Lease, and a
+		// full update would conflict with its renewal
+		origLease := existing.DeepCopy()
 		utils.LabelReconciled(&existing.ObjectMeta)
-		if err := r.Update(ctx, existing); err != nil {
+		if err := r.Patch(ctx, existing, client.MergeFrom(origLease)); err != nil {
 			return err
 		}
 	case adoptRefuseForeign:
