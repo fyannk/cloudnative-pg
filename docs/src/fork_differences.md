@@ -29,7 +29,6 @@ from upstream, starting with what changes without any new setting.
 
 | Change | Details |
 |---|---|
-| PostgreSQL stopping because **any** volume is full (`PGDATA` or a tablespace, not only the WAL volume) is reported as a disk full failure: the `Cluster` goes to the `Not enough disk space` phase and the operator does not fail over, as upstream does for the WAL volume only | [Disk Full Failure](instance_manager.md#disk-full-failure) |
 | A primary being demoted skips or escalates its smart shutdown to a fast one | [Shutdown of the primary during a switchover](instance_manager.md#shutdown-of-the-primary-during-a-switchover) |
 
 ### In the behavior of the operator
