@@ -944,11 +944,9 @@ func (r *ClusterReconciler) reconcileResources(
 	// Act on Pods and PVCs only if there is nothing that is currently being created or deleted
 
 	if len(runningJobs) > 0 {
-		if err := r.growVolumesDuringInstanceJob(ctx, cluster, resources, instancesStatus); err != nil {
-			return ctrl.Result{}, err
-		}
 		contextLogger.Debug("A job is currently running. Waiting", "runningJobs", runningJobs)
-		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+		return ctrl.Result{RequeueAfter: 5 * time.Second},
+			r.growVolumesDuringInstanceJob(ctx, cluster, resources, instancesStatus)
 	}
 
 	if result, err := r.deleteTerminatedPods(ctx, cluster, resources); err != nil {
