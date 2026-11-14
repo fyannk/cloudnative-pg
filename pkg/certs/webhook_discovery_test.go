@@ -332,6 +332,52 @@ var _ = Describe("Webhook certificate from the operator deployment", func() {
 		Expect(err).To(MatchError(ContainSubstring("OPERATOR_DEPLOYMENT_NAME")))
 	})
 
+	// Without the deployment the discovery finds no Service, and reports no
+	// error: a transient error reading it must skip the renewal too
+	It("keeps the certificate when the deployment cannot be read for a while", func(ctx SpecContext) {
+		pki := pkiEnvironmentTemplate
+		pki.CertDir = webhookCertDir
+		pki.OperatorDeploymentName = "cnpg-toto"
+		pki.ServiceName = "cnpg-toto-webhook-service"
+		pki.WebhookPort = 9443
+		pki.ManageWebhookConfigurations = false
+		podSelector := map[string]string{"app.kubernetes.io/name": "cnpg-toto"}
+
+		failing := false
+		kubeClient := fakeClientBuilder(controllerScheme.BuildWithAllKnownScheme()).
+			WithInterceptorFuncs(interceptor.Funcs{
+				Get: func(
+					ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object,
+					opts ...client.GetOption,
+				) error {
+					if _, ok := obj.(*appsv1.Deployment); ok && failing {
+						return apierrors.NewTimeoutError("get deployment", 1)
+					}
+					return c.Get(ctx, key, obj, opts...)
+				},
+			}).Build()
+		// The certificate is in the Secret of the configured name: the one
+		// looked up when the deployment, and its mount, cannot be read
+		Expect(kubeClient.Create(ctx, operatorDeploymentWithMount(pki.SecretName))).To(Succeed())
+		Expect(kubeClient.Create(ctx, serviceSelecting("cnpg-toto-service", podSelector, intstr.FromInt32(9443)))).
+			To(Succeed())
+		ca, err := pki.ensureRootCACertificate(ctx, kubeClient)
+		Expect(err).ToNot(HaveOccurred())
+
+		secret, err := pki.ensureCertificate(ctx, kubeClient, ca)
+		Expect(err).ToNot(HaveOccurred())
+
+		failing = true
+		kept, err := pki.ensureCertificate(ctx, kubeClient, ca)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(kept.Data).To(Equal(secret.Data))
+		pair, err := ParseServerSecret(kept)
+		Expect(err).ToNot(HaveOccurred())
+		cert, err := pair.ParseCertificate()
+		Expect(err).ToNot(HaveOccurred())
+		Expect(cert.DNSNames).To(ContainElement("cnpg-toto-service." + operatorNamespaceName + ".svc"))
+	})
+
 	// A transient error of the discovery must not drop the discovered names
 	// from the certificate: the renewal is skipped for this round
 	It("keeps the certificate when the Services cannot be discovered, "+

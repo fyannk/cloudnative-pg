@@ -113,7 +113,8 @@ certificate is issued for the `cnpg-webhook-service` Service and for every
 Service of the namespace that selects the operator Pods on the webhook port,
 which the operator lists when it is allowed to, and for the Services the
 managed webhook configurations point at. The certificate is reissued as soon
-as these names change, so a transient error while discovering them, other
+as these names change, so a transient error while discovering them or while
+reading the operator Deployment they are discovered from, other
 than a missing object or a missing permission, skips the renewal for that
 round instead: reissuing it without the names that could not be read would
 break the TLS handshake through those Services until the next round. The
