@@ -596,10 +596,9 @@ cluster-example-3              1/1     Running     0          10s
 
 ## Volume reduction
 
-Kubernetes does not provide an API to shrink a PVC, and the `Cluster` CRD
-rejects any attempt to decrease `.spec.storage.size`, `.spec.walStorage.size`
-or any tablespace storage size in `.spec.tablespaces`, with or without the
-validating webhook.
+Kubernetes does not provide an API to shrink a PVC, and CloudNativePG's
+validating webhook rejects any attempt to decrease `.spec.storage.size`,
+`.spec.walStorage.size` or any tablespace storage size in `.spec.tablespaces`.
 You can still reduce the storage of a cluster, but only by recreating
 each instance with a smaller volume, as described below.
 

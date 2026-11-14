@@ -120,15 +120,6 @@ var _ = Describe("Cluster CRD transition rules", func() {
 		Entry("deletes a tablespace",
 			func(c *apiv1.Cluster) { c.Spec.Tablespaces = c.Spec.Tablespaces[:1] },
 			"no tablespace can be deleted once created"),
-		Entry("shrinks a tablespace",
-			func(c *apiv1.Cluster) { c.Spec.Tablespaces[1].Storage.Size = "500Mi" },
-			"the size of a tablespace cannot be decreased"),
-		Entry("shrinks the storage",
-			func(c *apiv1.Cluster) { c.Spec.StorageConfiguration.Size = "500Mi" },
-			"spec.storage.size: Invalid value"),
-		Entry("shrinks the WAL storage",
-			func(c *apiv1.Cluster) { c.Spec.WalStorage.Size = "500Mi" },
-			"spec.walStorage.size: Invalid value"),
 		Entry("sets wal_level to minimal",
 			func(c *apiv1.Cluster) { c.Spec.PostgresConfiguration.Parameters["wal_level"] = "minimal" },
 			"wal_level cannot be changed to minimal on an existing cluster"),
@@ -174,6 +165,15 @@ var _ = Describe("Cluster CRD transition rules", func() {
 		func(mutate func(*apiv1.Cluster)) {
 			accepted(storedCluster(ctx, 17), mutate)
 		},
+		// A decrease of a size is left to the webhook: the documented way to
+		// reduce a volume lowers the size with cnpg.io/validation disabled,
+		// which a rule of the CRD cannot see
+		Entry("shrinks the storage, the WAL storage and a tablespace",
+			func(c *apiv1.Cluster) {
+				c.Spec.StorageConfiguration.Size = "500Mi"
+				c.Spec.WalStorage.Size = "500Mi"
+				c.Spec.Tablespaces[1].Storage.Size = "500Mi"
+			}),
 		Entry("grows the storage",
 			func(c *apiv1.Cluster) { c.Spec.StorageConfiguration.Size = "2Gi" }),
 		Entry("grows the WAL storage",
