@@ -81,12 +81,18 @@ func (d *BackupCustomDefaulter) Default(_ context.Context, backup *apiv1.Backup)
 type BackupCustomValidator struct{}
 
 // ValidateCreate implements webhook.CustomValidator so a webhook will be registered for the type Backup.
-func (v *BackupCustomValidator) ValidateCreate(_ context.Context, backup *apiv1.Backup) (admission.Warnings, error) {
+func (v *BackupCustomValidator) ValidateCreate(ctx context.Context, backup *apiv1.Backup) (admission.Warnings, error) {
 	backupLog.Info("Validation for Backup upon creation", "name", backup.GetName(), "namespace", backup.GetNamespace())
 
 	warnings := getInTreeBarmanMethodWarnings(backup.Spec.Method)
 
 	allErrs := v.validate(backup)
+	if !isAdmissionRequest(ctx) {
+		// A stored Backup, validated by the admission guard: unchanged
+		var snapshotWarnings admission.Warnings
+		allErrs, snapshotWarnings = volumeSnapshotMethodOnUpdate(allErrs, backup.Spec.Method, backup.Spec.Method)
+		warnings = append(warnings, snapshotWarnings...)
+	}
 	if len(allErrs) == 0 {
 		return warnings, nil
 	}
@@ -99,13 +105,15 @@ func (v *BackupCustomValidator) ValidateCreate(_ context.Context, backup *apiv1.
 // ValidateUpdate implements webhook.CustomValidator so a webhook will be registered for the type Backup.
 func (v *BackupCustomValidator) ValidateUpdate(
 	_ context.Context,
-	_ *apiv1.Backup, backup *apiv1.Backup,
+	oldBackup *apiv1.Backup, backup *apiv1.Backup,
 ) (admission.Warnings, error) {
 	backupLog.Info("Validation for Backup upon update", "name", backup.GetName(), "namespace", backup.GetNamespace())
 
 	warnings := getInTreeBarmanMethodWarnings(backup.Spec.Method)
 
-	allErrs := v.validate(backup)
+	allErrs, snapshotWarnings := volumeSnapshotMethodOnUpdate(
+		v.validate(backup), backup.Spec.Method, oldBackup.Spec.Method)
+	warnings = append(warnings, snapshotWarnings...)
 	if len(allErrs) == 0 {
 		return warnings, nil
 	}
@@ -142,16 +150,7 @@ func getInTreeBarmanMethodWarnings(method apiv1.BackupMethod) admission.Warnings
 func (v *BackupCustomValidator) validate(r *apiv1.Backup) field.ErrorList {
 	var result field.ErrorList
 
-	if r.Spec.Method == apiv1.BackupMethodVolumeSnapshot && !utils.HaveVolumeSnapshot() {
-		result = append(result, field.Invalid(
-			field.NewPath("spec", "method"),
-			r.Spec.Method,
-			"Cannot use volumeSnapshot backup method due to missing "+
-				"VolumeSnapshot CRD. If you installed the CRD after having "+
-				"started the operator, please restart it to enable "+
-				"VolumeSnapshot support",
-		))
-	}
+	result = append(result, volumeSnapshotMethodErrors(r.Spec.Method)...)
 
 	if r.Spec.Method == apiv1.BackupMethodBarmanObjectStore && r.Spec.Online != nil {
 		result = append(result, field.Invalid(

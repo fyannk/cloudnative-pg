@@ -33,6 +33,7 @@ import (
 
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
 	"github.com/cloudnative-pg/cloudnative-pg/internal/configuration"
+	"github.com/cloudnative-pg/cloudnative-pg/pkg/utils/imagecatalog"
 )
 
 // resolvePoolerImage determines the pgbouncer image that the resulting
@@ -96,6 +97,9 @@ func (r *PoolerReconciler) resolveImageFromCatalog(ctx context.Context, pooler *
 	var catalog apiv1.GenericImageCatalog
 	switch ref.Kind {
 	case apiv1.ClusterImageCatalogKind:
+		if !configuration.Current.APIClusterImageCatalogEnabled {
+			return "", imagecatalog.ErrClusterImageCatalogDisabled
+		}
 		catalog = &apiv1.ClusterImageCatalog{}
 	case apiv1.ImageCatalogKind:
 		catalog = &apiv1.ImageCatalog{}

@@ -31,12 +31,11 @@ import (
 	policyv1 "k8s.io/api/policy/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	apierrs "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
-	"k8s.io/client-go/discovery"
-	fakediscovery "k8s.io/client-go/discovery/fake"
-	"k8s.io/client-go/testing"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/ptr"
 	k8client "sigs.k8s.io/controller-runtime/pkg/client"
@@ -604,10 +603,9 @@ var _ = Describe("check if bootstrap recovery can proceed from volume snapshot",
 			Build()
 
 		newClusterReconciler := &ClusterReconciler{
-			Client:          mockClient,
-			Scheme:          env.scheme,
-			Recorder:        record.NewFakeRecorder(120),
-			DiscoveryClient: env.discoveryClient,
+			Client:   mockClient,
+			Scheme:   env.scheme,
+			Recorder: record.NewFakeRecorder(120),
 		}
 
 		res, err := newClusterReconciler.checkReadyForRecovery(ctx, nil, cluster)
@@ -640,10 +638,9 @@ var _ = Describe("check if bootstrap recovery can proceed from volume snapshot",
 			Build()
 
 		newClusterReconciler := &ClusterReconciler{
-			Client:          mockClient,
-			Scheme:          env.scheme,
-			Recorder:        record.NewFakeRecorder(120),
-			DiscoveryClient: env.discoveryClient,
+			Client:   mockClient,
+			Scheme:   env.scheme,
+			Recorder: record.NewFakeRecorder(120),
 		}
 
 		res, err := newClusterReconciler.checkReadyForRecovery(ctx, nil, cluster)
@@ -677,10 +674,9 @@ var _ = Describe("check if bootstrap recovery can proceed from volume snapshot",
 			Build()
 
 		newClusterReconciler := &ClusterReconciler{
-			Client:          mockClient,
-			Scheme:          env.scheme,
-			Recorder:        record.NewFakeRecorder(120),
-			DiscoveryClient: env.discoveryClient,
+			Client:   mockClient,
+			Scheme:   env.scheme,
+			Recorder: record.NewFakeRecorder(120),
 		}
 
 		res, err := newClusterReconciler.checkReadyForRecovery(ctx, nil, cluster)
@@ -708,9 +704,8 @@ var _ = Describe("check if bootstrap recovery can proceed from volume snapshot",
 				WithScheme(schemeBuilder.BuildWithAllKnownScheme()).
 				WithObjects(snapshot).
 				Build(),
-			Scheme:          env.scheme,
-			Recorder:        record.NewFakeRecorder(120),
-			DiscoveryClient: env.discoveryClient,
+			Scheme:   env.scheme,
+			Recorder: record.NewFakeRecorder(120),
 		}
 
 		res, err := newClusterReconciler.checkReadyForRecovery(ctx, nil, cluster)
@@ -771,10 +766,9 @@ func (m *mockPodMonitorManager) BuildPodMonitor() *monitoringv1.PodMonitor {
 
 var _ = Describe("CreateOrPatchPodMonitor", func() {
 	var (
-		ctx                 context.Context
-		fakeCli             k8client.Client
-		fakeDiscoveryClient discovery.DiscoveryInterface
-		manager             *mockPodMonitorManager
+		ctx     context.Context
+		fakeCli k8client.Client
+		manager *mockPodMonitorManager
 	)
 
 	BeforeEach(func() {
@@ -790,26 +784,11 @@ var _ = Describe("CreateOrPatchPodMonitor", func() {
 
 		fakeCli = fake.NewClientBuilder().WithScheme(schemeBuilder.BuildWithAllKnownScheme()).Build()
 
-		fakeDiscoveryClient = &fakediscovery.FakeDiscovery{
-			Fake: &testing.Fake{
-				Resources: []*metav1.APIResourceList{
-					{
-						GroupVersion: "monitoring.coreos.com/v1",
-						APIResources: []metav1.APIResource{
-							{
-								Name:       "podmonitors",
-								Kind:       "PodMonitor",
-								Namespaced: true,
-							},
-						},
-					},
-				},
-			},
-		}
+		configuration.Current.APIPodMonitorEnabled = true
 	})
 
 	It("should create the PodMonitor  when it is enabled and doesn't already exists", func() {
-		err := createOrPatchPodMonitor(ctx, fakeCli, fakeDiscoveryClient, manager)
+		err := createOrPatchPodMonitor(ctx, fakeCli, manager)
 		Expect(err).ToNot(HaveOccurred())
 
 		podMonitor := &monitoringv1.PodMonitor{}
@@ -828,8 +807,42 @@ var _ = Describe("CreateOrPatchPodMonitor", func() {
 
 	It("should not return an error when PodMonitor is disabled", func() {
 		manager.isEnabled = false
-		err := createOrPatchPodMonitor(ctx, fakeCli, fakeDiscoveryClient, manager)
+		err := createOrPatchPodMonitor(ctx, fakeCli, manager)
 		Expect(err).ToNot(HaveOccurred())
+	})
+
+	// The API is probed once, when the operator starts: a CRD removed later
+	// must cost the PodMonitor, not the reconciliation of the cluster
+	It("skips the PodMonitor when its API is not served anymore", func() {
+		gone := fake.NewClientBuilder().WithScheme(schemeBuilder.BuildWithAllKnownScheme()).
+			WithInterceptorFuncs(interceptor.Funcs{
+				Create: func(context.Context, k8client.WithWatch, k8client.Object, ...k8client.CreateOption) error {
+					return apierrs.NewNotFound(
+						schema.GroupResource{Group: "monitoring.coreos.com", Resource: "podmonitors"}, "")
+				},
+			}).Build()
+		Expect(createOrPatchPodMonitor(ctx, gone, manager)).To(Succeed())
+
+		unmapped := fake.NewClientBuilder().WithScheme(schemeBuilder.BuildWithAllKnownScheme()).
+			WithInterceptorFuncs(interceptor.Funcs{
+				Get: func(context.Context, k8client.WithWatch, k8client.ObjectKey, k8client.Object, ...k8client.GetOption) error {
+					return &meta.NoKindMatchError{
+						GroupKind: schema.GroupKind{Group: "monitoring.coreos.com", Kind: "PodMonitor"},
+					}
+				},
+			}).Build()
+		Expect(createOrPatchPodMonitor(ctx, unmapped, manager)).To(Succeed())
+	})
+
+	It("still returns the other errors", func() {
+		failing := fake.NewClientBuilder().WithScheme(schemeBuilder.BuildWithAllKnownScheme()).
+			WithInterceptorFuncs(interceptor.Funcs{
+				Create: func(context.Context, k8client.WithWatch, k8client.Object, ...k8client.CreateOption) error {
+					return apierrs.NewForbidden(
+						schema.GroupResource{Group: "monitoring.coreos.com", Resource: "podmonitors"}, "test", nil)
+				},
+			}).Build()
+		Expect(apierrs.IsForbidden(createOrPatchPodMonitor(ctx, failing, manager))).To(BeTrue())
 	})
 
 	It("should remove the PodMonitor if it is disabled and is owned by a cluster", func() {
@@ -850,7 +863,7 @@ var _ = Describe("CreateOrPatchPodMonitor", func() {
 		Expect(err).ToNot(HaveOccurred())
 
 		manager.isEnabled = false
-		err = createOrPatchPodMonitor(ctx, fakeCli, fakeDiscoveryClient, manager)
+		err = createOrPatchPodMonitor(ctx, fakeCli, manager)
 		Expect(err).ToNot(HaveOccurred())
 
 		// Ensure the PodMonitor doesn't exist anymore
@@ -878,7 +891,7 @@ var _ = Describe("CreateOrPatchPodMonitor", func() {
 		Expect(err).ToNot(HaveOccurred())
 
 		manager.isEnabled = false
-		err = createOrPatchPodMonitor(ctx, fakeCli, fakeDiscoveryClient, manager)
+		err = createOrPatchPodMonitor(ctx, fakeCli, manager)
 		Expect(err).ToNot(HaveOccurred())
 
 		podMonitor := &monitoringv1.PodMonitor{}
@@ -909,7 +922,7 @@ var _ = Describe("CreateOrPatchPodMonitor", func() {
 		manager.podMonitor.Labels = updatedLabels
 		manager.podMonitor.Annotations = updatedAnnotations
 
-		err = createOrPatchPodMonitor(ctx, fakeCli, fakeDiscoveryClient, manager)
+		err = createOrPatchPodMonitor(ctx, fakeCli, manager)
 		Expect(err).ToNot(HaveOccurred())
 
 		podMonitor := &monitoringv1.PodMonitor{}
@@ -1751,10 +1764,9 @@ var _ = Describe("createPostgresClusterObjects under a full ResourceQuota", func
 			Build()
 
 		r = &ClusterReconciler{
-			Client:          fakeClient,
-			DiscoveryClient: &fakediscovery.FakeDiscovery{Fake: &testing.Fake{}},
-			Scheme:          schemeBuilder.BuildWithAllKnownScheme(),
-			Recorder:        record.NewFakeRecorder(120),
+			Client:   fakeClient,
+			Scheme:   schemeBuilder.BuildWithAllKnownScheme(),
+			Recorder: record.NewFakeRecorder(120),
 		}
 	})
 
@@ -1851,10 +1863,9 @@ var _ = Describe("createPostgresClusterObjects", func() {
 
 		recorder = record.NewFakeRecorder(120)
 		r = &ClusterReconciler{
-			Client:          fakeClient,
-			DiscoveryClient: &fakediscovery.FakeDiscovery{Fake: &testing.Fake{}},
-			Scheme:          schemeBuilder.BuildWithAllKnownScheme(),
-			Recorder:        recorder,
+			Client:   fakeClient,
+			Scheme:   schemeBuilder.BuildWithAllKnownScheme(),
+			Recorder: recorder,
 		}
 	})
 

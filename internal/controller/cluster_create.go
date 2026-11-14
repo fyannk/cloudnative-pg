@@ -35,9 +35,9 @@ import (
 	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrs "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/discovery"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -100,7 +100,7 @@ func (r *ClusterReconciler) createPostgresClusterObjects(ctx context.Context, cl
 		}
 	}
 
-	err = createOrPatchPodMonitor(ctx, r.Client, r.DiscoveryClient, specs.NewClusterPodMonitorManager(cluster))
+	err = createOrPatchPodMonitor(ctx, r.Client, specs.NewClusterPodMonitorManager(cluster))
 	if err != nil {
 		return err
 	}
@@ -1026,25 +1026,42 @@ type podMonitorManager interface {
 func createOrPatchPodMonitor(
 	ctx context.Context,
 	cli client.Client,
-	discoveryClient discovery.DiscoveryInterface,
 	manager podMonitorManager,
 ) error {
 	contextLogger := log.FromContext(ctx)
 
-	// Checking for the PodMonitor Custom Resource Definition in the Kubernetes cluster
-	havePodMonitorCRD, err := utils.PodMonitorExist(discoveryClient)
-	if err != nil {
-		return err
-	}
-
-	if !havePodMonitorCRD {
+	// The PodMonitor API is probed once at startup: not installed, forbidden,
+	// or disabled by the administrator
+	if !configuration.Current.APIPodMonitorEnabled {
 		if manager.IsPodMonitorEnabled() {
 			// If the PodMonitor CRD does not exist, but the cluster has monitoring enabled,
 			// the controller cannot do anything until the CRD is installed
-			contextLogger.Warning("PodMonitor CRD not present. Cannot create the PodMonitor object")
+			contextLogger.Warning("PodMonitor API not available. Cannot create the PodMonitor object")
 		}
 		return nil
 	}
+
+	err := reconcilePodMonitor(ctx, cli, manager)
+	if meta.IsNoMatchError(err) || apierrs.IsNotFound(err) {
+		// The API was served when the operator started and is not anymore,
+		// its CRD having been removed since: the monitoring of a cluster must
+		// not stop its reconciliation, failover included
+		contextLogger.Warning(
+			"Cannot reconcile the PodMonitor object, skipping it: the PodMonitor API is not served anymore, "+
+				"or the object was deleted meanwhile. If the PodMonitor CRD was removed, restart the operator",
+			"error", err)
+		return nil
+	}
+	return err
+}
+
+// reconcilePodMonitor creates, patches or deletes the PodMonitor
+func reconcilePodMonitor(
+	ctx context.Context,
+	cli client.Client,
+	manager podMonitorManager,
+) error {
+	contextLogger := log.FromContext(ctx)
 
 	expectedPodMonitor := manager.BuildPodMonitor()
 	// We get the current pod monitor
