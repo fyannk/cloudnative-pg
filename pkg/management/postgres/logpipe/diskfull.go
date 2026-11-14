@@ -20,49 +20,55 @@ SPDX-License-Identifier: Apache-2.0
 package logpipe
 
 import (
-	"strings"
 	"sync/atomic"
+	"time"
 )
 
 const (
 	// diskFullSQLState is the SQLSTATE of the disk_full error, which
-	// PostgreSQL reports for a write failing with ENOSPC
+	// PostgreSQL reports for a write failing with ENOSPC, whatever the
+	// language of its messages
 	diskFullSQLState = "53100"
 
-	// noSpaceLeftOnDevice is the text of ENOSPC, in the messages of a
-	// PostgreSQL using the English messages
-	noSpaceLeftOnDevice = "No space left on device"
+	// diskFullWindow is how long a disk full error stays related to the
+	// stop of PostgreSQL. A write failing in a session is only an error for
+	// that session, and PostgreSQL keeps running: such an error must not be
+	// held against a stop that happens hours later for another reason. The
+	// severity cannot tell them apart, as it is translated with lc_messages.
+	// The errors that stop PostgreSQL (a PANIC while writing the WAL or
+	// syncing a file, a recovery that cannot extend a file) are logged right
+	// before the postmaster exits
+	diskFullWindow = 5 * time.Minute
 
-	// csvSQLStateField and csvMessageField are the positions of the
-	// SQLSTATE and of the message in a CSV log record
+	// csvSQLStateField is the position of the SQLSTATE in a CSV log record
 	csvSQLStateField = 12
-	csvMessageField  = 13
 )
 
-// diskFullLogged is set when PostgreSQL logged a disk full error since the
-// last call to ResetDiskFullLogged
-var diskFullLogged atomic.Bool
+// diskFullLoggedAt is when PostgreSQL last logged a disk full error, in
+// nanoseconds since the epoch, or zero when it did not since the last call
+// to ResetDiskFullLogged
+var diskFullLoggedAt atomic.Int64
+
+// now is the clock, replaced by the tests
+var now = time.Now
 
 // observeDiskFull records a CSV log record reporting a disk full error
 func observeDiskFull(content []string) {
 	if len(content) > csvSQLStateField && content[csvSQLStateField] == diskFullSQLState {
-		diskFullLogged.Store(true)
-		return
-	}
-	if len(content) > csvMessageField && strings.Contains(content[csvMessageField], noSpaceLeftOnDevice) {
-		diskFullLogged.Store(true)
+		diskFullLoggedAt.Store(now().UnixNano())
 	}
 }
 
 // IsDiskFullLogged tells whether PostgreSQL logged a disk full error, with
-// the disk_full SQLSTATE or "No space left on device", since the last call to
-// ResetDiskFullLogged
+// the disk_full SQLSTATE, in the last diskFullWindow and since the last call
+// to ResetDiskFullLogged
 func IsDiskFullLogged() bool {
-	return diskFullLogged.Load()
+	loggedAt := diskFullLoggedAt.Load()
+	return loggedAt != 0 && now().Sub(time.Unix(0, loggedAt)) <= diskFullWindow
 }
 
 // ResetDiskFullLogged forgets the disk full errors logged until now: it is
 // called when the postmaster is started
 func ResetDiskFullLogged() {
-	diskFullLogged.Store(false)
+	diskFullLoggedAt.Store(0)
 }
