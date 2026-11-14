@@ -31,7 +31,6 @@ import (
 
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/management/postgres"
-	"github.com/cloudnative-pg/cloudnative-pg/pkg/management/postgres/logpipe"
 )
 
 var identifierStreamingReplicationUser = pgx.Identifier{apiv1.StreamingReplicationUser}.Sanitize()
@@ -97,9 +96,6 @@ func (i *PostgresLifecycle) runPostgresAndWait(ctx context.Context) <-chan error
 			contextLogger.Info("Not enough WAL disk space, avoid starting PostgreSQL")
 			return postgres.ErrNoFreeWALSpace
 		}
-
-		// a disk full error logged from now on is one of this postmaster
-		logpipe.ResetDiskFullLogged()
 
 		i.instance.LogPgControldata(postgresContext, "postmaster start up")
 		defer i.instance.LogPgControldata(postgresContext, "postmaster has exited")
