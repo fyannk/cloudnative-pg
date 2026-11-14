@@ -120,36 +120,6 @@ func Get(paths Paths, statfs Statfs) ([]postgres.VolumeUsage, error) {
 	return usages, errors.Join(errs...)
 }
 
-// FullMinAvailableBytes is the space below which a volume is full, for a
-// PostgreSQL that failed with "No space left on device". PostgreSQL writes
-// its data files a few blocks at a time, so a write only fails with far less
-// than this left: the margin covers what is freed between the failure and the
-// reading of the filesystem, such as the temporary files of the sessions. It
-// is not a share of the volume, which would call a very large volume full
-// with gigabytes left. The volume holding the WAL files is checked before,
-// against the size of a WAL segment
-const FullMinAvailableBytes = 64 * 1024 * 1024
-
-// IsFull tells whether a volume is full: the space available is below
-// FullMinAvailableBytes, or the filesystem has no free inode left
-func IsFull(usage postgres.VolumeUsage) bool {
-	if usage.AvailableBytes < FullMinAvailableBytes {
-		return true
-	}
-	return usage.Inodes > 0 && usage.InodesFree == 0
-}
-
-// GetFullVolumes returns the names of the full volumes, see IsFull
-func GetFullVolumes(usages []postgres.VolumeUsage) []string {
-	var result []string
-	for _, usage := range usages {
-		if IsFull(usage) {
-			result = append(result, usage.Volume)
-		}
-	}
-	return result
-}
-
 // GetWALVolumeName returns the name of the volume holding the WAL files: the
 // WAL volume when there is one, PGDATA otherwise
 func GetWALVolumeName(paths Paths) string {

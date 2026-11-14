@@ -26,7 +26,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"syscall"
 
 	"github.com/cloudnative-pg/machinery/pkg/log"
 	"github.com/spf13/cobra"
@@ -126,8 +125,8 @@ func NewCmd() *cobra.Command {
 				return runSubCommand(ctx, instance, pprofHTTPServer, skipNameValidation)
 			})
 
-			if volumes, ok := getMissingDiskSpaceVolumes(err); ok {
-				writeDiskFullTerminationMessage(ctx, volumes)
+			if errors.Is(err, postgres.ErrNoFreeWALSpace) {
+				writeDiskFullTerminationMessage(ctx, volumeusage.GetWALVolumeName(volumeusage.DefaultPaths))
 				os.Exit(apiv1.MissingWALDiskSpaceExitCode)
 			}
 			if errors.Is(err, errWALArchivePluginNotAvailable) {
@@ -476,12 +475,6 @@ func runSubCommand( //nolint: gocyclo,gocognit
 			contextLogger.Warning("Detected low WAL disk space, but the manager error is not WAL-space related",
 				"originalError", err)
 			return makeUnretryableError(fmt.Errorf("%w: %w", postgres.ErrNoFreeWALSpace, err))
-		}
-		if volumes := getFullVolumes(
-			ctx, logpipe.IsDiskFullLogged(), volumeusage.DefaultPaths, syscall.Statfs,
-		); len(volumes) > 0 {
-			contextLogger.Warning("PostgreSQL stopped because a volume is full", "volumes", volumes)
-			return makeUnretryableError(&errDiskFull{volumes: volumes, err: err})
 		}
 		return makeUnretryableError(err)
 	}

@@ -356,9 +356,9 @@ only on one of these signals:
 
 - **the usage reported while PostgreSQL is up**: the most used filesystem of
   the volume, among the instances, crosses the threshold;
-- **an explicit full-disk stop**: the instance manager of an instance stopped
-  PostgreSQL, or saw it stop, because the volume is full, and named it when
-  exiting, as described below. The instance counts as fully used for that
+- **an explicit full-disk stop**: the instance manager of an instance did not
+  start PostgreSQL, or stopped it, because the volume holding the WAL files is
+  full, and named it when exiting, as described below. The instance counts as fully used for that
   volume, once per stop: the PostgreSQL container stays terminated, then not
   ready, until the kubelet restarts it, which can take minutes in
   `CrashLoopBackOff`. The operator records the stop it grew the volume for, by
@@ -416,31 +416,18 @@ of the PVC, and the operator does not grow the volume.
 
 #### The full-disk stop of an instance
 
-The instance manager exits with code `4` when PostgreSQL cannot run because a
-volume is full, and writes the full volumes in the termination message of the
-PostgreSQL container, `/dev/termination-log`, which the kubelet reports in
+The instance manager exits with code `4` when the volume holding the WAL files
+has no room left for a WAL segment, and names it in the termination message of
+the PostgreSQL container, `/dev/termination-log`, which the kubelet reports in
 `lastState.terminated.message` of the container status:
 
 ```json
-{"reason":"DiskFull","volumes":["tbs-alpha"]}
+{"reason":"DiskFull","volumes":["wal"]}
 ```
 
-The volumes are named `pgdata`, `wal`, and `tbs-` followed by the name of the
-tablespace. The instance manager does so:
-
-- before starting PostgreSQL, when the volume holding the WAL files has no room
-  left for a WAL segment: it names `wal`, or `pgdata` without a WAL volume;
-- when PostgreSQL stops within five minutes of logging a disk full error, the
-  `53100` (`disk_full`) SQLSTATE in any language, for example a crash
-  recovery that cannot write to a full PGDATA or tablespace volume while the
-  WAL volume has room. A disk full error that PostgreSQL survived, such as a
-  query that could not write a temporary file, is forgotten after these five
-  minutes, so that a later stop for another reason is not taken for a full
-  disk, which would hold the failover back. It reads the filesystem of each volume and names those
-  with less than 64MiB available, whatever their size, or with no free inode
-  left. The volume holding the WAL files is checked before, against the size
-  of a WAL segment. When no volume is full, it exits as for any other
-  failure of PostgreSQL, and no volume is grown.
+The volume is named `wal`, or `pgdata` without a WAL volume. A full `PGDATA`
+or tablespace volume, with the WAL files on a separate volume, does not stop
+PostgreSQL: the usage reported by the instance grows it.
 
 An exit code `4` without such a message, written by an instance manager older
 than this feature, stands for the volume holding the WAL files. In every case,
