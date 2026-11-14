@@ -158,7 +158,9 @@ func (r *ClusterReconciler) getManagedResources(
 	}
 
 	nodes := map[string]corev1.Node{}
-	if configuration.Current.APINodeEnabled {
+	// The nodes are listed only when their state is read from the Node API:
+	// with another source the operator starts no watch on them
+	if r.nodeStatusSource == configuration.NodeStatusSourceAPI {
 		if nodes, err = r.getNodes(ctx); err != nil {
 			return nil, err
 		}
