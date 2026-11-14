@@ -155,6 +155,12 @@ operator sets on everything it creates:
   exactly as in `off` mode. The metadata of each such object costs a few
   hundred bytes, whatever its size.
 
+A filtered mode trades memory of the operator for requests to the API server:
+an object the cache does not hold cannot be told from one that does not exist,
+so each lookup of an absent object is a read of the API server. On a healthy
+`Cluster` with the default settings, this is three more `GET` requests per
+reconciliation, the writes being the same.
+
 For an object referenced by a `Cluster` without the `cnpg.io/reconcile=true`
 label, such as a Secret holding a certificate:
 
