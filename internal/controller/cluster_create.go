@@ -1382,6 +1382,7 @@ func inheritJobMetadata(cluster *apiv1.Cluster, job *batchv1.Job) {
 		cluster.GetFixedInheritedLabels(), configuration.Current)
 	utils.InheritLabels(&job.Spec.Template.ObjectMeta, cluster.Labels,
 		cluster.GetFixedInheritedLabels(), configuration.Current)
+	cluster.SetInheritedDataForInstanceJobPods(&job.Spec.Template.ObjectMeta)
 }
 
 // getOriginBackup gets the backup that is used to bootstrap a new PostgreSQL cluster
@@ -1533,7 +1534,6 @@ func (r *ClusterReconciler) joinReplicaInstance(
 
 	inheritJobMetadata(cluster, job)
 	cluster.SetInheritedDataAndOwnership(&job.ObjectMeta)
-	cluster.SetInheritedDataFor(&job.Spec.Template.ObjectMeta, metadatarules.PgPods)
 
 	if err := r.Create(ctx, job); err != nil {
 		if !apierrs.IsAlreadyExists(err) {

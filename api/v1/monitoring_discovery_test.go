@@ -81,6 +81,23 @@ var _ = Describe("The monitoring discovery annotations", func() {
 		}
 	})
 
+	// 1.30 creates the first Pod of an instance with a Job: it must satisfy
+	// a policy requiring a label on every Pod, but it serves no metrics
+	It("stay off the Pods of the Jobs creating an instance, which get the rest", func() {
+		configuration.Current.MandatoryMetadata = `[{"targets": ["pgPods"],
+			"labels": {"example.com/team": "db"}, "annotations": {"example.com/owner": "x"}}]`
+		Expect(configuration.Current.ParseDefaultAndMandatoryMetadata()).To(Succeed())
+		families("prometheus")
+
+		var meta metav1.ObjectMeta
+		cluster.SetInheritedDataForInstanceJobPods(&meta)
+		Expect(meta.Labels).To(HaveKeyWithValue("example.com/team", "db"))
+		Expect(meta.Annotations).To(HaveKeyWithValue("example.com/owner", "x"))
+		Expect(meta.Annotations).To(HaveKeyWithValue("note", "inherited"))
+		Expect(meta.Annotations).NotTo(HaveKey("prometheus.io/port"))
+		Expect(meta.Annotations).NotTo(HaveKey("prometheus.io/scrape"))
+	})
+
 	It("describe the metrics port, and the logs of the postgres container", func() {
 		families("prometheus", "opentelemetry")
 		Expect(cluster.GetMonitoringDiscoveryAnnotations()).To(Equal(monitoringdiscovery.Annotations(
