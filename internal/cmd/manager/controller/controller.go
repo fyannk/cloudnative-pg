@@ -671,8 +671,10 @@ func checkLoadedConfiguration(conf *configuration.Data) error {
 	}
 
 	setupLog.Info("Operator configuration loaded", "configuration", conf)
+	// The identity is validated again: it may come from the operator
+	// ConfigMap or Secret, loaded since the first validation
 	if err := errors.Join(
-		conf.ValidateOperatorStatusIdentity(),
+		validateOperatorIdentity(conf),
 		conf.ValidateNodeStatusUnavailablePolicy(),
 	); err != nil {
 		setupLog.Error(err, "invalid operator configuration")
