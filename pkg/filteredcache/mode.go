@@ -37,7 +37,7 @@ const (
 	ModeStrict Mode = "strict"
 
 	// ModeReload is ModeStrict plus a metadata-only watch on the Secrets and
-	// ConfigMaps carrying cnpg.io/reload=true, so that a change to them still
+	// ConfigMaps carrying the cnpg.io/reload label, so that a change to them still
 	// triggers a reconciliation.
 	ModeReload Mode = "reload"
 )

@@ -27,6 +27,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/scheme"
@@ -246,6 +247,22 @@ var _ = Describe("The read-through client", func() {
 })
 
 var _ = Describe("The reload watch", func() {
+	// The controllers react to the label whatever its value, and the
+	// documentation of cert-manager certificates sets it to an empty string
+	DescribeTable("selects the user objects carrying the reload label, whatever its value",
+		func(objectLabels map[string]string, selected bool) {
+			selector, err := reloadSelector()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(selector.Matches(labels.Set(objectLabels))).To(Equal(selected))
+		},
+		Entry("set to true", map[string]string{utils.WatchedLabelName: "true"}, true),
+		Entry("set to an empty string", map[string]string{utils.WatchedLabelName: ""}, true),
+		Entry("set to anything else", map[string]string{utils.WatchedLabelName: "yes"}, true),
+		Entry("absent", map[string]string{"app": "db"}, false),
+		Entry("on an object the operator manages, already in the main cache",
+			map[string]string{utils.WatchedLabelName: "", utils.ReconcileLabelName: "true"}, false),
+	)
+
 	It("feeds the predicates and mappers written for full objects with a typed stub", func() {
 		// A predicate and a mapper as the controllers write them
 		reloadOnly := predicate.NewPredicateFuncs(func(object client.Object) bool {
