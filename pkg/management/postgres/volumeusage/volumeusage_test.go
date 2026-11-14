@@ -123,18 +123,21 @@ var _ = Describe("full volumes", func() {
 		}
 	}
 
-	It("is below 64MiB or 1% of the volume available, or below 1% of the inodes free", func() {
+	It("is below 64MiB available, whatever the size of the volume, or without a free inode", func() {
 		Expect(IsFull(usage("pgdata", 1024, 63))).To(BeTrue())
-		Expect(IsFull(usage("pgdata", 1024, 65))).To(BeFalse())
-		// 1% of 100GiB is 1GiB
-		Expect(IsFull(usage("pgdata", 100*1024, 1000))).To(BeTrue())
-		Expect(IsFull(usage("pgdata", 100*1024, 1100))).To(BeFalse())
+		Expect(IsFull(usage("pgdata", 1024, 64))).To(BeFalse())
+		// a very large volume is not full with less than 1% available
+		Expect(IsFull(usage("pgdata", 10*1024*1024, 63))).To(BeTrue())
+		Expect(IsFull(usage("pgdata", 10*1024*1024, 64))).To(BeFalse())
 
 		noInodes := usage("pgdata", 1024, 512)
-		noInodes.Inodes, noInodes.InodesFree = 1000, 10
+		noInodes.Inodes, noInodes.InodesFree = 1000, 0
 		Expect(IsFull(noInodes)).To(BeTrue())
-		noInodes.InodesFree = 11
+		noInodes.InodesFree = 1
 		Expect(IsFull(noInodes)).To(BeFalse())
+
+		// a filesystem that reports no inodes is not full for that
+		Expect(IsFull(usage("pgdata", 1024, 512))).To(BeFalse())
 	})
 
 	It("names the full volumes", func() {
