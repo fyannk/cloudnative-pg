@@ -1,0 +1,26 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: fork-reload-superuser
+  labels:
+    # an empty value: the label only has to be there
+    cnpg.io/reload: ""
+type: kubernetes.io/basic-auth
+stringData:
+  username: postgres
+  password: first-password
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: fork-reload
+spec:
+  instances: 2
+
+  enableSuperuserAccess: true
+  superuserSecret:
+    name: fork-reload-superuser
+
+  storage:
+    storageClass: ${E2E_DEFAULT_STORAGE_CLASS}
+    size: 1Gi
