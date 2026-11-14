@@ -26,7 +26,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"syscall"
+	"time"
 
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/postgres"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/specs"
@@ -127,4 +129,42 @@ func GetWALVolumeName(paths Paths) string {
 		return postgres.WalVolumeName
 	}
 	return postgres.PgDataVolumeName
+}
+
+// ErrNotAnswering is returned when the filesystem of a volume does not
+// answer, such as a network mount whose server is gone
+var ErrNotAnswering = errors.New("the filesystem of a volume does not answer")
+
+// notAnswering is set while a read of the filesystems that ran out of time
+// is still blocked: no other read is started until it returns, so that the
+// blocked reads do not pile up
+var notAnswering atomic.Bool
+
+// GetWithTimeout is Get, giving up after the timeout: reading a filesystem
+// cannot be interrupted, and must not hold a scrape of the metrics forever
+func GetWithTimeout(paths Paths, statfs Statfs, timeout time.Duration) ([]postgres.VolumeUsage, error) {
+	if notAnswering.Load() {
+		return nil, ErrNotAnswering
+	}
+
+	type result struct {
+		usages []postgres.VolumeUsage
+		err    error
+	}
+	done := make(chan result, 1)
+	go func() {
+		usages, err := Get(paths, statfs)
+		notAnswering.Store(false)
+		done <- result{usages: usages, err: err}
+	}()
+
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case read := <-done:
+		return read.usages, read.err
+	case <-timer.C:
+		notAnswering.Store(true)
+		return nil, fmt.Errorf("%w after %s", ErrNotAnswering, timeout)
+	}
 }

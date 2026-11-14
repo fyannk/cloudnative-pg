@@ -23,7 +23,9 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"syscall"
+	"time"
 
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/postgres"
 
@@ -109,5 +111,39 @@ var _ = Describe("volume usage", func() {
 		Expect(GetWALVolumeName(paths)).To(Equal("pgdata"))
 		Expect(os.Mkdir(paths.WalVolume, 0o700)).To(Succeed())
 		Expect(GetWALVolumeName(paths)).To(Equal("wal"))
+	})
+})
+
+var _ = Describe("reading the filesystems with a timeout", func() {
+	var paths Paths
+
+	BeforeEach(func() {
+		root := GinkgoT().TempDir()
+		paths = Paths{PgData: filepath.Join(root, "data"), WalVolume: filepath.Join(root, "wal")}
+		Expect(os.Mkdir(paths.PgData, 0o700)).To(Succeed())
+	})
+
+	It("gives up on a filesystem that does not answer, and starts no other read meanwhile", func() {
+		release := make(chan struct{})
+		var calls atomic.Int32
+		//nolint:unparam // the signature of statfs
+		blocked := func(_ string, stat *syscall.Statfs_t) error {
+			calls.Add(1)
+			<-release
+			*stat = syscall.Statfs_t{Bsize: 4096, Blocks: 100, Bfree: 50, Bavail: 50}
+			return nil
+		}
+
+		_, err := GetWithTimeout(paths, blocked, 20*time.Millisecond)
+		Expect(err).To(MatchError(ErrNotAnswering))
+		_, err = GetWithTimeout(paths, blocked, 20*time.Millisecond)
+		Expect(err).To(MatchError(ErrNotAnswering))
+		Expect(calls.Load()).To(Equal(int32(1)))
+
+		close(release)
+		Eventually(func() error {
+			_, err := GetWithTimeout(paths, blocked, time.Second)
+			return err
+		}).Should(Succeed())
 	})
 })
