@@ -120,6 +120,10 @@ suffix makes it a pre-release, which sorts *below* the upstream `1.30.1`:
   and propose the upstream one as an update. Pin the fork images and
   manifests explicitly, or restrict such tools to the fork versions.
 
+What the fork changes, with and without new settings, and how to replace an
+upstream operator or go back to it, is described in
+["Differences from CloudNativePG"](fork_differences.md).
+
 ## Details about the deployment
 
 In Kubernetes, the operator is by default installed in the `cnpg-system`
