@@ -342,7 +342,6 @@ type ClusterSpec struct {
 	ImagePullSecrets []LocalObjectReference `json:"imagePullSecrets,omitempty"`
 
 	// Configuration of the storage of the instances
-	// +kubebuilder:validation:XValidation:rule="!has(oldSelf.size) || !has(self.size) || !isQuantity(oldSelf.size) || !isQuantity(self.size) || !quantity(self.size).isLessThan(quantity(oldSelf.size))",message="size cannot be decreased",fieldPath=".size"
 	// +optional
 	StorageConfiguration StorageConfiguration `json:"storage,omitempty"`
 
@@ -363,7 +362,6 @@ type ClusterSpec struct {
 	ServiceAccountName string `json:"serviceAccountName,omitempty"`
 
 	// Configuration of the storage for PostgreSQL WAL (Write-Ahead Log)
-	// +kubebuilder:validation:XValidation:rule="!has(oldSelf.size) || !has(self.size) || !isQuantity(oldSelf.size) || !isQuantity(self.size) || !quantity(self.size).isLessThan(quantity(oldSelf.size))",message="size cannot be decreased",fieldPath=".size"
 	// +optional
 	WalStorage *StorageConfiguration `json:"walStorage,omitempty"`
 
@@ -525,7 +523,6 @@ type ClusterSpec struct {
 	// +optional
 	// +kubebuilder:validation:MaxItems=64
 	// +kubebuilder:validation:XValidation:rule="oldSelf.all(o, self.exists(n, n.name == o.name))",message="no tablespace can be deleted once created"
-	// +kubebuilder:validation:XValidation:rule="oldSelf.all(o, self.exists(n, n.name == o.name && (!has(o.storage.size) || !has(n.storage.size) || !isQuantity(o.storage.size) || !isQuantity(n.storage.size) || !quantity(n.storage.size).isLessThan(quantity(o.storage.size)))))",message="the size of a tablespace cannot be decreased"
 	Tablespaces []TablespaceConfiguration `json:"tablespaces,omitempty"`
 
 	// Manage the `PodDisruptionBudget` resources within the cluster. When
