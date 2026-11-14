@@ -622,6 +622,16 @@ var _ = Describe("Runnable.tryTakeOver", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(acquired).To(BeFalse())
 		Expect(r.WaitReason()).To(ContainSubstring(`held by "` + otherPod + `"`))
+
+		// once the lease is taken, the reason of the previous attempts is gone
+		released := getLease(ctx, kubeClient)
+		released.Spec.HolderIdentity = ptr.To("")
+		_, err = kubeClient.CoordinationV1().Leases(namespace).Update(ctx, released, metav1.UpdateOptions{})
+		Expect(err).NotTo(HaveOccurred())
+		acquired, err = r.tryTakeOver(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(acquired).To(BeTrue())
+		Expect(r.WaitReason()).To(BeEmpty())
 	})
 
 	It("refreshes the record with a write when this pod is already the holder", func(ctx context.Context) {

@@ -526,6 +526,7 @@ func (r *Runnable) tryTakeOver(ctx context.Context) (bool, error) {
 	// challenger's claim goes through, not by a read that a claim may have
 	// overtaken, and the monitor starts from a write that was really confirmed.
 	if record.HolderIdentity == identity {
+		r.setWaitReason("")
 		return r.renew(ctx, record)
 	}
 
@@ -534,9 +535,10 @@ func (r *Runnable) tryTakeOver(ctx context.Context) (bool, error) {
 	// a clean shutdown takes this path, keeping that hand-over fast.
 	if record.HolderIdentity == "" {
 		if !r.isTargetPrimary() {
+			r.setWaitReason("lease " + r.lock.Describe() + " is released, and this instance is not the target primary")
 			return false, nil
 		}
-		return r.claim(ctx, record)
+		return r.claimWithReason(ctx, record)
 	}
 
 	r.setWaitReason(fmt.Sprintf("lease %s held by %q", r.lock.Describe(), record.HolderIdentity))
@@ -556,7 +558,22 @@ func (r *Runnable) tryTakeOver(ctx context.Context) (bool, error) {
 	if !r.trackRecord(record) || time.Since(r.observedTime) < r.config.LeaseDuration || !r.isTargetPrimary() {
 		return false, nil
 	}
-	return r.claim(ctx, record)
+	return r.claimWithReason(ctx, record)
+}
+
+// claimWithReason claims the lease, and keeps the wait reason in line with
+// the outcome: the reason of a previous attempt must not outlive it
+func (r *Runnable) claimWithReason(ctx context.Context, record *resourcelock.LeaderElectionRecord) (bool, error) {
+	claimed, err := r.claim(ctx, record)
+	switch {
+	case err != nil:
+		r.setWaitReason("cannot take lease " + r.lock.Describe() + ": " + err.Error())
+	case claimed:
+		r.setWaitReason("")
+	default:
+		r.setWaitReason("lease " + r.lock.Describe() + " was taken by another instance")
+	}
+	return claimed, err
 }
 
 // trackRecord times record and reports whether it was already being timed in
