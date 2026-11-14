@@ -345,10 +345,11 @@ doesn't support that, you must delete the pod to trigger the resize.
 The best way to proceed is to delete one pod at a time, starting from replicas
 and waiting for each pod to be back up.
 
-A PVC created for a new or re-created instance gets the largest size among the
+For a volume with [`autoGrow`](#growing-the-volumes-automatically), a PVC
+created for a new or re-created instance gets the largest size among the
 existing PVCs of its volume, when it is above the size of the `Cluster`: a
-volume grown by `autoGrow`, by hand or by an external tool keeps that size on
-every instance.
+grown volume keeps that size on every instance. Without `autoGrow`, a new PVC
+always gets the size of the `Cluster`.
 
 ### Growing the volumes automatically
 
@@ -483,8 +484,12 @@ the operator does not fail over to another instance, as described in
   upgraded.
 - Turning `autoGrow` off after it grew a volume leaves the PVCs larger than the
   size in the `Cluster`: the operator logs `cannot decrease storage
-  requirement` at each reconciliation. Set the size in the `Cluster` to the
-  grown size.
+  requirement` at each reconciliation, and the PVC of a new instance gets the
+  size in the `Cluster`, which may be too small for the data. Set the size in
+  the `Cluster` to the grown size before removing `autoGrow`.
+- [Reducing a volume](#volume-reduction) requires removing its `autoGrow`
+  stanza first: with `autoGrow`, a re-created instance gets the size of the
+  other instances, not the smaller size in the `Cluster`.
 - A new `Cluster` restored from a `VolumeSnapshot` of a grown volume, with a
   smaller size in its specification, fails to create its PVCs: a PVC cannot be
   smaller than the snapshot it is restored from. Give the new `Cluster` at least

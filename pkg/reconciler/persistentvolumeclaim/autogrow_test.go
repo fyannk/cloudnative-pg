@@ -173,28 +173,47 @@ var _ = Describe("PVC groups", func() {
 	It("raises the size of a new PVC to the largest request of its volume, never lowers it", func() {
 		group := pvcGroup{role: utils.PVCRolePgData}
 		largest := map[pvcGroup]resource.Quantity{group: quantity("3Gi")}
+		autoGrow := &apiv1.AutoGrowConfiguration{MaxSize: "10Gi"}
 
-		Expect(withGroupSize(apiv1.StorageConfiguration{Size: "1Gi"}, group, largest).Size).To(Equal("3Gi"))
-		Expect(withGroupSize(apiv1.StorageConfiguration{Size: "5Gi"}, group, largest).Size).To(Equal("5Gi"))
-		Expect(withGroupSize(apiv1.StorageConfiguration{Size: "1Gi"}, group, nil).Size).To(Equal("1Gi"))
+		Expect(withGroupSize(
+			apiv1.StorageConfiguration{Size: "1Gi", AutoGrow: autoGrow}, group, largest).Size).To(Equal("3Gi"))
+		Expect(withGroupSize(
+			apiv1.StorageConfiguration{Size: "5Gi", AutoGrow: autoGrow}, group, largest).Size).To(Equal("5Gi"))
+		Expect(withGroupSize(
+			apiv1.StorageConfiguration{Size: "1Gi", AutoGrow: autoGrow}, group, nil).Size).To(Equal("1Gi"))
 
 		// a size given only by the template is raised too
-		fromTemplate := apiv1.StorageConfiguration{PersistentVolumeClaimTemplate: &corev1.PersistentVolumeClaimSpec{
-			Resources: corev1.VolumeResourceRequirements{
-				Requests: corev1.ResourceList{corev1.ResourceStorage: quantity("1Gi")},
+		fromTemplate := apiv1.StorageConfiguration{
+			AutoGrow: autoGrow,
+			PersistentVolumeClaimTemplate: &corev1.PersistentVolumeClaimSpec{
+				Resources: corev1.VolumeResourceRequirements{
+					Requests: corev1.ResourceList{corev1.ResourceStorage: quantity("1Gi")},
+				},
 			},
-		}}
+		}
 		raised := withGroupSize(fromTemplate, group, largest)
 		Expect(raised.GetSizeOrNil()).To(Equal(ptr.To(quantity("3Gi"))))
+	})
+
+	// Recreating the instances with a smaller size in the Cluster is the
+	// documented way to reduce a volume
+	It("keeps the size of the Cluster for a volume without autoGrow", func() {
+		group := pvcGroup{role: utils.PVCRolePgData}
+		largest := map[pvcGroup]resource.Quantity{group: quantity("3Gi")}
+
+		Expect(withGroupSize(apiv1.StorageConfiguration{Size: "1Gi"}, group, largest).Size).To(Equal("1Gi"))
 	})
 
 	It("creates the missing PVC of an instance at the size of its volume", func() {
 		cluster := &apiv1.Cluster{
 			ObjectMeta: metav1.ObjectMeta{Name: autoGrowCluster, Namespace: "default"},
 			Spec: apiv1.ClusterSpec{
-				Instances:            2,
-				StorageConfiguration: apiv1.StorageConfiguration{Size: "1Gi"},
-				WalStorage:           &apiv1.StorageConfiguration{Size: "1Gi"},
+				Instances: 2,
+				StorageConfiguration: apiv1.StorageConfiguration{
+					Size:     "1Gi",
+					AutoGrow: &apiv1.AutoGrowConfiguration{MaxSize: "10Gi"},
+				},
+				WalStorage: &apiv1.StorageConfiguration{Size: "1Gi"},
 			},
 		}
 		grown := autoGrowPVC("1", NewPgDataCalculator(), "3Gi", "3Gi")
@@ -211,6 +230,26 @@ var _ = Describe("PVC groups", func() {
 		Expect(cli.Get(context.Background(),
 			client.ObjectKey{Namespace: "default", Name: autoGrowCluster + "-2-wal"}, &walOfNewInstance)).To(Succeed())
 		Expect(walOfNewInstance.Spec.Resources.Requests.Storage()).To(Equal(ptr.To(quantity("1Gi"))))
+	})
+
+	It("creates the missing PVC of an instance at the size of the Cluster without autoGrow", func() {
+		cluster := &apiv1.Cluster{
+			ObjectMeta: metav1.ObjectMeta{Name: autoGrowCluster, Namespace: "default"},
+			Spec: apiv1.ClusterSpec{
+				Instances:            2,
+				StorageConfiguration: apiv1.StorageConfiguration{Size: "1Gi"},
+			},
+		}
+		larger := autoGrowPVC("1", NewPgDataCalculator(), "3Gi", "3Gi")
+		cli := fake.NewClientBuilder().WithScheme(scheme.BuildWithAllKnownScheme()).
+			WithObjects(cluster, &larger).Build()
+
+		Expect(CreateInstancePVCs(context.Background(), cli, cluster, nil, 2)).To(Succeed())
+
+		var data corev1.PersistentVolumeClaim
+		Expect(cli.Get(context.Background(),
+			client.ObjectKey{Namespace: "default", Name: autoGrowCluster + "-2"}, &data)).To(Succeed())
+		Expect(data.Spec.Resources.Requests.Storage()).To(Equal(ptr.To(quantity("1Gi"))))
 	})
 })
 

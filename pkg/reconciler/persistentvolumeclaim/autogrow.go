@@ -119,15 +119,19 @@ func getLargestRequests(pvcs []corev1.PersistentVolumeClaim) map[pvcGroup]resour
 	return result
 }
 
-// withGroupSize returns the storage configuration of a volume, with the size
-// raised to the largest request of its existing PVCs: a PVC created for a
-// volume that was grown, by autoGrow or outside the cluster, must be able to
-// hold the data of the other instances
+// withGroupSize returns the storage configuration of a volume with autoGrow,
+// with the size raised to the largest request of its existing PVCs: a PVC
+// created for a volume that was grown must be able to hold the data of the
+// other instances. Without autoGrow the size of the specification is the
+// only one, as it is the way to recreate the instances on smaller volumes
 func withGroupSize(
 	configuration apiv1.StorageConfiguration,
 	group pvcGroup,
 	largestRequests map[pvcGroup]resource.Quantity,
 ) apiv1.StorageConfiguration {
+	if configuration.AutoGrow == nil {
+		return configuration
+	}
 	largest, ok := largestRequests[group]
 	if !ok {
 		return configuration
