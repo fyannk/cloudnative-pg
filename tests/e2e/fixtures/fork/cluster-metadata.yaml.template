@@ -1,0 +1,30 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: fork-metadata
+spec:
+  instances: 2
+
+  inheritedMetadata:
+    labels:
+      # MANDATORY_METADATA replaces this value
+      fork-e2e/mandatory: from-cluster
+      # this value replaces the one of DEFAULT_METADATA
+      fork-e2e/overridden: from-cluster
+
+  metadataPropagation:
+    - targets: [pgPods]
+      labels:
+        fork-e2e/rule: pods
+        # a label of the operator is never taken from a rule
+        cnpg.io/instanceRole: from-rule
+    - targets: [services]
+      labels:
+        fork-e2e/rule: services
+    - targets: [persistentVolumeClaims]
+      annotations:
+        fork-e2e/rule: pvcs
+
+  storage:
+    storageClass: ${E2E_DEFAULT_STORAGE_CLASS}
+    size: 1Gi
