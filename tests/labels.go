@@ -41,6 +41,10 @@ const (
 	// LabelDisruptive is the string for labelling disruptive tests
 	LabelDisruptive = "disruptive"
 
+	// LabelFork is a label for selecting the tests of the features this
+	// fork adds to CloudNativePG, see docs/src/fork_differences.md
+	LabelFork = "fork"
+
 	// LabelImportingDatabases is a label for selecting the importing-databases test
 	LabelImportingDatabases = "importing-databases"
 
