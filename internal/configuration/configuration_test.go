@@ -24,6 +24,8 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/cloudnative-pg/cloudnative-pg/pkg/utils"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
@@ -528,5 +530,23 @@ var _ = Describe("Operator namespace discovery", func() {
 		Expect(os.WriteFile(namespaceFile, []byte(" \n"), 0o600)).To(Succeed())
 		Expect(config.DiscoverOperatorNamespace(namespaceFile)).To(Equal(OperatorNamespaceUnknown))
 		Expect(config.OperatorNamespace).To(BeEmpty())
+	})
+})
+
+var _ = Describe("the format of the five-field schedules", func() {
+	It("is the default one when the setting is not a known format", func() {
+		config := NewConfiguration()
+		Expect(config.IsScheduledBackupCronFormatValid()).To(BeTrue())
+		Expect(config.GetScheduledBackupCronFormat()).To(Equal(utils.CronFormatSeconds))
+
+		config.ScheduledBackupCronFormat = "standard"
+		Expect(config.IsScheduledBackupCronFormatValid()).To(BeTrue())
+		Expect(config.GetScheduledBackupCronFormat()).To(Equal(utils.CronFormatStandard))
+
+		for _, value := range []string{"standrad", ""} {
+			config.ScheduledBackupCronFormat = value
+			Expect(config.IsScheduledBackupCronFormatValid()).To(BeFalse())
+			Expect(config.GetScheduledBackupCronFormat()).To(Equal(utils.CronFormatSeconds))
+		}
 	})
 })

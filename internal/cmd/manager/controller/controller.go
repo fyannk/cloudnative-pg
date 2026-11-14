@@ -697,11 +697,12 @@ func checkLoadedConfiguration(conf *configuration.Data) error {
 			"validatingWebhookConfigurationName", conf.GetValidatingWebhookConfigurationName())
 	}
 
-	if format := conf.GetScheduledBackupCronFormat(); !format.IsValid() {
-		err := fmt.Errorf("SCHEDULED_BACKUP_CRON_FORMAT %q is not one of %q, %q or %q", format,
-			utils.CronFormatSeconds, utils.CronFormatSecondsStrict, utils.CronFormatStandard)
-		setupLog.Error(err, "invalid operator configuration")
-		return err
+	if !conf.IsScheduledBackupCronFormatValid() {
+		setupLog.Error(
+			fmt.Errorf("SCHEDULED_BACKUP_CRON_FORMAT %q is not one of %q, %q or %q", conf.ScheduledBackupCronFormat,
+				utils.CronFormatSeconds, utils.CronFormatSecondsStrict, utils.CronFormatStandard),
+			"invalid operator configuration, the schedules are read with the default format",
+			"format", conf.GetScheduledBackupCronFormat())
 	}
 
 	return nil
