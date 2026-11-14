@@ -57,12 +57,21 @@ func (r *ClusterReconciler) reconcilePrimaryLease(ctx context.Context, cluster *
 	}
 	cluster.SetInheritedDataAndOwnership(&lease.ObjectMeta)
 
-	err := r.Create(ctx, &lease)
-	switch {
-	case err == nil:
+	existing := &coordinationv1.Lease{}
+	err := r.Get(ctx, client.ObjectKeyFromObject(&lease), existing)
+	if apierrs.IsNotFound(err) {
+		if err := r.Create(ctx, &lease); err != nil {
+			if apierrs.IsAlreadyExists(err) {
+				// The cache is stale: the Lease is there, and the next
+				// reconciliation reads it
+				return nil
+			}
+			return err
+		}
 		contextLogger.Info("Created primary lease", "leaseName", lease.Name)
 		return nil
-	case !apierrs.IsAlreadyExists(err):
+	}
+	if err != nil {
 		return err
 	}
 
@@ -71,10 +80,6 @@ func (r *ClusterReconciler) reconcilePrimaryLease(ctx context.Context, cluster *
 	// of this cluster that Kubernetes GC has not yet cleaned up. In the second
 	// case we adopt it so the current Cluster's deletion eventually cascades
 	// to it; if it is controlled by anything else we refuse to take over.
-	existing := &coordinationv1.Lease{}
-	if err := r.Get(ctx, client.ObjectKeyFromObject(&lease), existing); err != nil {
-		return err
-	}
 	switch classifyLeaseAdoption(existing, cluster) {
 	case adoptAlreadyOurs:
 		return nil
