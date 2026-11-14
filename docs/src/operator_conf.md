@@ -68,7 +68,7 @@ Name | Description
 `OPERATOR_IMAGE_NAME` | The name of the operator image used to bootstrap Pods. Defaults to the image specified during installation.
 `PGBOUNCER_IMAGE_NAME` | The name of the PgBouncer image used by default for new poolers. Defaults to the version specified in the operator.
 `POSTGRES_IMAGE_NAME` | The name of the PostgreSQL image used by default for new clusters. Defaults to the version specified in the operator.
-`FILTERED_CACHE_MODE` | Restricts the operator cache to the objects it manages, the ones carrying the `cnpg.io/reconcile=true` label. `off` (the default) caches every object of the watched kinds; `strict` caches only the managed objects and reads the others from the API server when a reconciliation needs them; `reload` is `strict` plus a metadata-only watch on the Secrets and ConfigMaps carrying `cnpg.io/reload=true`, so that changing them still triggers a reconciliation. See [Operator cache](#operator-cache).
+`FILTERED_CACHE_MODE` | Restricts the operator cache to the objects it manages, the ones carrying the `cnpg.io/reconcile=true` label. `off` (the default) caches every object of the watched kinds; `strict` caches only the managed objects and reads the others from the API server when a reconciliation needs them; `reload` is `strict` plus a metadata-only watch on the Secrets and ConfigMaps carrying the `cnpg.io/reload` label (whatever its value), so that changing them still triggers a reconciliation. See [Operator cache](#operator-cache).
 `PULL_SECRET_NAME` | Name of an additional pull secret to be defined in the operator's namespace and to be used to download images
 `STANDBY_TCP_USER_TIMEOUT` | Defines the [`TCP_USER_TIMEOUT` socket option](https://www.postgresql.org/docs/current/runtime-config-connection.html#GUC-TCP-USER-TIMEOUT) in milliseconds for replication connections from standby instances to the primary. Default is 5000 (5 seconds). Set to `0` to use the system's default.
 `WATCH_NAMESPACE` | Specifies the namespace(s) where the operator should watch for resources. Multiple namespaces can be specified separated by commas. If not set, the operator watches all namespaces (cluster-wide mode).
@@ -116,9 +116,10 @@ operator sets on everything it creates:
   the next reconciliation. Label such objects with `cnpg.io/reconcile=true`
   to cache them;
 - `reload` is `strict` plus a metadata-only watch on the Secrets and
-  ConfigMaps carrying `cnpg.io/reload=true` without the cache label, so that
-  changing them triggers a reconciliation exactly as in `off` mode. The
-  metadata of each such object costs a few hundred bytes, whatever its size.
+  ConfigMaps carrying the `cnpg.io/reload` label, whatever its value,
+  without the cache label, so that changing them triggers a reconciliation
+  exactly as in `off` mode. The metadata of each such object costs a few
+  hundred bytes, whatever its size.
 
 For an object referenced by a `Cluster` without the `cnpg.io/reconcile=true`
 label, such as a Secret holding a certificate:
@@ -126,11 +127,11 @@ label, such as a Secret holding a certificate:
 | | `off` | `strict` | `reload` |
 |---|---|---|---|
 | Read | from the cache | from the API server, at each read | from the API server, at each read |
-| Change, object labeled `cnpg.io/reload=true` | reconciliation | next reconciliation | reconciliation |
+| Change, object labeled `cnpg.io/reload` | reconciliation | next reconciliation | reconciliation |
 | Change, object without `cnpg.io/reload` | next reconciliation | next reconciliation | next reconciliation |
 
 With the `cnpg.io/reconcile=true` label, the object is read from the cache
-in every mode, and, labeled `cnpg.io/reload=true` too, its changes trigger a
+in every mode, and, labeled `cnpg.io/reload` too, its changes trigger a
 reconciliation in every mode.
 
 In the operator namespace, Secrets, ConfigMaps and Services are always
