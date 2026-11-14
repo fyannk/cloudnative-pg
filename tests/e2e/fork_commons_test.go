@@ -21,6 +21,7 @@ package e2e
 
 import (
 	"maps"
+	"strings"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -248,6 +249,18 @@ func eventsOf(namespace, objectKind, objectName, reason string) ([]corev1.Event,
 		}
 	}
 	return result, nil
+}
+
+// metricLines returns the samples of the metrics whose name starts with the
+// given prefix in a Prometheus text exposition
+func metricLines(exposition, prefix string) []string {
+	var result []string
+	for line := range strings.SplitSeq(exposition, "\n") {
+		if strings.HasPrefix(line, prefix) {
+			result = append(result, line)
+		}
+	}
+	return result
 }
 
 // pvcStorageRequest returns the storage request of a PVC
