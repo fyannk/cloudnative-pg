@@ -36,6 +36,7 @@ import (
 	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrs "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -1069,6 +1070,28 @@ func createOrPatchPodMonitor(
 		}
 		return nil
 	}
+
+	err := reconcilePodMonitor(ctx, cli, manager)
+	if meta.IsNoMatchError(err) || apierrs.IsNotFound(err) {
+		// The API was served when the operator started and is not anymore,
+		// its CRD having been removed since: the monitoring of a cluster must
+		// not stop its reconciliation, failover included
+		contextLogger.Warning(
+			"Cannot reconcile the PodMonitor object, skipping it: the PodMonitor API is not served anymore, "+
+				"or the object was deleted meanwhile. If the PodMonitor CRD was removed, restart the operator",
+			"error", err)
+		return nil
+	}
+	return err
+}
+
+// reconcilePodMonitor creates, patches or deletes the PodMonitor
+func reconcilePodMonitor(
+	ctx context.Context,
+	cli client.Client,
+	manager podMonitorManager,
+) error {
+	contextLogger := log.FromContext(ctx)
 
 	expectedPodMonitor := manager.BuildPodMonitor()
 	// We get the current pod monitor
