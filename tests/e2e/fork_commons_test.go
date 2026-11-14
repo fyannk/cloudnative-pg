@@ -29,6 +29,8 @@ import (
 	"k8s.io/client-go/util/retry"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 
+	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
+	"github.com/cloudnative-pg/cloudnative-pg/tests/utils/clusterutils"
 	"github.com/cloudnative-pg/cloudnative-pg/tests/utils/operator"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -213,4 +215,47 @@ func postgresContainerEnv(pod corev1.Pod) map[string]string {
 		}
 	}
 	return result
+}
+
+// volumeExpansionRefusedCondition returns the VolumeExpansionRefused
+// condition of a Cluster, nil when it has none
+func volumeExpansionRefusedCondition(namespace, clusterName string) (*metav1.Condition, error) {
+	cluster, err := clusterutils.Get(env.Ctx, env.Client, namespace, clusterName)
+	if err != nil {
+		return nil, err
+	}
+	for idx := range cluster.Status.Conditions {
+		if cluster.Status.Conditions[idx].Type == string(apiv1.ConditionVolumeExpansionRefused) {
+			return &cluster.Status.Conditions[idx], nil
+		}
+	}
+	return nil, nil
+}
+
+// eventsOf returns the events of a reason recorded on the named object
+func eventsOf(namespace, objectKind, objectName, reason string) ([]corev1.Event, error) {
+	eventList := &corev1.EventList{}
+	if err := env.Client.List(env.Ctx, eventList, ctrlclient.InNamespace(namespace)); err != nil {
+		return nil, err
+	}
+
+	var result []corev1.Event
+	for _, event := range eventList.Items {
+		if event.InvolvedObject.Kind == objectKind &&
+			event.InvolvedObject.Name == objectName &&
+			event.Reason == reason {
+			result = append(result, event)
+		}
+	}
+	return result, nil
+}
+
+// pvcStorageRequest returns the storage request of a PVC
+func pvcStorageRequest(namespace, name string) (string, error) {
+	pvc := &corev1.PersistentVolumeClaim{}
+	if err := env.Client.Get(env.Ctx, ctrlclient.ObjectKey{Namespace: namespace, Name: name}, pvc); err != nil {
+		return "", err
+	}
+	request := pvc.Spec.Resources.Requests[corev1.ResourceStorage]
+	return request.String(), nil
 }
