@@ -111,8 +111,15 @@ func (r *PoolerReconciler) updatePoolerStatus(
 		updatedStatus.PhaseReason = "pgbouncer is paused"
 		updatedStatus.Image = image
 	default:
+		// The phase is computed and written once per reconciliation: a second
+		// write correcting the first one would make a blocked Pooler flap
+		// between the two, each write starting a new reconciliation
 		updatedStatus.Phase = apiv1.PoolerPhaseActive
 		updatedStatus.PhaseReason = ""
+		if reason := deploymentBlockedReason(resources.Deployment); reason != "" {
+			updatedStatus.Phase = apiv1.PoolerPhaseInactive
+			updatedStatus.PhaseReason = reason
+		}
 		updatedStatus.Image = image
 	}
 
@@ -125,30 +132,23 @@ func (r *PoolerReconciler) updatePoolerStatus(
 	return nil
 }
 
-// updatePoolerPhaseFromDeployment marks the Pooler inactive when its Deployment
-// reports that it cannot run its Pods: ReplicaFailure=True (a Pod creation is
-// rejected, by a quota or an admission policy) or Progressing=False (the
-// rollout exceeded its progress deadline, for example Pods that never become
-// ready). The Deployment's own message is the reason. A Deployment not
-// reporting such a condition leaves the phase computed by updatePoolerStatus.
-func (r *PoolerReconciler) updatePoolerPhaseFromDeployment(
-	ctx context.Context,
-	pooler *apiv1.Pooler,
-	resources *poolerManagedResources,
-) error {
-	if resources.Deployment == nil || pooler.Status.Phase != apiv1.PoolerPhaseActive {
-		return nil
+// deploymentBlockedReason returns why the Deployment of a Pooler cannot run
+// its Pods, or an empty string when it does not report so: ReplicaFailure=True
+// (a Pod creation is rejected, by a quota or an admission policy) or
+// Progressing=False (the rollout exceeded its progress deadline, for example
+// Pods that never become ready). The Deployment's own message is the reason.
+func deploymentBlockedReason(deployment *appsv1.Deployment) string {
+	if deployment == nil {
+		return ""
 	}
 
-	for _, condition := range resources.Deployment.Status.Conditions {
+	for _, condition := range deployment.Status.Conditions {
 		blocked := (condition.Type == appsv1.DeploymentReplicaFailure && condition.Status == corev1.ConditionTrue) ||
 			(condition.Type == appsv1.DeploymentProgressing && condition.Status == corev1.ConditionFalse)
-		if !blocked {
-			continue
+		if blocked {
+			return fmt.Sprintf("Deployment %s: %s: %s", deployment.Name, condition.Reason, condition.Message)
 		}
-		reason := fmt.Sprintf("Deployment %s: %s: %s", resources.Deployment.Name, condition.Reason, condition.Message)
-		return r.setPoolerPhase(ctx, pooler, apiv1.PoolerPhaseInactive, reason)
 	}
 
-	return nil
+	return ""
 }
