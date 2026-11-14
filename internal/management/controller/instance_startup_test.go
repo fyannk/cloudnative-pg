@@ -46,6 +46,8 @@ type fakeLeaseAcquirer struct {
 	yields int
 }
 
+func (f *fakeLeaseAcquirer) WaitReason() string { return "" }
+
 func (f *fakeLeaseAcquirer) Acquire(context.Context, lease.Config) error {
 	return f.err
 }

@@ -51,6 +51,9 @@ type PrimaryLeaseAcquirer interface {
 	// without releasing the lease record, so that a new target primary can take
 	// it over once it goes stale. The next Acquire takes the lease back.
 	Yield(ctx context.Context)
+
+	// WaitReason says why the lease is not held yet
+	WaitReason() string
 }
 
 // InstanceReconciler reconciles the status of the Cluster resource with

@@ -27,6 +27,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -516,5 +517,33 @@ var _ = Describe("poolerImageCatalogIndexer", func() {
 
 		Expect(poolerImageCatalogIndexer(namespaced)).
 			ToNot(Equal(poolerImageCatalogIndexer(clusterScoped)))
+	})
+})
+
+// A managed resource that the Pooler does not own blocks its reconciliation
+// for two minutes at a time; the event used to say "check logs" instead of
+// naming the resource.
+var _ = Describe("ensureManagedResourcesAreOwned", func() {
+	It("names the resources that are not owned in the event", func(ctx SpecContext) {
+		env := buildTestEnvironment()
+		namespace := newFakeNamespace(env.client)
+		cluster := newFakeCNPGCluster(env.client, namespace)
+		pooler := newFakePooler(env.client, cluster)
+
+		// A Deployment and a Service with the Pooler's name, owned by nobody
+		resources := &poolerManagedResources{
+			Deployment: &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: pooler.Name, Namespace: namespace}},
+			Service:    &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: pooler.Name, Namespace: namespace}},
+		}
+
+		result := env.poolerReconciler.ensureManagedResourcesAreOwned(ctx, *pooler, resources)
+		Expect(result.RequeueAfter).To(Equal(120 * time.Second))
+
+		recorder := env.poolerReconciler.Recorder.(*record.FakeRecorder)
+		Expect(recorder.Events).To(Receive(And(
+			ContainSubstring("Warning InvalidOwnership"),
+			ContainSubstring("Deployment "+pooler.Name),
+			ContainSubstring("Service "+pooler.Name),
+		)))
 	})
 })

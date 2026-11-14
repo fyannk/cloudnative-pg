@@ -137,6 +137,11 @@ type Runnable struct {
 	// the new target.
 	yielded atomic.Bool
 
+	// waitReason says why the lease is not held yet, for the callers waiting
+	// on Acquire to report it
+	waitReasonMu sync.Mutex
+	waitReason   string
+
 	// observedRecord is the lease state tryTakeOver is timing for liveness and
 	// observedTime is when it first saw that state; see tryTakeOver for how they
 	// detect a holder that has stopped renewing without comparing against the
@@ -497,9 +502,11 @@ func (r *Runnable) tryTakeOver(ctx context.Context) (bool, error) {
 	if errors.IsNotFound(err) {
 		// The cluster controller owns lease creation; nothing to take over yet.
 		r.observedRecord = nil
+		r.setWaitReason("lease " + r.lock.Describe() + " not found")
 		return false, nil
 	}
 	if err != nil {
+		r.setWaitReason("cannot read lease " + r.lock.Describe() + ": " + err.Error())
 		return false, err
 	}
 
@@ -519,6 +526,7 @@ func (r *Runnable) tryTakeOver(ctx context.Context) (bool, error) {
 	// challenger's claim goes through, not by a read that a claim may have
 	// overtaken, and the monitor starts from a write that was really confirmed.
 	if record.HolderIdentity == identity {
+		r.setWaitReason("")
 		return r.renew(ctx, record)
 	}
 
@@ -527,10 +535,13 @@ func (r *Runnable) tryTakeOver(ctx context.Context) (bool, error) {
 	// a clean shutdown takes this path, keeping that hand-over fast.
 	if record.HolderIdentity == "" {
 		if !r.isTargetPrimary() {
+			r.setWaitReason("lease " + r.lock.Describe() + " is released, and this instance is not the target primary")
 			return false, nil
 		}
-		return r.claim(ctx, record)
+		return r.claimWithReason(ctx, record)
 	}
+
+	r.setWaitReason(fmt.Sprintf("lease %s held by %q", r.lock.Describe(), record.HolderIdentity))
 
 	// Another pod still holds the lease. The window runs only from the flip
 	// (the pending marker or this pod as target), which is what tells the old
@@ -547,7 +558,22 @@ func (r *Runnable) tryTakeOver(ctx context.Context) (bool, error) {
 	if !r.trackRecord(record) || time.Since(r.observedTime) < r.config.LeaseDuration || !r.isTargetPrimary() {
 		return false, nil
 	}
-	return r.claim(ctx, record)
+	return r.claimWithReason(ctx, record)
+}
+
+// claimWithReason claims the lease, and keeps the wait reason in line with
+// the outcome: the reason of a previous attempt must not outlive it
+func (r *Runnable) claimWithReason(ctx context.Context, record *resourcelock.LeaderElectionRecord) (bool, error) {
+	claimed, err := r.claim(ctx, record)
+	switch {
+	case err != nil:
+		r.setWaitReason("cannot take lease " + r.lock.Describe() + ": " + err.Error())
+	case claimed:
+		r.setWaitReason("")
+	default:
+		r.setWaitReason("lease " + r.lock.Describe() + " was taken by another instance")
+	}
+	return claimed, err
 }
 
 // trackRecord times record and reports whether it was already being timed in
@@ -576,6 +602,20 @@ func (r *Runnable) mayObserve() bool {
 // stale cache only delays the claim, as it delays a promotion.
 func (r *Runnable) isTargetPrimary() bool {
 	return r.instance.GetClusterOrDefault().Status.TargetPrimary == r.instance.GetPodName()
+}
+
+func (r *Runnable) setWaitReason(reason string) {
+	r.waitReasonMu.Lock()
+	defer r.waitReasonMu.Unlock()
+	r.waitReason = reason
+}
+
+// WaitReason returns why the lease is not held yet, as observed by the last
+// take-over attempt, or an empty string before the first attempt
+func (r *Runnable) WaitReason() string {
+	r.waitReasonMu.Lock()
+	defer r.waitReasonMu.Unlock()
+	return r.waitReason
 }
 
 // sameHolder reports whether two reads describe the same un-renewed lease

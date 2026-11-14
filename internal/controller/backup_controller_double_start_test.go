@@ -401,6 +401,8 @@ var _ = Describe("backup_controller starting a backup", func() {
 		_, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: key})
 		Expect(err).To(HaveOccurred())
 		Expect(starts).To(BeEmpty())
+		// The error that ended the reconciliation is reported on the Backup
+		Expect(recorder.Events).To(Receive(HavePrefix("Warning ReconciliationFailed ")))
 
 		var stored apiv1.Backup
 		Expect(lagging.Client.Get(ctx, key, &stored)).To(Succeed())
