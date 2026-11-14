@@ -241,3 +241,139 @@ var _ = Describe("Webhook configuration names", func() {
 		Expect(config.GetValidatingWebhookConfigurationName()).To(Equal(DefaultValidatingWebhookConfigurationName))
 	})
 })
+
+var _ = Describe("Own object names", func() {
+	type names struct {
+		caSecret, webhookSecret, webhookService, lease, mutating, validating string
+	}
+	resolve := func(config Data) names {
+		return names{
+			caSecret:       config.GetCaSecretName(),
+			webhookSecret:  config.GetWebhookSecretName(),
+			webhookService: config.GetWebhookServiceName(),
+			lease:          config.GetLeaderElectionID(),
+			mutating:       config.GetMutatingWebhookConfigurationName(),
+			validating:     config.GetValidatingWebhookConfigurationName(),
+		}
+	}
+	literals := names{
+		caSecret:       "cnpg-ca-secret",
+		webhookSecret:  "cnpg-webhook-cert",
+		webhookService: "cnpg-webhook-service",
+		lease:          "db9c8771.cnpg.io",
+		mutating:       "cnpg-mutating-webhook-configuration",
+		validating:     "cnpg-validating-webhook-configuration",
+	}
+
+	DescribeTable("resolve",
+		func(config Data, expected names) {
+			Expect(resolve(config)).To(Equal(expected))
+		},
+		Entry("to the historical literals when the Deployment name is not known",
+			Data{}, literals),
+		Entry("to names derived from the Deployment name when it is known",
+			Data{OperatorDeploymentName: "cnpg-toto"},
+			names{
+				caSecret:       "cnpg-toto-ca-secret",
+				webhookSecret:  "cnpg-toto-webhook-cert",
+				webhookService: "cnpg-toto-webhook-service",
+				lease:          "cnpg-toto.cnpg.io",
+				mutating:       "cnpg-toto-mutating-webhook-configuration",
+				validating:     "cnpg-toto-validating-webhook-configuration",
+			}),
+		Entry("to the explicit names, which win over the derived ones",
+			Data{
+				OperatorDeploymentName:             "cnpg-toto",
+				CaSecretName:                       "toto-ca",
+				WebhookServiceName:                 "toto-webhook",
+				LeaderElectionID:                   "toto-leader",
+				MutatingWebhookConfigurationName:   "toto-mutating",
+				ValidatingWebhookConfigurationName: "toto-validating",
+			},
+			names{
+				caSecret:       "toto-ca",
+				webhookSecret:  "cnpg-toto-webhook-cert",
+				webhookService: "toto-webhook",
+				lease:          "toto-leader",
+				mutating:       "toto-mutating",
+				validating:     "toto-validating",
+			}),
+		Entry("to the explicit names, which win over the literals too",
+			Data{
+				CaSecretName:       "toto-ca",
+				WebhookServiceName: "toto-webhook",
+				LeaderElectionID:   "toto-leader",
+			},
+			names{
+				caSecret:       "toto-ca",
+				webhookSecret:  "cnpg-webhook-cert",
+				webhookService: "toto-webhook",
+				lease:          "toto-leader",
+				mutating:       "cnpg-mutating-webhook-configuration",
+				validating:     "cnpg-validating-webhook-configuration",
+			}),
+	)
+
+	It("composes the namespace suffix on the derived webhook configuration names", func() {
+		config := Data{
+			OperatorDeploymentName:       "cnpg-toto",
+			EnableWebhookNamespaceSuffix: true,
+			OperatorNamespace:            "operators",
+		}
+		Expect(config.GetMutatingWebhookConfigurationName()).
+			To(Equal("cnpg-toto-mutating-webhook-configuration-operators"))
+		Expect(config.GetValidatingWebhookConfigurationName()).
+			To(Equal("cnpg-toto-validating-webhook-configuration-operators"))
+	})
+
+	It("keeps the explicit webhook configuration names as given, derived base or not", func() {
+		config := Data{
+			OperatorDeploymentName:           "cnpg-toto",
+			EnableWebhookNamespaceSuffix:     true,
+			OperatorNamespace:                "operators",
+			MutatingWebhookConfigurationName: "toto-mutating",
+		}
+		Expect(config.GetMutatingWebhookConfigurationName()).To(Equal("toto-mutating"))
+		Expect(config.GetValidatingWebhookConfigurationName()).
+			To(Equal("cnpg-toto-validating-webhook-configuration-operators"))
+	})
+
+	It("reads the identity and the explicit names from the configuration", func() {
+		config := newDefaultConfig()
+		config.ReadConfigMap(map[string]string{
+			"OPERATOR_DEPLOYMENT_NAME": "cnpg-toto",
+			"CA_SECRET_NAME":           "toto-ca",
+			"WEBHOOK_SERVICE_NAME":     "toto-webhook",
+			"LEADER_ELECTION_ID":       "toto-leader",
+		})
+		Expect(config.OperatorDeploymentName).To(Equal("cnpg-toto"))
+		Expect(config.GetCaSecretName()).To(Equal("toto-ca"))
+		Expect(config.GetWebhookSecretName()).To(Equal("cnpg-toto-webhook-cert"))
+		Expect(config.GetWebhookServiceName()).To(Equal("toto-webhook"))
+		Expect(config.GetLeaderElectionID()).To(Equal("toto-leader"))
+	})
+
+	DescribeTable("list the webhook Service names, subject first",
+		func(config Data, expected []string) {
+			Expect(config.GetWebhookServiceNames()).To(Equal(expected))
+		},
+		Entry("the literal alone when nothing is set",
+			Data{}, []string{"cnpg-webhook-service"}),
+		Entry("the derived name then the literal",
+			Data{OperatorDeploymentName: "cnpg-toto"},
+			[]string{"cnpg-toto-webhook-service", "cnpg-webhook-service"}),
+		Entry("the explicit name, the derived one, the literal",
+			Data{OperatorDeploymentName: "cnpg-toto", WebhookServiceName: "toto-webhook"},
+			[]string{"toto-webhook", "cnpg-toto-webhook-service", "cnpg-webhook-service"}),
+		Entry("the explicit name then the literal, without the Deployment name",
+			Data{WebhookServiceName: "toto-webhook"},
+			[]string{"toto-webhook", "cnpg-webhook-service"}),
+		Entry("no duplicate when the explicit name is the literal",
+			Data{OperatorDeploymentName: "cnpg-toto", WebhookServiceName: "cnpg-webhook-service"},
+			[]string{"cnpg-webhook-service", "cnpg-toto-webhook-service"}),
+	)
+
+	It("leaves the defaults untouched when nothing is configured", func() {
+		Expect(resolve(*newDefaultConfig())).To(Equal(literals))
+	})
+})

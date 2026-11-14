@@ -23,6 +23,7 @@ package configuration
 
 import (
 	"path"
+	"slices"
 	"strings"
 	"time"
 
@@ -53,6 +54,21 @@ const (
 
 	// DefaultValidatingWebhookConfigurationName is the default name of the validating webhook configuration
 	DefaultValidatingWebhookConfigurationName = "cnpg-validating-webhook-configuration"
+
+	// DefaultCaSecretName is the default name of the Secret holding the operator CA
+	DefaultCaSecretName = "cnpg-ca-secret" // #nosec
+
+	// DefaultWebhookSecretName is the default name of the Secret holding the webhook serving certificate
+	DefaultWebhookSecretName = "cnpg-webhook-cert" // #nosec
+
+	// DefaultWebhookServiceName is the default name of the Service exposing the webhook server
+	DefaultWebhookServiceName = "cnpg-webhook-service"
+
+	// DefaultLeaderElectionID is the default name of the Lease used for the leader election
+	DefaultLeaderElectionID = "db9c8771.cnpg.io"
+
+	// leaderElectionIDSuffix is appended to the Deployment name to derive the Lease name
+	leaderElectionIDSuffix = ".cnpg.io"
 )
 
 // DefaultDrainTaints is the default list of taints the operator will watch and treat
@@ -101,6 +117,30 @@ type Data struct {
 
 	// OperatorNamespace is the namespace where the operator is installed
 	OperatorNamespace string `json:"operatorNamespace" env:"OPERATOR_NAMESPACE"`
+
+	// OperatorDeploymentName is the name of the Deployment running the operator.
+	// When set, the operator fetches its Deployment by this name instead of
+	// searching it by label, and names the objects it creates for itself after
+	// it (see GetCaSecretName and the other getters). When unset, the lookup
+	// is by label and every name is the historical literal. It must be a Pod
+	// environment variable: the Lease name is needed before the configuration
+	// objects are read.
+	OperatorDeploymentName string `json:"operatorDeploymentName" env:"OPERATOR_DEPLOYMENT_NAME"`
+
+	// CaSecretName is the name of the Secret holding the operator CA, used as
+	// given. When unset, derived from OperatorDeploymentName, or the default.
+	CaSecretName string `json:"caSecretName" env:"CA_SECRET_NAME"`
+
+	// WebhookServiceName is the name of the Service exposing the webhook
+	// server, the subject of the serving certificate the operator issues,
+	// used as given. When unset, derived from OperatorDeploymentName, or the
+	// default.
+	WebhookServiceName string `json:"webhookServiceName" env:"WEBHOOK_SERVICE_NAME"`
+
+	// LeaderElectionID is the name of the Lease used for the leader election,
+	// used as given. When unset, derived from OperatorDeploymentName, or the
+	// default. It must be a Pod environment variable.
+	LeaderElectionID string `json:"leaderElectionID" env:"LEADER_ELECTION_ID"`
 
 	// OperatorPullSecretName is the pull secret used to download the
 	// pull secret name
@@ -268,32 +308,97 @@ func (config *Data) WatchedNamespaces() []string {
 	return cleanNamespaceList(config.WatchNamespace)
 }
 
-// GetMutatingWebhookConfigurationName returns the name of the MutatingWebhookConfiguration:
-// the explicit name when set, otherwise the default name, with the operator namespace
-// appended when EnableWebhookNamespaceSuffix is true and OperatorNamespace is set, to avoid
-// collisions between multiple operator instances.
-func (config *Data) GetMutatingWebhookConfigurationName() string {
-	if config.MutatingWebhookConfigurationName != "" {
-		return config.MutatingWebhookConfigurationName
+// ownObjectName returns the name of an object the operator creates or uses
+// for itself: the explicit name when set, "<OperatorDeploymentName>-<suffix>"
+// when the Deployment name is known, the historical literal otherwise.
+func (config *Data) ownObjectName(explicit, suffix, literal string) string {
+	if explicit != "" {
+		return explicit
 	}
-	if config.EnableWebhookNamespaceSuffix && config.OperatorNamespace != "" {
-		return DefaultMutatingWebhookConfigurationName + "-" + config.OperatorNamespace
+	if config.OperatorDeploymentName != "" {
+		return config.OperatorDeploymentName + "-" + suffix
 	}
-	return DefaultMutatingWebhookConfigurationName
+	return literal
 }
 
-// GetValidatingWebhookConfigurationName returns the name of the ValidatingWebhookConfiguration:
-// the explicit name when set, otherwise the default name, with the operator namespace
-// appended when EnableWebhookNamespaceSuffix is true and OperatorNamespace is set, to avoid
-// collisions between multiple operator instances.
-func (config *Data) GetValidatingWebhookConfigurationName() string {
-	if config.ValidatingWebhookConfigurationName != "" {
-		return config.ValidatingWebhookConfigurationName
+// GetCaSecretName returns the name of the Secret holding the operator CA
+func (config *Data) GetCaSecretName() string {
+	return config.ownObjectName(config.CaSecretName, "ca-secret", DefaultCaSecretName)
+}
+
+// GetWebhookSecretName returns the name of the Secret holding the webhook
+// serving certificate: there is no explicit setting, the Secret mounted in
+// the operator Pod takes precedence over this name when it can be discovered
+func (config *Data) GetWebhookSecretName() string {
+	return config.ownObjectName("", "webhook-cert", DefaultWebhookSecretName)
+}
+
+// GetWebhookServiceName returns the name of the Service exposing the webhook
+// server, the subject of the serving certificate
+func (config *Data) GetWebhookServiceName() string {
+	return config.ownObjectName(config.WebhookServiceName, "webhook-service", DefaultWebhookServiceName)
+}
+
+// GetWebhookServiceNames returns the names the webhook Service may have, the
+// subject of the serving certificate first: the configured or derived name,
+// then the derived one and the historical literal, without duplicates
+func (config *Data) GetWebhookServiceNames() []string {
+	names := []string{config.GetWebhookServiceName()}
+	for _, name := range []string{
+		config.ownObjectName("", "webhook-service", DefaultWebhookServiceName),
+		DefaultWebhookServiceName,
+	} {
+		if !slices.Contains(names, name) {
+			names = append(names, name)
+		}
 	}
+	return names
+}
+
+// GetLeaderElectionID returns the name of the Lease used for the leader
+// election: the explicit name, "<OperatorDeploymentName>.cnpg.io", or the
+// default
+func (config *Data) GetLeaderElectionID() string {
+	if config.LeaderElectionID != "" {
+		return config.LeaderElectionID
+	}
+	if config.OperatorDeploymentName != "" {
+		return config.OperatorDeploymentName + leaderElectionIDSuffix
+	}
+	return DefaultLeaderElectionID
+}
+
+// webhookConfigurationName resolves the name of a webhook configuration: the
+// explicit name is used as given; otherwise the name derived from
+// OperatorDeploymentName, or the default, with "-<OperatorNamespace>" appended
+// when EnableWebhookNamespaceSuffix is true and OperatorNamespace is set
+func (config *Data) webhookConfigurationName(explicit, suffix, literal string) string {
+	if explicit != "" {
+		return explicit
+	}
+	name := config.ownObjectName("", suffix, literal)
 	if config.EnableWebhookNamespaceSuffix && config.OperatorNamespace != "" {
-		return DefaultValidatingWebhookConfigurationName + "-" + config.OperatorNamespace
+		return name + "-" + config.OperatorNamespace
 	}
-	return DefaultValidatingWebhookConfigurationName
+	return name
+}
+
+// GetMutatingWebhookConfigurationName returns the name of the MutatingWebhookConfiguration
+// the operator injects its CA bundle into
+func (config *Data) GetMutatingWebhookConfigurationName() string {
+	return config.webhookConfigurationName(
+		config.MutatingWebhookConfigurationName,
+		"mutating-webhook-configuration",
+		DefaultMutatingWebhookConfigurationName)
+}
+
+// GetValidatingWebhookConfigurationName returns the name of the ValidatingWebhookConfiguration
+// the operator injects its CA bundle into
+func (config *Data) GetValidatingWebhookConfigurationName() string {
+	return config.webhookConfigurationName(
+		config.ValidatingWebhookConfigurationName,
+		"validating-webhook-configuration",
+		DefaultValidatingWebhookConfigurationName)
 }
 
 // GetIncludePlugins gets the list of plugins to be always

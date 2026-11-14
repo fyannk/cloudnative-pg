@@ -66,8 +66,13 @@ type PublicKeyInfrastructure struct {
 	// The name of the secret where the certificates will be stored
 	SecretName string
 
-	// The name of the service where the webhook server will be reachable
+	// The name of the service where the webhook server will be reachable,
+	// the subject of the serving certificate
 	ServiceName string
+
+	// Other names the service may have, always added to the DNS names of the
+	// serving certificate (e.g. the historical name when ServiceName is derived)
+	AlternativeServiceNames []string
 
 	// The name of the namespace where the operator is set up
 	OperatorNamespace string
@@ -80,8 +85,12 @@ type PublicKeyInfrastructure struct {
 	// to inject the caBundle
 	ValidatingWebhookConfigurationName string
 
-	// The labelSelector to be used to get the operators deployment,
-	// e.g. "app.kubernetes.io/name=cloudnative-pg"
+	// The name of the operator deployment, when known: the deployment is
+	// then fetched by name instead of being searched by label
+	OperatorDeploymentName string
+
+	// The labelSelector to be used to get the operators deployment when its
+	// name is not known, e.g. "app.kubernetes.io/name=cloudnative-pg"
 	OperatorDeploymentLabelSelector string
 
 	// ManageWebhookConfigurations controls whether the operator injects the CA
@@ -190,7 +199,8 @@ func (pki *PublicKeyInfrastructure) ensureRootCACertificate(
 	}
 
 	secret = pair.GenerateCASecret(pki.OperatorNamespace, pki.CaSecretName)
-	err = SetAsOwnedByOperatorDeployment(ctx, kubeClient, &secret.ObjectMeta, pki.OperatorDeploymentLabelSelector)
+	err = SetAsOwnedByOperatorDeployment(ctx, kubeClient, &secret.ObjectMeta,
+		pki.OperatorDeploymentName, pki.OperatorDeploymentLabelSelector)
 	if err != nil {
 		return nil, err
 	}
@@ -330,10 +340,29 @@ func (pki PublicKeyInfrastructure) schedulePeriodicMaintenance(
 	return nil
 }
 
-// ensureCertificate will ensure that a webhook certificate exists and is usable
+// isTransientAPIError tells whether the API server answered with an error
+// that the next round may not get: a missing object and a missing permission
+// are stable answers, and an error that is not one of the API server, such as
+// no deployment matching the labels, is not transient either
+func isTransientAPIError(err error) bool {
+	var status apierrors.APIStatus
+	return errors.As(err, &status) && !apierrors.IsNotFound(err) && !apierrors.IsForbidden(err)
+}
+
+// ensureCertificate will ensure that a webhook certificate exists and is usable.
+// The Secret is the one mounted in the operator deployment when it can be read,
+// and the certificate carries the configured names of the webhook Service, see
+// webhookAltDNSNames. When the deployment cannot be read for a while, the
+// mounted Secret is not known: an existing certificate is kept as it is for
+// this round.
 func (pki PublicKeyInfrastructure) ensureCertificate(
 	ctx context.Context, kubeClient client.Client, caSecret *corev1.Secret,
 ) (*corev1.Secret, error) {
+	// The deployment is required to own a new Secret only: an existing one is
+	// renewed even when the deployment cannot be read
+	deployment, deploymentErr := pki.operatorDeployment(ctx, kubeClient)
+	secretName := pki.webhookSecretName(deployment)
+	altDNSNames := pki.webhookAltDNSNames()
 	webhookHostname := fmt.Sprintf(
 		"%v.%v.svc",
 		pki.ServiceName,
@@ -342,14 +371,27 @@ func (pki PublicKeyInfrastructure) ensureCertificate(
 	// Checking if the secret already exist
 	if err := kubeClient.Get(
 		ctx,
-		types.NamespacedName{Namespace: pki.OperatorNamespace, Name: pki.SecretName},
+		types.NamespacedName{Namespace: pki.OperatorNamespace, Name: secretName},
 		secret,
 	); err == nil {
+		if isTransientAPIError(deploymentErr) {
+			// The Secret read is the configured one, which may not be the
+			// one the deployment mounts: nothing is renewed until the
+			// deployment tells
+			pkiLog.Info("Cannot read the operator deployment, "+
+				"the webhook certificate is not renewed this round",
+				"secret", secretName, "error", deploymentErr.Error())
+			return secret, nil
+		}
 		// Verify the temporal validity of this certificate and
 		// renew it if needed
-		return renewServerCertificate(ctx, kubeClient, *caSecret, secret, []string{webhookHostname})
+		return renewServerCertificate(ctx, kubeClient, *caSecret, secret, altDNSNames)
 	} else if !apierrors.IsNotFound(err) {
 		return nil, err
+	}
+
+	if deploymentErr != nil {
+		return nil, deploymentErr
 	}
 
 	// Let's generate the pki certificate
@@ -358,20 +400,13 @@ func (pki PublicKeyInfrastructure) ensureCertificate(
 		return nil, err
 	}
 
-	webhookPair, err := caPair.CreateAndSignPair(webhookHostname, CertTypeServer, nil)
+	webhookPair, err := caPair.CreateAndSignPair(webhookHostname, CertTypeServer, altDNSNames)
 	if err != nil {
 		return nil, err
 	}
 
-	secret = webhookPair.GenerateCertificateSecret(pki.OperatorNamespace, pki.SecretName)
-	if err := SetAsOwnedByOperatorDeployment(
-		ctx,
-		kubeClient,
-		&secret.ObjectMeta,
-		pki.OperatorDeploymentLabelSelector,
-	); err != nil {
-		return nil, err
-	}
+	secret = webhookPair.GenerateCertificateSecret(pki.OperatorNamespace, secretName)
+	setAsOwnedByDeployment(&secret.ObjectMeta, deployment)
 
 	if err := kubeClient.Create(ctx, secret); err != nil {
 		return nil, err
