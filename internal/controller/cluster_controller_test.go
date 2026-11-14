@@ -30,8 +30,10 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/rand"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/ptr"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
@@ -2051,4 +2053,58 @@ var _ = Describe("requireWALArchivingPluginOrDelete", func() {
 		Expect(res.IsZero()).To(BeTrue())
 		Expect(podExists(ctx, replica.Pod.Name)).To(BeTrue())
 	})
+})
+
+var _ = Describe("setDefaults without the webhooks: default storage class", func() {
+	const defaultClass = "cnpg-ssd"
+
+	var (
+		env       *testingEnvironment
+		namespace string
+	)
+
+	BeforeEach(func() {
+		env = buildTestEnvironment()
+		namespace = newFakeNamespace(env.client)
+
+		current := configuration.Current
+		config := *current
+		config.DefaultStorageClass = defaultClass
+		configuration.Current = &config
+		DeferCleanup(func() { configuration.Current = current })
+	})
+
+	newStoredCluster := func(ctx SpecContext, status apiv1.ClusterStatus) *apiv1.Cluster {
+		cluster := &apiv1.Cluster{
+			ObjectMeta: metav1.ObjectMeta{Name: "cluster-" + rand.String(10), Namespace: namespace},
+			Spec: apiv1.ClusterSpec{
+				Instances:            1,
+				StorageConfiguration: apiv1.StorageConfiguration{Size: "1Gi"},
+				WalStorage:           &apiv1.StorageConfiguration{Size: "1Gi"},
+			},
+		}
+		Expect(env.client.Create(ctx, cluster)).To(Succeed())
+		cluster.Status = status
+		Expect(env.client.Status().Update(ctx, cluster)).To(Succeed())
+		return cluster
+	}
+
+	// The admission guard, which runs earlier in the reconciliation, writes
+	// the class once it has made sure that the Cluster has no PVC: the
+	// reconcile-time defaults, which cannot tell, leave it alone
+	DescribeTable("leaves the storage sections as they are",
+		func(ctx SpecContext, status apiv1.ClusterStatus) {
+			cluster := newStoredCluster(ctx, status)
+
+			Expect(env.clusterReconciler.setDefaults(ctx, cluster)).To(Succeed())
+
+			var stored apiv1.Cluster
+			Expect(env.client.Get(ctx, client.ObjectKeyFromObject(cluster), &stored)).To(Succeed())
+			Expect(stored.Spec.StorageConfiguration.StorageClass).To(BeNil())
+			Expect(stored.Spec.WalStorage.StorageClass).To(BeNil())
+			Expect(stored.Spec.Bootstrap.InitDB.Database).To(Equal("app"))
+		},
+		Entry("of a Cluster that has created no instance", apiv1.ClusterStatus{}),
+		Entry("of a Cluster that has created an instance", apiv1.ClusterStatus{TargetPrimary: "cluster-example-1"}),
+	)
 })

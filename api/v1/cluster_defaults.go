@@ -58,6 +58,63 @@ func (r *Cluster) SetDefaults() {
 	r.setDefaults(false)
 }
 
+// SetDefaultStorageClass writes the default StorageClass of the operator
+// configuration, when one is set, into every storage section of the Cluster
+// that names no class: `storage`, `walStorage` and each tablespace. A section
+// that sets `storageClass`, or `storageClassName` in its `pvcTemplate` (an
+// empty value included), is left as it is.
+//
+// This is a creation-time default, and it is not part of SetDefaults: the
+// caller must first make sure that the Cluster is a new one, which neither
+// the operation nor the status can tell alone. A Cluster object re-created
+// without its status (a backup restore, a GitOps tool deleting and creating
+// it again) while its PVCs still exist is not new: its storage sections are
+// kept as they are, whatever the operator configuration, so that its next
+// volumes land on the same class as its existing ones. The defaulter of the
+// Cluster, in the webhook or in the admission guard of the reconciler when
+// the webhook is not installed, takes that decision, looking for the PVCs of
+// the Cluster.
+func (r *Cluster) SetDefaultStorageClass() {
+	r.setDefaultStorageClass(configuration.Current)
+}
+
+func (r *Cluster) setDefaultStorageClass(config *configuration.Data) {
+	if config.DefaultStorageClass == "" {
+		return
+	}
+
+	r.Spec.StorageConfiguration.setDefaultStorageClass(config.DefaultStorageClass)
+	if r.Spec.WalStorage != nil {
+		r.Spec.WalStorage.setDefaultStorageClass(config.DefaultStorageClass)
+	}
+	for i := range r.Spec.Tablespaces {
+		r.Spec.Tablespaces[i].Storage.setDefaultStorageClass(config.DefaultStorageClass)
+	}
+}
+
+// HasCreatedInstances is true once the Cluster has created an instance, that
+// is once a PVC may exist. The target primary is recorded right after the PVCs
+// of the first instance are created; IsInitialized is a second signal, for a
+// status that lost that field or that an older operator version wrote.
+// False does not mean that no PVC exists: a Cluster object re-created
+// without its status says false while its PVCs are still there.
+func (r *Cluster) HasCreatedInstances() bool {
+	return r.Status.TargetPrimary != "" || r.IsInitialized()
+}
+
+// setDefaultStorageClass sets the StorageClass of this storage section
+// unless a class, empty or not, is already chosen by the section itself
+func (s *StorageConfiguration) setDefaultStorageClass(name string) {
+	if s.StorageClass != nil {
+		return
+	}
+	if s.PersistentVolumeClaimTemplate != nil && s.PersistentVolumeClaimTemplate.StorageClassName != nil {
+		return
+	}
+
+	s.StorageClass = ptr.To(name)
+}
+
 func (r *Cluster) setDefaults(preserveUserSettings bool) {
 	// Defaulting the image name if not specified
 	if r.Spec.ImageName == "" && r.Spec.ImageCatalogRef == nil {
