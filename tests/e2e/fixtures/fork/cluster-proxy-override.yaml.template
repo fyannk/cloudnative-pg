@@ -1,0 +1,15 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: fork-proxy-override
+spec:
+  instances: 1
+
+  # a proxy setting of the Cluster: none of the operator ones is injected
+  env:
+    - name: HTTP_PROXY
+      value: http://cluster-proxy.fork-e2e.invalid:8080
+
+  storage:
+    storageClass: ${E2E_DEFAULT_STORAGE_CLASS}
+    size: 1Gi
