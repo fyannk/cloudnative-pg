@@ -51,8 +51,8 @@ from upstream, starting with what changes without any new setting.
 
 - The `Cluster` CRD carries the update rules of the validating webhook, and
   the API server enforces them even with the `cnpg.io/validation: disabled`
-  annotation. A size raised by mistake in `.spec.storage.size` cannot be
-  lowered again in place, whereas upstream allows it with that annotation;
+  annotation, except for the decrease of a storage size, which stays with
+  the webhook as upstream;
   see [Defaulting and validation without admission webhooks](operator_conf.md#defaulting-and-validation-without-admission-webhooks).
 - The `Cluster` CRD limits the length of some fields: 1024 characters for
   `imageName`, 63 for a tablespace name and for the replication slot prefix,
