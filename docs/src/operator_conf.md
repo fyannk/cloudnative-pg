@@ -182,6 +182,31 @@ error and resumes reconciliation.
 Validation performed during reconciliation honors the `cnpg.io/validation:
 disabled` annotation, exactly as the admission webhook does.
 
+The rules that compare an update of a `Cluster` with its previous state do not
+depend on the webhooks either: the `Cluster` CRD carries them as validation
+rules, and the API server enforces them on every update. They refuse a
+PostgreSQL major version downgrade and a major upgrade to a version below 16,
+the removal of `walStorage`, of the `tablespaces` section or of a
+tablespace, `wal_level` set to `minimal` on an existing cluster, a change of
+`.spec.replicationSlots.highAvailability.slotPrefix` while the feature is
+enabled, the removal of `synchronizeReplicas` while enabled, a change of
+`postgresUID` or `postgresGID`, a change of the replica role while a switch to
+replica cluster is in progress, and a change of `imageName` together with
+PostgreSQL parameters when `primaryUpdateMethod` is `switchover`. The
+`cnpg.io/validation: disabled` annotation does not bypass these rules. A
+decrease of a storage size is left to the webhook, so that the annotation
+still allows the [volume reduction](storage.md#volume-reduction) procedure.
+
+The two major version rules compare the image with the major version recorded
+in `.status.pgDataImageInfo`, and they only apply to an update that changes
+`.spec.imageName` or `.spec.imageCatalogRef.major`. The API server evaluates
+them on every write of the `Cluster`, status writes included, so a cluster
+whose image is behind the recorded major version would otherwise see all its
+status updates refused, failover included. Such a cluster can exist when the
+webhook let the change through, for instance with `cnpg.io/validation:
+disabled`, or when the image tag does not start with the PostgreSQL major
+version, as in `1.4.0-pg18`.
+
 ## Profiling tools
 
 The operator can expose a pprof HTTP server on `localhost:6060`.
