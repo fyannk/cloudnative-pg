@@ -22,6 +22,8 @@ package configuration
 import (
 	"time"
 
+	"github.com/cloudnative-pg/cloudnative-pg/pkg/utils"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
@@ -194,5 +196,23 @@ var _ = Describe("Webhook configuration names", func() {
 		config := &Data{EnableWebhookNamespaceSuffix: true}
 		Expect(config.GetMutatingWebhookConfigurationName()).To(Equal(DefaultMutatingWebhookConfigurationName))
 		Expect(config.GetValidatingWebhookConfigurationName()).To(Equal(DefaultValidatingWebhookConfigurationName))
+	})
+})
+
+var _ = Describe("the format of the five-field schedules", func() {
+	It("is the default one when the setting is not a known format", func() {
+		config := NewConfiguration()
+		Expect(config.IsScheduledBackupCronFormatValid()).To(BeTrue())
+		Expect(config.GetScheduledBackupCronFormat()).To(Equal(utils.CronFormatSeconds))
+
+		config.ScheduledBackupCronFormat = "standard"
+		Expect(config.IsScheduledBackupCronFormatValid()).To(BeTrue())
+		Expect(config.GetScheduledBackupCronFormat()).To(Equal(utils.CronFormatStandard))
+
+		for _, value := range []string{"standrad", ""} {
+			config.ScheduledBackupCronFormat = value
+			Expect(config.IsScheduledBackupCronFormatValid()).To(BeFalse())
+			Expect(config.GetScheduledBackupCronFormat()).To(Equal(utils.CronFormatSeconds))
+		}
 	})
 })

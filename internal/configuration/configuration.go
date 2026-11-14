@@ -261,9 +261,21 @@ func (config *Data) GetInstancesRolloutDelay() time.Duration {
 	return time.Duration(config.InstancesRolloutDelay) * time.Second
 }
 
-// GetScheduledBackupCronFormat gets how the schedule of a ScheduledBackup is read
+// GetScheduledBackupCronFormat gets how the schedule of a ScheduledBackup is
+// read. A value that is not a known format is read as the default one, the
+// one of the upstream operator: a mistake in this setting must not stop the
+// operator
 func (config *Data) GetScheduledBackupCronFormat() utils.CronFormat {
-	return utils.CronFormat(config.ScheduledBackupCronFormat)
+	if format := utils.CronFormat(config.ScheduledBackupCronFormat); format.IsValid() {
+		return format
+	}
+	return utils.CronFormatSeconds
+}
+
+// IsScheduledBackupCronFormatValid tells whether the configured format is a
+// known one
+func (config *Data) IsScheduledBackupCronFormatValid() bool {
+	return utils.CronFormat(config.ScheduledBackupCronFormat).IsValid()
 }
 
 // WatchedNamespaces get the list of additional watched namespaces.
