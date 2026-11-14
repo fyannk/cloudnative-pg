@@ -132,6 +132,14 @@ var _ = Describe("Operator status identity", func() {
 		err := validateOperatorIdentity(&configuration.Data{OperatorStatusIdentity: "verbose"})
 		Expect(err).To(MatchError(ContainSubstring("OPERATOR_STATUS_IDENTITY")))
 	})
+
+	// The name may come from the operator ConfigMap, loaded after the first
+	// validation
+	It("is refused when the configuration is loaded with a Deployment name that cannot name objects", func() {
+		conf := configuration.NewConfiguration()
+		conf.OperatorDeploymentName = "Not_A_Name"
+		Expect(checkLoadedConfiguration(conf)).To(MatchError(ContainSubstring("OPERATOR_DEPLOYMENT_NAME")))
+	})
 })
 
 // NODE_STATUS_UNAVAILABLE_POLICY: an unknown value stops the start when the
