@@ -518,8 +518,9 @@ when the crash recovery cannot write to a full PGDATA or tablespace volume
 while the WAL files are on a separate volume. When PostgreSQL stops within
 five minutes of logging a disk full error, the `53100` SQLSTATE in any language,
 the instance manager reads the filesystem of each volume, and treats
-the volumes with less than 64MiB, or less than 1% of their size, available, or
-with 1% of their inodes free or less, as full.
+the volumes with less than 64MiB available, whatever their size, or with no
+free inode left, as full. The volume holding the WAL files is checked before,
+against the size of a WAL segment, as described above.
 
 In both cases the instance manager exits with code `4`, and writes the full
 volumes to the termination log of the container, `/dev/termination-log`, which

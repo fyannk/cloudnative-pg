@@ -436,8 +436,9 @@ tablespace. The instance manager does so:
   query that could not write a temporary file, is forgotten after these five
   minutes, so that a later stop for another reason is not taken for a full
   disk, which would hold the failover back. It reads the filesystem of each volume and names those
-  with less than 64MiB, or less than 1% of their size, available, or with 1% of
-  their inodes free or less. When no volume is full, it exits as for any other
+  with less than 64MiB available, whatever their size, or with no free inode
+  left. The volume holding the WAL files is checked before, against the size
+  of a WAL segment. When no volume is full, it exits as for any other
   failure of PostgreSQL, and no volume is grown.
 
 An exit code `4` without such a message, written by an instance manager older
