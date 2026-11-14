@@ -30,6 +30,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
+	webhookv1 "github.com/cloudnative-pg/cloudnative-pg/internal/webhook/v1"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -67,6 +68,9 @@ func storedCluster(ctx context.Context, major int) *apiv1.Cluster {
 			},
 		},
 	}
+	// the defaults the mutating webhook gives, which the validating one
+	// expects
+	cluster.SetDefaults()
 	Expect(k8sClient.Create(ctx, cluster)).To(Succeed())
 	if major > 0 {
 		cluster.Status.PGDataImageInfo = &apiv1.ImageInfo{Image: image17, MajorVersion: major}
@@ -86,11 +90,24 @@ func catalogRef(major int) *apiv1.ImageCatalogRef {
 	}
 }
 
+// webhookRefuses tells whether the validating webhook refuses an update
+func webhookRefuses(ctx context.Context, old, updated *apiv1.Cluster) bool {
+	_, err := (&webhookv1.ClusterCustomValidator{}).ValidateUpdate(ctx, old.DeepCopy(), updated.DeepCopy())
+	return err != nil
+}
+
 var _ = Describe("Cluster CRD transition rules", func() {
 	ctx := context.Background()
 
 	refused := func(cluster *apiv1.Cluster, mutate func(*apiv1.Cluster), message string) {
+		old := cluster.DeepCopy()
 		mutate(cluster)
+
+		// The rules of the CRD carry the update rules of the webhook where it
+		// does not run: none may refuse an update the webhook accepts
+		Expect(webhookRefuses(ctx, old, cluster)).To(BeTrue(),
+			"the webhook accepts an update the CRD refuses: "+message)
+
 		err := k8sClient.Update(ctx, cluster)
 		Expect(err).To(HaveOccurred())
 		Expect(apierrors.IsInvalid(err)).To(BeTrue(), err.Error())
@@ -100,6 +117,16 @@ var _ = Describe("Cluster CRD transition rules", func() {
 		mutate(cluster)
 		Expect(k8sClient.Update(ctx, cluster)).To(Succeed())
 	}
+
+	// Without this, the comparison with the webhook in the refused updates
+	// would prove nothing: the webhook must refuse them for the change, not
+	// for the cluster of the test
+	It("starts from a cluster whose unchanged update the webhook accepts", func() {
+		for _, major := range []int{0, 17} {
+			cluster := storedCluster(ctx, major)
+			Expect(webhookRefuses(ctx, cluster, cluster)).To(BeFalse())
+		}
+	})
 
 	DescribeTable("refuses an update of a cluster running major 17 that",
 		func(mutate func(*apiv1.Cluster), message string) {
