@@ -186,15 +186,16 @@ The rules that compare an update of a `Cluster` with its previous state do not
 depend on the webhooks either: the `Cluster` CRD carries them as validation
 rules, and the API server enforces them on every update. They refuse a
 PostgreSQL major version downgrade and a major upgrade to a version below 16,
-a decrease of `.spec.storage.size`, `.spec.walStorage.size` or of a tablespace
-size, the removal of `walStorage`, of the `tablespaces` section or of a
+the removal of `walStorage`, of the `tablespaces` section or of a
 tablespace, `wal_level` set to `minimal` on an existing cluster, a change of
 `.spec.replicationSlots.highAvailability.slotPrefix` while the feature is
 enabled, the removal of `synchronizeReplicas` while enabled, a change of
 `postgresUID` or `postgresGID`, a change of the replica role while a switch to
 replica cluster is in progress, and a change of `imageName` together with
 PostgreSQL parameters when `primaryUpdateMethod` is `switchover`. The
-`cnpg.io/validation: disabled` annotation does not bypass these rules.
+`cnpg.io/validation: disabled` annotation does not bypass these rules. A
+decrease of a storage size is left to the webhook, so that the annotation
+still allows the [volume reduction](storage.md#volume-reduction) procedure.
 
 The two major version rules compare the image with the major version recorded
 in `.status.pgDataImageInfo`, and they only apply to an update that changes

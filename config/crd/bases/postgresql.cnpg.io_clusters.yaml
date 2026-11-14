@@ -6484,11 +6484,6 @@ spec:
                       default storage class
                     type: string
                 type: object
-                x-kubernetes-validations:
-                - fieldPath: .size
-                  message: size cannot be decreased
-                  rule: '!has(oldSelf.size) || !has(self.size) || !isQuantity(oldSelf.size)
-                    || !isQuantity(self.size) || !quantity(self.size).isLessThan(quantity(oldSelf.size))'
               superuserSecret:
                 description: |-
                   The secret containing the superuser password. If not defined a new
@@ -6764,10 +6759,6 @@ spec:
                 x-kubernetes-validations:
                 - message: no tablespace can be deleted once created
                   rule: oldSelf.all(o, self.exists(n, n.name == o.name))
-                - message: the size of a tablespace cannot be decreased
-                  rule: oldSelf.all(o, self.exists(n, n.name == o.name && (!has(o.storage.size)
-                    || !has(n.storage.size) || !isQuantity(o.storage.size) || !isQuantity(n.storage.size)
-                    || !quantity(n.storage.size).isLessThan(quantity(o.storage.size)))))
               topologySpreadConstraints:
                 description: |-
                   TopologySpreadConstraints specifies how to spread matching pods among the given topology.
@@ -7163,11 +7154,6 @@ spec:
                       default storage class
                     type: string
                 type: object
-                x-kubernetes-validations:
-                - fieldPath: .size
-                  message: size cannot be decreased
-                  rule: '!has(oldSelf.size) || !has(self.size) || !isQuantity(oldSelf.size)
-                    || !isQuantity(self.size) || !quantity(self.size).isLessThan(quantity(oldSelf.size))'
             required:
             - instances
             type: object
