@@ -172,6 +172,151 @@ var _ = Describe("Annotation and label inheritance", func() {
 	})
 })
 
+var _ = Describe("Node status source", func() {
+	It("is unset by default, with a ten-minute eviction age", func() {
+		config := NewConfiguration()
+		Expect(config.NodeStatusSource).To(BeEmpty())
+		Expect(config.NodeStatusPodKeyPrefix).To(BeEmpty())
+		Expect(config.NodeStatusLabelPrefix).To(BeEmpty())
+		Expect(config.GetNodeStatusEvictionMaxAge()).To(Equal(10 * time.Minute))
+	})
+
+	It("follows the Node API when unset", func() {
+		config := NewConfiguration()
+		Expect(config.ResolveNodeStatusSource()).To(Succeed())
+		Expect(config.NodeStatusSource).To(Equal(NodeStatusSourceAPI))
+		Expect(config.ReadsNodeAPI()).To(BeTrue())
+
+		config = NewConfiguration()
+		config.APINodeEnabled = false
+		Expect(config.ResolveNodeStatusSource()).To(Succeed())
+		Expect(config.NodeStatusSource).To(Equal(NodeStatusSourceNone))
+		Expect(config.ReadsNodeAPI()).To(BeFalse())
+		Expect(config.ReadsNodeStatusFromPods()).To(BeFalse())
+	})
+
+	It("accepts an explicit api source while the Node API is read", func() {
+		config := NewConfiguration()
+		config.NodeStatusSource = NodeStatusSourceAPI
+		Expect(config.ResolveNodeStatusSource()).To(Succeed())
+		Expect(config.ReadsNodeAPI()).To(BeTrue())
+	})
+
+	It("refuses an explicit api source without the Node API", func() {
+		config := NewConfiguration()
+		config.APINodeEnabled = false
+		config.NodeStatusSource = NodeStatusSourceAPI
+		Expect(config.ResolveNodeStatusSource()).To(MatchError(ContainSubstring("API_NODE_ENABLED")))
+	})
+
+	It("reads the settings of the pods source from the configuration data, with or without the Node API", func() {
+		for _, apiNode := range []bool{true, false} {
+			config := NewConfiguration()
+			config.APINodeEnabled = apiNode
+			config.ReadConfigMap(map[string]string{
+				"NODE_STATUS_SOURCE":           "pods",
+				"NODE_STATUS_POD_KEY_PREFIX":   "bridge.example.com/",
+				"NODE_STATUS_LABEL_PREFIX":     "node.example.com/",
+				"NODE_STATUS_EVICTION_MAX_AGE": "120",
+			})
+			Expect(config.ResolveNodeStatusSource()).To(Succeed())
+			Expect(config.ReadsNodeAPI()).To(BeFalse())
+			Expect(config.ReadsNodeStatusFromPods()).To(BeTrue())
+			Expect(config.NodeStatusPodKeyPrefix).To(Equal("bridge.example.com/"))
+			Expect(config.NodeStatusLabelPrefix).To(Equal("node.example.com/"))
+			Expect(config.GetNodeStatusEvictionMaxAge()).To(Equal(2 * time.Minute))
+		}
+	})
+
+	It("accepts the none source with or without the Node API, and reads nothing", func() {
+		for _, apiNode := range []bool{true, false} {
+			config := Data{NodeStatusSource: NodeStatusSourceNone, APINodeEnabled: apiNode}
+			Expect(config.ResolveNodeStatusSource()).To(Succeed())
+			Expect(config.ReadsNodeAPI()).To(BeFalse())
+			Expect(config.ReadsNodeStatusFromPods()).To(BeFalse())
+		}
+	})
+
+	It("refuses the pods source without a key prefix", func() {
+		config := Data{NodeStatusSource: NodeStatusSourcePods}
+		Expect(config.ResolveNodeStatusSource()).To(MatchError(ContainSubstring("NODE_STATUS_POD_KEY_PREFIX")))
+	})
+
+	It("refuses a negative eviction age with the pods source", func() {
+		config := Data{NodeStatusSource: NodeStatusSourcePods, NodeStatusPodKeyPrefix: "b/", NodeStatusEvictionMaxAge: -1}
+		Expect(config.ResolveNodeStatusSource()).To(MatchError(ContainSubstring("NODE_STATUS_EVICTION_MAX_AGE")))
+	})
+
+	It("accepts no eviction age limit with the pods source", func() {
+		config := Data{NodeStatusSource: NodeStatusSourcePods, NodeStatusPodKeyPrefix: "b/"}
+		Expect(config.ResolveNodeStatusSource()).To(Succeed())
+		Expect(config.GetNodeStatusEvictionMaxAge()).To(BeZero())
+	})
+
+	It("refuses an unknown source", func() {
+		config := Data{NodeStatusSource: "nodes"}
+		Expect(config.ResolveNodeStatusSource()).To(MatchError(ContainSubstring(`unknown NODE_STATUS_SOURCE "nodes"`)))
+	})
+})
+
+var _ = Describe("The policy when no node state is read", func() {
+	It("defaults to keepPDB, also when unset", func() {
+		Expect(NewConfiguration().GetNodeStatusUnavailablePolicy()).To(Equal(NodeStatusUnavailablePolicyKeepPDB))
+		Expect((&Data{}).GetNodeStatusUnavailablePolicy()).To(Equal(NodeStatusUnavailablePolicyKeepPDB))
+	})
+
+	DescribeTable("reads and validates NODE_STATUS_UNAVAILABLE_POLICY",
+		func(value string, valid bool) {
+			config := NewConfiguration()
+			config.ReadConfigMap(map[string]string{"NODE_STATUS_UNAVAILABLE_POLICY": value})
+			Expect(config.NodeStatusUnavailablePolicy).To(Equal(value))
+			if valid {
+				Expect(config.ValidateNodeStatusUnavailablePolicy()).To(Succeed())
+				Expect(config.GetNodeStatusUnavailablePolicy()).To(Equal(value))
+			} else {
+				Expect(config.ValidateNodeStatusUnavailablePolicy()).To(
+					MatchError(ContainSubstring(`unknown NODE_STATUS_UNAVAILABLE_POLICY "` + value + `"`)))
+			}
+		},
+		Entry("keepPDB", NodeStatusUnavailablePolicyKeepPDB, true),
+		Entry("disablePrimaryPDB", NodeStatusUnavailablePolicyDisablePrimaryPDB, true),
+		Entry("fail", NodeStatusUnavailablePolicyFail, true),
+		Entry("a value with another case", "keeppdb", false),
+		Entry("an unknown value", "ignore", false),
+	)
+
+	DescribeTable("fail refuses to start only when the Node API is not accessible",
+		func(source string, apiNode bool, policy string, refused bool) {
+			config := NewConfiguration()
+			config.NodeStatusSource = source
+			config.NodeStatusPodKeyPrefix = "bridge.example.com/"
+			config.APINodeEnabled = apiNode
+			config.NodeStatusUnavailablePolicy = policy
+			Expect(config.ResolveNodeStatusSource()).To(Succeed())
+			if refused {
+				Expect(config.CheckNodeStatusUnavailablePolicy()).To(
+					MatchError(ContainSubstring("NODE_STATUS_UNAVAILABLE_POLICY=fail")))
+			} else {
+				Expect(config.CheckNodeStatusUnavailablePolicy()).To(Succeed())
+			}
+		},
+		Entry("unset source, Node API not accessible", "", false, NodeStatusUnavailablePolicyFail, true),
+		Entry("explicit none", NodeStatusSourceNone, true, NodeStatusUnavailablePolicyFail, false),
+		Entry("explicit none without the Node API", NodeStatusSourceNone, false, NodeStatusUnavailablePolicyFail, false),
+		Entry("unset source, Node API read", "", true, NodeStatusUnavailablePolicyFail, false),
+		Entry("pods source without the Node API", NodeStatusSourcePods, false, NodeStatusUnavailablePolicyFail, false),
+		Entry("keepPDB without the Node API", "", false, NodeStatusUnavailablePolicyKeepPDB, false),
+		Entry("disablePrimaryPDB without the Node API", "", false,
+			NodeStatusUnavailablePolicyDisablePrimaryPDB, false),
+	)
+
+	It("tells whether no node state is read", func() {
+		Expect((&Data{NodeStatusSource: NodeStatusSourceNone}).ReadsNoNodeStatus()).To(BeTrue())
+		Expect((&Data{NodeStatusSource: NodeStatusSourceAPI}).ReadsNoNodeStatus()).To(BeFalse())
+		Expect((&Data{NodeStatusSource: NodeStatusSourcePods}).ReadsNoNodeStatus()).To(BeFalse())
+	})
+})
+
 var _ = Describe("Webhook configuration names", func() {
 	It("uses default names when suffix is disabled", func() {
 		config := &Data{}

@@ -63,6 +63,10 @@ ahead of the drain. Once the instance in the node is downgraded to replica, the
 draining can resume.
 For single-instance clusters, a switchover is not possible, so CloudNativePG
 will prevent draining the node where the instance is housed.
+The operator learns that a node is about to be drained from the `Node` API, or,
+in an installation without access to it, from the state a node bridge echoes
+onto the instance Pods; see
+[Node state from the instance Pods](operator_conf.md#node-state-from-the-instance-pods).
 Additionally, in clusters with 3 or more instances, CloudNativePG guarantees that
 only one replica at a time is gracefully shut down during a drain operation.
 

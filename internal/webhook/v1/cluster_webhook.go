@@ -2847,7 +2847,8 @@ func (v *ClusterCustomValidator) getAdmissionWarnings(r *apiv1.Cluster) admissio
 	list = append(list, getDeprecatedMonitoringFieldsWarnings(r)...)
 	list = append(list, getSynchronousReplicationWarnings(r)...)
 	list = append(list, getPrimaryIsolationTimingWarnings(r)...)
-	return append(list, getFailureDomainTopologyWarnings(r)...)
+	list = append(list, getFailureDomainTopologyWarnings(r)...)
+	return list
 }
 
 func getMonitoringFieldsWarnings(r *apiv1.Cluster) admission.Warnings {

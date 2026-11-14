@@ -51,6 +51,7 @@ import (
 	webhookv1 "github.com/cloudnative-pg/cloudnative-pg/internal/webhook/v1"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/certs"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/multicache"
+	"github.com/cloudnative-pg/cloudnative-pg/pkg/operatormetrics"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/utils"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/versions"
 )
@@ -133,6 +134,11 @@ func RunController(
 
 	setupLog.Info("Operator configuration loaded", "configuration", conf)
 
+	if err := conf.ValidateNodeStatusUnavailablePolicy(); err != nil {
+		setupLog.Error(err, "invalid operator configuration")
+		return err
+	}
+
 	if conf.EnableWebhookNamespaceSuffix && conf.OperatorNamespace == "" {
 		return fmt.Errorf("ENABLE_WEBHOOK_NAMESPACE_SUFFIX requires OPERATOR_NAMESPACE to be set " +
 			"as a pod environment variable (typically via the Downward API fieldRef.fieldPath = metadata.namespace)")
@@ -154,6 +160,22 @@ func RunController(
 	}
 	utils.SetVolumeSnapshot(conf.APIVolumeSnapshotEnabled)
 
+	// The source of node state follows the probe of the Node API
+	if err := conf.ResolveNodeStatusSource(); err != nil {
+		setupLog.Error(err, "invalid node status configuration")
+		return err
+	}
+	// The Node API is probed once, here: granting the rights later needs a
+	// restart of the operator to be noticed
+	if err := conf.CheckNodeStatusUnavailablePolicy(); err != nil {
+		setupLog.Error(err, "refusing to start without node state")
+		return err
+	}
+	if conf.ReadsNoNodeStatus() {
+		setupLog.Warning(configuration.NodeStatusUnavailableMessage,
+			"nodeStatusUnavailablePolicy", conf.GetNodeStatusUnavailablePolicy())
+	}
+
 	// Detect the available architectures
 	if err = utils.DetectAvailableArchitectures(); err != nil {
 		setupLog.Error(err, "unable to detect the available instance's architectures")
@@ -166,6 +188,7 @@ func RunController(
 		"apiVolumeSnapshot", conf.APIVolumeSnapshotEnabled,
 		"apiClusterImageCatalog", conf.APIClusterImageCatalogEnabled,
 		"apiNode", conf.APINodeEnabled,
+		"nodeStatusSource", conf.NodeStatusSource,
 		"availableArchitectures", utils.GetAvailableArchitectures(),
 	)
 
@@ -250,6 +273,11 @@ func RunController(
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), managerOptions)
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")
+		return err
+	}
+
+	if err := operatormetrics.RegisterNodeStatus(conf); err != nil {
+		setupLog.Error(err, "unable to register the node state availability metric")
 		return err
 	}
 
