@@ -101,7 +101,7 @@ var _ = Describe("Webhook Secret name discovery", func() {
 })
 
 var _ = Describe("Webhook certificate DNS names", func() {
-	It("are the configured names, the historical one included, and nothing else", func(ctx SpecContext) {
+	It("are the configured names, the historical one included, and nothing else", func() {
 		pki := pkiEnvironmentTemplate
 		pki.ServiceName = "cnpg-toto-webhook-service"
 		pki.AlternativeServiceNames = []string{"cnpg-webhook-service", "", "cnpg-toto-webhook-service"}
