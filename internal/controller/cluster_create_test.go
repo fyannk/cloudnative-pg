@@ -31,7 +31,9 @@ import (
 	policyv1 "k8s.io/api/policy/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	apierrs "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/tools/record"
@@ -807,6 +809,40 @@ var _ = Describe("CreateOrPatchPodMonitor", func() {
 		manager.isEnabled = false
 		err := createOrPatchPodMonitor(ctx, fakeCli, manager)
 		Expect(err).ToNot(HaveOccurred())
+	})
+
+	// The API is probed once, when the operator starts: a CRD removed later
+	// must cost the PodMonitor, not the reconciliation of the cluster
+	It("skips the PodMonitor when its API is not served anymore", func() {
+		gone := fake.NewClientBuilder().WithScheme(schemeBuilder.BuildWithAllKnownScheme()).
+			WithInterceptorFuncs(interceptor.Funcs{
+				Create: func(context.Context, k8client.WithWatch, k8client.Object, ...k8client.CreateOption) error {
+					return apierrs.NewNotFound(
+						schema.GroupResource{Group: "monitoring.coreos.com", Resource: "podmonitors"}, "")
+				},
+			}).Build()
+		Expect(createOrPatchPodMonitor(ctx, gone, manager)).To(Succeed())
+
+		unmapped := fake.NewClientBuilder().WithScheme(schemeBuilder.BuildWithAllKnownScheme()).
+			WithInterceptorFuncs(interceptor.Funcs{
+				Get: func(context.Context, k8client.WithWatch, k8client.ObjectKey, k8client.Object, ...k8client.GetOption) error {
+					return &meta.NoKindMatchError{
+						GroupKind: schema.GroupKind{Group: "monitoring.coreos.com", Kind: "PodMonitor"},
+					}
+				},
+			}).Build()
+		Expect(createOrPatchPodMonitor(ctx, unmapped, manager)).To(Succeed())
+	})
+
+	It("still returns the other errors", func() {
+		failing := fake.NewClientBuilder().WithScheme(schemeBuilder.BuildWithAllKnownScheme()).
+			WithInterceptorFuncs(interceptor.Funcs{
+				Create: func(context.Context, k8client.WithWatch, k8client.Object, ...k8client.CreateOption) error {
+					return apierrs.NewForbidden(
+						schema.GroupResource{Group: "monitoring.coreos.com", Resource: "podmonitors"}, "test", nil)
+				},
+			}).Build()
+		Expect(apierrs.IsForbidden(createOrPatchPodMonitor(ctx, failing, manager))).To(BeTrue())
 	})
 
 	It("should remove the PodMonitor if it is disabled and is owned by a cluster", func() {
