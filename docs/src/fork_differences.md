@@ -29,6 +29,7 @@ from upstream, starting with what changes without any new setting.
 
 | Change | Details |
 |---|---|
+| When it exits, the instance manager names the volumes nothing can be written to anymore in the termination message of the container. The exit code and the failover are unchanged; `autoGrow` uses it | [The full-disk stop of an instance](storage.md#the-full-disk-stop-of-an-instance) |
 | A primary being demoted skips or escalates its smart shutdown to a fast one | [Shutdown of the primary during a switchover](instance_manager.md#shutdown-of-the-primary-during-a-switchover) |
 
 ### In the behavior of the operator
@@ -37,6 +38,7 @@ from upstream, starting with what changes without any new setting.
 |---|---|
 | The optional APIs (`PodMonitor`, `VolumeSnapshot`, `ClusterImageCatalog`, `Node`) are probed once, when the operator starts. Installing the Prometheus Operator CRDs later requires restarting the operator to get the `PodMonitor` objects; upstream notices them at the next reconciliation | [Restricted installations](operator_conf.md#restricted-installations) |
 | The operator ConfigMap and Secret are read before the manager starts, so `WATCH_NAMESPACE` set there now restricts the cache | |
+| A `Cluster` whose resized volumes wait for a restart of their Pod, with a storage class that does not resize a volume in use, gets the `VolumeResizePending` condition and a Warning event naming the instances to restart | [Storage](storage.md#using-the-volume-expansion-kubernetes-feature) |
 | A `Cluster` whose volume expansion is refused keeps being reconciled, with the `VolumeExpansionRefused` condition, and the expansion is retried every minute | [When the expansion is refused](storage.md#when-the-expansion-is-refused) |
 | The creation of the objects of a `Cluster` goes on after a failure of the default monitoring queries ConfigMap, reported by a `DefaultMonitoringQueriesError` Warning event | |
 | A `Pooler` whose Deployment cannot run its Pods (quota, rollout past its deadline) goes to the `inactive` phase, with the message of the Deployment as the reason | |
