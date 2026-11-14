@@ -7639,6 +7639,30 @@ var _ = Describe("default storage class in the defaulting webhook", func() {
 		Expect(cluster.Spec.Tablespaces[0].Storage.StorageClass).To(HaveValue(Equal(defaultClass)))
 	}
 
+	It("writes the class over the PVCs being deleted of a previous Cluster", func() {
+		terminating := newPVC("default", "cluster-example")
+		terminating.DeletionTimestamp = ptr.To(metav1.Now())
+		terminating.Finalizers = []string{"kubernetes.io/pvc-protection"}
+		d = withPVCs(terminating)
+
+		cluster := newCluster()
+		Expect(d.Default(withOperation(admissionv1.Create), cluster)).To(Succeed())
+		expectDefaultClass(cluster)
+	})
+
+	It("does not write the class while one PVC of the Cluster is not being deleted", func() {
+		terminating := newPVC("default", "cluster-example")
+		terminating.DeletionTimestamp = ptr.To(metav1.Now())
+		terminating.Finalizers = []string{"kubernetes.io/pvc-protection"}
+		kept := newPVC("default", "cluster-example")
+		kept.Name = "cluster-example-2"
+		d = withPVCs(terminating, kept)
+
+		cluster := newCluster()
+		Expect(d.Default(withOperation(admissionv1.Create), cluster)).To(Succeed())
+		expectNoClass(cluster)
+	})
+
 	It("writes the class when the Cluster is created", func() {
 		cluster := newCluster()
 		Expect(d.Default(withOperation(admissionv1.Create), cluster)).To(Succeed())
