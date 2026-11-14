@@ -120,28 +120,23 @@ func Get(paths Paths, statfs Statfs) ([]postgres.VolumeUsage, error) {
 	return usages, errors.Join(errs...)
 }
 
-const (
-	// FullMinAvailableBytes is the space below which a volume is full, for
-	// a PostgreSQL that failed with "No space left on device": a write of
-	// PostgreSQL, such as the extension of a relation, can need more than
-	// the few blocks left
-	FullMinAvailableBytes = 64 * 1024 * 1024
-
-	// FullMinAvailablePercent is the share of the volume, space or inodes,
-	// below which a volume is full, for a PostgreSQL that failed with "No
-	// space left on device", when it is larger than FullMinAvailableBytes
-	FullMinAvailablePercent = 1
-)
+// FullMinAvailableBytes is the space below which a volume is full, for a
+// PostgreSQL that failed with "No space left on device". PostgreSQL writes
+// its data files a few blocks at a time, so a write only fails with far less
+// than this left: the margin covers what is freed between the failure and the
+// reading of the filesystem, such as the temporary files of the sessions. It
+// is not a share of the volume, which would call a very large volume full
+// with gigabytes left. The volume holding the WAL files is checked before,
+// against the size of a WAL segment
+const FullMinAvailableBytes = 64 * 1024 * 1024
 
 // IsFull tells whether a volume is full: the space available is below
-// FullMinAvailableBytes or FullMinAvailablePercent of the volume, or the free
-// inodes are below FullMinAvailablePercent of the inodes
+// FullMinAvailableBytes, or the filesystem has no free inode left
 func IsFull(usage postgres.VolumeUsage) bool {
-	minAvailable := max(uint64(FullMinAvailableBytes), usage.TotalBytes*FullMinAvailablePercent/100)
-	if usage.AvailableBytes < minAvailable {
+	if usage.AvailableBytes < FullMinAvailableBytes {
 		return true
 	}
-	return usage.Inodes > 0 && usage.InodesFree < usage.Inodes*FullMinAvailablePercent/100+1
+	return usage.Inodes > 0 && usage.InodesFree == 0
 }
 
 // GetFullVolumes returns the names of the full volumes, see IsFull
