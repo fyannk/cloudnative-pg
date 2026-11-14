@@ -23,12 +23,15 @@ import (
 	"context"
 
 	coordinationv1 "k8s.io/api/coordination/v1"
+	apierrs "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
@@ -102,6 +105,25 @@ var _ = Describe("reconcilePrimaryLease", func() {
 		Expect(r.Get(ctx, types.NamespacedName{Namespace: namespace, Name: clusterName}, l)).To(Succeed())
 		return l
 	}
+
+	// The cache may not hold yet a Lease created by a previous reconciliation
+	It("takes a Lease that already exists, unseen by a stale cache, as created", func(ctx context.Context) {
+		cluster := newCluster()
+		scheme := k8scheme.BuildWithAllKnownScheme()
+		r := &ClusterReconciler{
+			Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(cluster).
+				WithInterceptorFuncs(interceptor.Funcs{
+					Create: func(context.Context, client.WithWatch, client.Object, ...client.CreateOption) error {
+						return apierrs.NewAlreadyExists(
+							schema.GroupResource{Group: "coordination.k8s.io", Resource: "leases"}, clusterName)
+					},
+				}).Build(),
+			Scheme:   scheme,
+			Recorder: record.NewFakeRecorder(10),
+		}
+
+		Expect(r.reconcilePrimaryLease(ctx, cluster)).To(Succeed())
+	})
 
 	It("creates the lease when none exists", func(ctx context.Context) {
 		cluster := newCluster()
