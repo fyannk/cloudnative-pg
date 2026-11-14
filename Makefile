@@ -51,6 +51,8 @@ LOCALBIN ?= $(shell pwd)/bin
 
 BUILD_IMAGE ?= true
 POSTGRES_IMAGE_NAME ?= $(shell grep 'DefaultImageName.*=' "pkg/versions/versions.go" | cut -f 2 -d \")
+# Operator cache mode of the generated manifest, see docs/src/operator_conf.md
+FILTERED_CACHE_MODE ?= off
 PGBOUNCER_IMAGE_NAME ?= $(shell grep 'DefaultPgbouncerImage.*=' "pkg/versions/versions.go" | cut -f 2 -d \")
 # renovate: datasource=github-releases depName=kubernetes-sigs/kustomize versioning=loose
 KUSTOMIZE_VERSION ?= v5.6.0
@@ -280,7 +282,8 @@ generate-manifest: manifests kustomize ## Generate manifest used for deployment.
 		$(KUSTOMIZE) edit add patch --path env_override.yaml ;\
 		$(KUSTOMIZE) edit add configmap controller-manager-env \
 			--from-literal="POSTGRES_IMAGE_NAME=${POSTGRES_IMAGE_NAME}" \
-			--from-literal="PGBOUNCER_IMAGE_NAME=${PGBOUNCER_IMAGE_NAME}" ;\
+			--from-literal="PGBOUNCER_IMAGE_NAME=${PGBOUNCER_IMAGE_NAME}" \
+			--from-literal="FILTERED_CACHE_MODE=${FILTERED_CACHE_MODE}" ;\
 	} ;\
 	mkdir -p ${DIST_PATH} ;\
 	$(KUSTOMIZE) build $$CONFIG_TMP_DIR/default > ${OPERATOR_MANIFEST_PATH} ;\

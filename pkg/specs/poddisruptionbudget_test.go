@@ -50,6 +50,7 @@ var _ = Describe("POD Disruption Budget specifications", func() {
 		Expect(result.Name).To(Equal(cluster.Name))
 		Expect(result.Labels).To(BeEquivalentTo(map[string]string{
 			utils.ClusterLabelName:                cluster.Name,
+			utils.ReconcileLabelName:              "true",
 			utils.KubernetesAppLabelName:          utils.AppName,
 			utils.KubernetesAppInstanceLabelName:  cluster.Name,
 			utils.KubernetesAppVersionLabelName:   "18",

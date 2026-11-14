@@ -45,14 +45,19 @@ import (
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
 	"github.com/cloudnative-pg/cloudnative-pg/internal/configuration"
 	"github.com/cloudnative-pg/cloudnative-pg/internal/webhook/guard"
+	"github.com/cloudnative-pg/cloudnative-pg/pkg/filteredcache"
 )
 
 // PoolerReconciler reconciles a Pooler object
 type PoolerReconciler struct {
 	client.Client
-	Scheme    *runtime.Scheme
-	Recorder  record.EventRecorder
-	Admission *guard.Admission[*apiv1.Pooler]
+	Scheme *runtime.Scheme
+
+	// ReloadWatch delivers the changes of the user Secrets carrying
+	// cnpg.io/reload when the cache is filtered, nil otherwise
+	ReloadWatch *filteredcache.ReloadWatch
+	Recorder    record.EventRecorder
+	Admission   *guard.Admission[*apiv1.Pooler]
 }
 
 // +kubebuilder:rbac:groups=postgresql.cnpg.io,resources=poolers,verbs=get;list;watch;create;update;patch;delete
@@ -196,6 +201,14 @@ func (r *PoolerReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manage
 			handler.EnqueueRequestsFromMapFunc(r.mapClusterImageCatalogToPoolers()),
 			builder.WithPredicates(predicate.ResourceVersionChangedPredicate{}),
 		)
+	}
+
+	if r.ReloadWatch != nil {
+		secrets, err := r.ReloadWatch.Source(&corev1.Secret{}, r.mapSecretToPooler(), secretsPoolerPredicate)
+		if err != nil {
+			return err
+		}
+		ctrlBuilder = ctrlBuilder.WatchesRawSource(secrets)
 	}
 
 	return ctrlBuilder.Complete(r)
