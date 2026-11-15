@@ -34,6 +34,7 @@ import (
 
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/certs"
+	"github.com/cloudnative-pg/cloudnative-pg/pkg/utils"
 )
 
 // reconcileClientCertificate issues, renews or deletes the role's client
@@ -114,6 +115,7 @@ func (r *DatabaseRoleReconciler) issueClientCertificate(
 		if err := ctrl.SetControllerReference(role, newSecret, r.Scheme); err != nil {
 			return fmt.Errorf("while setting owner reference on cert secret %q: %w", secretKey.Name, err)
 		}
+		utils.LabelReconciled(&newSecret.ObjectMeta)
 		if err := r.Create(ctx, newSecret); err != nil {
 			return fmt.Errorf("while creating cert secret %q: %w", secretKey.Name, err)
 		}

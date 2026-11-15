@@ -29,6 +29,7 @@ import (
 	"github.com/cloudnative-pg/machinery/pkg/log"
 
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/configparser"
+	"github.com/cloudnative-pg/cloudnative-pg/pkg/filteredcache"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/versions"
 )
 
@@ -179,6 +180,14 @@ type Data struct {
 	// within the Kubernetes cluster. If left unset, it defaults to `cluster.local`.
 	KubernetesClusterDomain string `json:"kubernetesClusterDomain" env:"KUBERNETES_CLUSTER_DOMAIN"`
 
+	// FilteredCacheMode restricts the operator cache to the objects it
+	// manages: "off" (the default) caches every object of the watched kinds,
+	// "strict" caches only the objects carrying cnpg.io/reconcile=true and
+	// reads the others from the API server when needed, "reload" is
+	// "strict" plus a watch on the Secrets and ConfigMaps carrying
+	// cnpg.io/reload=true
+	FilteredCacheMode string `json:"filteredCacheMode" env:"FILTERED_CACHE_MODE"`
+
 	// EnableWebhookNamespaceSuffix when true appends "-<OperatorNamespace>" to the default
 	// webhook configuration names, allowing multiple namespaced operator instances to coexist
 	// on the same cluster. The operator will fail to start if this is enabled without OperatorNamespace.
@@ -231,6 +240,7 @@ func newDefaultConfig() *Data {
 		ExpiringCheckThreshold:        ExpiringCheckThreshold,
 		StandbyTCPUserTimeout:         nil,
 		KubernetesClusterDomain:       DefaultKubernetesClusterDomain,
+		FilteredCacheMode:             string(filteredcache.ModeOff),
 		DrainTaints:                   DefaultDrainTaints,
 		ManageWebhookConfigurations:   true,
 		APIPodMonitorEnabled:          true,
@@ -348,4 +358,14 @@ func evaluateGlobPatterns(patterns []string, value string) (result bool) {
 	}
 
 	return result
+}
+
+// GetFilteredCacheMode returns the mode of the operator cache. An invalid
+// value is reported at startup; here it counts as off.
+func (config *Data) GetFilteredCacheMode() filteredcache.Mode {
+	mode, err := filteredcache.ParseMode(config.FilteredCacheMode)
+	if err != nil {
+		return filteredcache.ModeOff
+	}
+	return mode
 }

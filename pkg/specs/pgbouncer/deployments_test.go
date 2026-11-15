@@ -95,6 +95,7 @@ var _ = Describe("Deployment", func() {
 		Expect(deployment.ObjectMeta.Namespace).To(Equal(pooler.Namespace))
 		Expect(deployment.Labels).To(BeEquivalentTo(map[string]string{
 			utils.ClusterLabelName:                cluster.Name,
+			utils.ReconcileLabelName:              "true",
 			utils.PgbouncerNameLabel:              pooler.Name,
 			utils.PodRoleLabelName:                string(utils.PodRolePooler),
 			utils.KubernetesAppLabelName:          utils.AppName,
@@ -111,6 +112,7 @@ var _ = Describe("Deployment", func() {
 		Expect(podTemplate.ObjectMeta.Annotations).To(Equal(pooler.Spec.Template.ObjectMeta.Annotations))
 		Expect(podTemplate.Labels).To(BeEquivalentTo(map[string]string{
 			utils.ClusterLabelName:                cluster.Name,
+			utils.ReconcileLabelName:              "true",
 			utils.PgbouncerNameLabel:              pooler.Name,
 			utils.PodRoleLabelName:                string(utils.PodRolePooler),
 			utils.KubernetesAppLabelName:          utils.AppName,

@@ -210,6 +210,7 @@ var _ = Describe("Job created via InitDB", func() {
 		job := CreatePrimaryJob(cluster, 0, cmd.Role, cmd.Command, getExtensions(&cluster))
 		Expect(job.Labels).To(BeEquivalentTo(map[string]string{
 			utils.ClusterLabelName:                cluster.Name,
+			utils.ReconcileLabelName:              "true",
 			utils.JobRoleLabelName:                "initdb",
 			utils.InstanceNameLabelName:           "cluster-0",
 			utils.KubernetesAppLabelName:          utils.AppName,
@@ -220,6 +221,7 @@ var _ = Describe("Job created via InitDB", func() {
 		}))
 		Expect(job.Spec.Template.Labels).To(BeEquivalentTo(map[string]string{
 			utils.ClusterLabelName:                cluster.Name,
+			utils.ReconcileLabelName:              "true",
 			utils.JobRoleLabelName:                "initdb",
 			utils.InstanceNameLabelName:           "cluster-0",
 			utils.KubernetesAppLabelName:          utils.AppName,

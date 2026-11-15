@@ -68,6 +68,7 @@ Name | Description
 `OPERATOR_IMAGE_NAME` | The name of the operator image used to bootstrap Pods. Defaults to the image specified during installation.
 `PGBOUNCER_IMAGE_NAME` | The name of the PgBouncer image used by default for new poolers. Defaults to the version specified in the operator.
 `POSTGRES_IMAGE_NAME` | The name of the PostgreSQL image used by default for new clusters. Defaults to the version specified in the operator.
+`FILTERED_CACHE_MODE` | Restricts the operator cache to the objects it manages, the ones carrying the `cnpg.io/reconcile=true` label. `off` (the default) caches every object of the watched kinds; `strict` caches only the managed objects and reads the others from the API server when a reconciliation needs them; `reload` is `strict` plus a metadata-only watch on the Secrets and ConfigMaps carrying the `cnpg.io/reload` label (whatever its value), so that changing them still triggers a reconciliation. See [Operator cache](#operator-cache).
 `PULL_SECRET_NAME` | Name of an additional pull secret to be defined in the operator's namespace and to be used to download images
 `STANDBY_TCP_USER_TIMEOUT` | Defines the [`TCP_USER_TIMEOUT` socket option](https://www.postgresql.org/docs/current/runtime-config-connection.html#GUC-TCP-USER-TIMEOUT) in milliseconds for replication connections from standby instances to the primary. Default is 5000 (5 seconds). Set to `0` to use the system's default.
 `WATCH_NAMESPACE` | Specifies the namespace(s) where the operator should watch for resources. Multiple namespaces can be specified separated by commas. If not set, the operator watches all namespaces (cluster-wide mode).
@@ -91,6 +92,112 @@ cluster. That secret will be named `<cluster-name>-pull`.
 The namespace where the operator looks for the `PULL_SECRET_NAME` secret is where
 you installed the operator. If the operator is not able to find that secret, it
 will ignore the configuration parameter.
+
+## Operator cache
+
+The operator keeps an informer cache of the kinds it works with: Pods,
+PersistentVolumeClaims, Jobs, Services, Secrets, ConfigMaps, Leases,
+PodDisruptionBudgets, Deployments, ServiceAccounts, Roles, RoleBindings, and
+PodMonitors and VolumeSnapshots when their APIs exist. By default the cache
+holds every object of those kinds in the namespaces the operator watches,
+whoever created them: on a shared cluster, the Secrets and ConfigMaps of
+other workloads can make the operator's memory grow far beyond what its own
+objects need.
+
+`FILTERED_CACHE_MODE` restricts the cache to the objects the operator
+manages, the ones carrying the `cnpg.io/reconcile=true` label that the
+operator sets on everything it creates:
+
+- `off`, the default, keeps the behavior described above;
+- `strict` caches only the labeled objects. An object the operator needs
+  but did not create, such as a certificate, a credential or custom
+  monitoring queries referenced by a `Cluster`, is read from the API server
+  each time a reconciliation needs it, and changes to it are only noticed at
+  the next reconciliation. Label such objects with `cnpg.io/reconcile=true`
+  to cache them;
+- `reload` is `strict` plus a metadata-only watch on the Secrets and
+  ConfigMaps carrying the `cnpg.io/reload` label, whatever its value,
+  without the cache label, so that changing them triggers a reconciliation
+  exactly as in `off` mode. The metadata of each such object costs a few
+  hundred bytes, whatever its size.
+
+A filtered mode trades memory of the operator for requests to the API server:
+an object the cache does not hold cannot be told from one that does not exist,
+so each lookup of an absent object is a read of the API server. On a healthy
+`Cluster` with the default settings, this is three more `GET` requests per
+reconciliation, the writes being the same.
+
+For an object referenced by a `Cluster` without the `cnpg.io/reconcile=true`
+label, such as a Secret holding a certificate:
+
+| | `off` | `strict` | `reload` |
+|---|---|---|---|
+| Read | from the cache | from the API server, at each read | from the API server, at each read |
+| Change, object labeled `cnpg.io/reload` | reconciliation | next reconciliation | reconciliation |
+| Change, object without `cnpg.io/reload` | next reconciliation | next reconciliation | next reconciliation |
+
+With the `cnpg.io/reconcile=true` label, the object is read from the cache
+in every mode, and, labeled `cnpg.io/reload` too, its changes trigger a
+reconciliation in every mode.
+
+In the operator namespace, Secrets, ConfigMaps and Services are always
+cached in full, because the operator reads objects it did not create there:
+the plugin Services and their TLS Secrets, the pull secret and the default
+monitoring queries. With `WATCH_NAMESPACE` set, this requires the operator
+namespace to be in the list; otherwise these objects are read from the API
+server, and, as with the mode `off`, the plugin Services are not watched.
+
+A filtered cache does not hold an object without the label, so an
+installation upgraded from a version that did not set it must get the label
+on its existing objects before a filtered mode is enabled: run this version
+with the mode `off` until every Cluster, Pooler and DatabaseRole has been
+reconciled once. Their reconcilers add the label to the objects they
+manage; the pod template of each Pooler Deployment gets it too, which rolls
+the Pooler out once. Enabling a filtered mode before that hides the
+unlabeled objects from the operator.
+
+:::warning
+    Switching to a filtered mode is an administrator decision, to be taken
+    only once every object is labeled. When none of the objects of a Cluster
+    carries the label, the operator sees neither its instances nor its
+    volumes: it reports the Cluster as unrecoverable and keeps reconciling it
+    in a tight loop without touching it, until it runs with the mode `off`
+    again long enough to label its objects. When only some of them carry the
+    label, because the labeling was interrupted in the middle of a
+    reconciliation or because a tool strips the `cnpg.io/reconcile` label,
+    the operator does act on what it sees: with the PVCs of an instance
+    visible and its Pod invisible, it creates the Pod again and again, each
+    attempt failing with `AlreadyExists`; with the Pod of a healthy primary
+    invisible, it can start a failover.
+:::
+
+Before switching, check that no Pod, PVC or Job of a Cluster, and no Pooler
+Deployment or Pod, lacks the label, in every namespace the operator watches:
+
+```sh
+kubectl get pods,pvc,jobs --all-namespaces \
+  -l 'cnpg.io/cluster,cnpg.io/reconcile!=true'
+kubectl get deployments,pods --all-namespaces \
+  -l 'cnpg.io/poolerName,cnpg.io/reconcile!=true'
+```
+
+Both commands must return no resources. The selector `cnpg.io/reconcile!=true`
+also matches the objects without the label at all. Pods and PVCs get the label
+from the reconciliation of their Cluster, but the Jobs created by a version
+that did not set it never do: once such a Job has completed and its instance
+is running, delete it or add the label by hand
+(`kubectl label job <name> cnpg.io/reconcile=true`).
+
+The same holds for the objects that come from elsewhere while a filtered
+mode is on. A PVC restored by a backup tool without the label is not adopted
+by its Cluster, and a `VolumeSnapshot` taken before the label existed is not
+counted in the first recoverability point of the Cluster: add the label to
+them (`kubectl label pvc,volumesnapshot <name> cnpg.io/reconcile=true`).
+
+With a filtered mode, the Pods matched by `podSelectorRefs` must carry the
+`cnpg.io/reconcile=true` label, typically from the pod template of the
+application, to be seen by the operator; unlabeled Pods resolve to nothing,
+and the Cluster webhook returns a warning on such Clusters.
 
 ## Defining an operator config map
 

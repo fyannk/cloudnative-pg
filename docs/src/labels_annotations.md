@@ -91,6 +91,15 @@ This label is available only on `VolumeSnapshot` resources.
 `cnpg.io/pvcRole`
 : Purpose of the PVC, such as `PG_DATA` or `PG_WAL`.
 
+`cnpg.io/reconcile`
+: Set to `true` by the operator on every object it creates and manages
+  (Pods, PVCs, Jobs, Services, Secrets, ConfigMaps, RBAC objects, ...).
+  With `FILTERED_CACHE_MODE` set, it is also the label of the objects the
+  operator caches: objects provided by users, such as certificates or
+  credentials, are read from the API server unless they carry it, and the
+  Pods matched by `podSelectorRefs` must carry it to be seen. See
+  [Operator cache](operator_conf.md#operator-cache).
+
 `cnpg.io/reload`
 : Available on `ConfigMap` and `Secret` resources. When set to `true`,
   a change in the resource is automatically reloaded by the operator.

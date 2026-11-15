@@ -1019,6 +1019,7 @@ var _ = Describe("NewInstance", func() {
 		Expect(pod).NotTo(BeNil())
 		Expect(pod.Labels).To(BeEquivalentTo(map[string]string{
 			utils.ClusterLabelName:                "test-cluster",
+			utils.ReconcileLabelName:              "true",
 			utils.InstanceNameLabelName:           "test-cluster-1",
 			utils.PodRoleLabelName:                string(utils.PodRoleInstance),
 			utils.KubernetesAppLabelName:          utils.AppName,

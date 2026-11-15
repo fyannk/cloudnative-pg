@@ -36,6 +36,7 @@ import (
 
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
 	k8scheme "github.com/cloudnative-pg/cloudnative-pg/internal/scheme"
+	"github.com/cloudnative-pg/cloudnative-pg/pkg/utils"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -140,6 +141,7 @@ var _ = Describe("reconcilePrimaryLease", func() {
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      clusterName,
 				Namespace: namespace,
+				Labels:    map[string]string{utils.ReconcileLabelName: "true"},
 				OwnerReferences: []metav1.OwnerReference{{
 					APIVersion: apiv1.SchemeGroupVersion.String(),
 					Kind:       apiv1.ClusterKind,
@@ -158,6 +160,49 @@ var _ = Describe("reconcilePrimaryLease", func() {
 		after := getLease(ctx, r)
 		Expect(after.ResourceVersion).To(Equal(before.ResourceVersion))
 		Expect(metav1.IsControlledBy(after, cluster)).To(BeTrue())
+	})
+
+	It("labels with a patch an owned lease created without the reconcile label", func(ctx context.Context) {
+		cluster := newCluster()
+		// As created by an operator that does not label it, such as the stock one
+		unlabelled := &coordinationv1.Lease{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      clusterName,
+				Namespace: namespace,
+				OwnerReferences: []metav1.OwnerReference{{
+					APIVersion: apiv1.SchemeGroupVersion.String(),
+					Kind:       apiv1.ClusterKind,
+					Name:       clusterName,
+					UID:        cluster.UID,
+					Controller: ptr.To(true),
+				}},
+			},
+		}
+		scheme := k8scheme.BuildWithAllKnownScheme()
+		patched := false
+		r := &ClusterReconciler{
+			Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(unlabelled).
+				WithInterceptorFuncs(interceptor.Funcs{
+					Patch: func(
+						ctx context.Context, c client.WithWatch, obj client.Object,
+						patch client.Patch, opts ...client.PatchOption,
+					) error {
+						patched = true
+						return c.Patch(ctx, obj, patch, opts...)
+					},
+					Update: func(context.Context, client.WithWatch, client.Object, ...client.UpdateOption) error {
+						Fail("the lease renewed by the primary must not be fully updated")
+						return nil
+					},
+				}).Build(),
+			Scheme:   scheme,
+			Recorder: record.NewFakeRecorder(10),
+		}
+
+		Expect(r.reconcilePrimaryLease(ctx, cluster)).To(Succeed())
+
+		Expect(patched).To(BeTrue())
+		Expect(getLease(ctx, r).Labels).To(HaveKeyWithValue(utils.ReconcileLabelName, "true"))
 	})
 
 	It("adopts a lease with no controllerRef", func(ctx context.Context) {

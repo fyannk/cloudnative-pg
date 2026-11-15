@@ -876,6 +876,20 @@ replicas, each one reports its own view. The counting is bounded to five
 seconds per scrape: a kind not listed in time is left out of that scrape and
 logged, rather than holding the whole metrics endpoint.
 
+Two families describe the operator cache (see ["Operator cache"](operator_conf.md#operator-cache)):
+
+- `cnpg_operator_cached_objects{kind, managed}`: the number of objects of
+  each kind the operator creates (Secrets, ConfigMaps, Pods,
+  PersistentVolumeClaims, Services, ...) held in its cache, split on the
+  `cnpg.io/reconcile=true` label. With `FILTERED_CACHE_MODE=off`, the
+  `managed="false"` series are the objects a filtered mode would no longer
+  hold.
+- `cnpg_operator_metadata_cached_objects{kind}`: in `reload` mode, the number
+  of user Secrets and ConfigMaps carrying `cnpg.io/reload` whose metadata
+  only is watched.
+
+Both are computed when scraped, from the cache, without copying the objects.
+
 A third family reports the effective configuration of the operator:
 
 - `cnpg_operator_config_info{name, value}`: always `1`, one series per

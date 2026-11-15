@@ -56,6 +56,7 @@ func Deployment(pooler *apiv1.Pooler, cluster *apiv1.Cluster) (*appsv1.Deploymen
 	podTemplate := podspec.NewFrom(pooler.Spec.Template).
 		WithLabel(utils.PgbouncerNameLabel, pooler.Name).
 		WithLabel(utils.ClusterLabelName, cluster.Name).
+		WithLabel(utils.ReconcileLabelName, "true").
 		WithLabel(utils.PodRoleLabelName, string(utils.PodRolePooler)).
 		WithLabel(utils.KubernetesAppLabelName, utils.AppName).
 		WithLabel(utils.KubernetesAppInstanceLabelName, cluster.Name).
@@ -144,6 +145,7 @@ func Deployment(pooler *apiv1.Pooler, cluster *apiv1.Cluster) (*appsv1.Deploymen
 			Namespace: pooler.Namespace,
 			Labels: map[string]string{
 				utils.ClusterLabelName:                cluster.Name,
+				utils.ReconcileLabelName:              "true",
 				utils.PgbouncerNameLabel:              pooler.Name,
 				utils.PodRoleLabelName:                string(utils.PodRolePooler),
 				utils.KubernetesAppLabelName:          utils.AppName,
