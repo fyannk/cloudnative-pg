@@ -488,8 +488,13 @@ usage to prevent it from becoming full.
 
 The same applies to CloudNativePG and Kubernetes as well: the
 ["Monitoring" section](monitoring.md#predefined-set-of-metrics)
-provides details on checking the disk space used by WAL segments and standard
-metrics on disk usage exported to Prometheus.
+provides details on checking the disk space used by WAL segments, and the
+`cnpg_disk_*` metrics, which report the bytes and the inodes left on each
+volume of the instance.
+
+A volume can run out of inodes while it still has free bytes. PostgreSQL then
+fails to create files with `No space left on device`, while `df -h` shows free
+space: `cnpg_disk_inodes_free` tells this case from a volume without free bytes.
 
 :::info[Important]
     In a production system, it is critical to monitor the database
@@ -508,13 +513,35 @@ stored, PostgreSQL will stop working. CloudNativePG correctly detects this issue
 by verifying that there is enough space to store the next WAL segment,
 and avoids triggering a failover, which could complicate recovery.
 
-That allows a human administrator to address the root cause.
+A full `PGDATA` or tablespace volume, with the WAL files on a separate
+volume, does not stop PostgreSQL: the writes fail with `No space left on
+device` and the instance keeps running. It is handled as any other failure,
+failover included. When it exits, whatever the reason, the instance manager
+names the volumes nothing can be written to anymore in the termination log
+described below, without changing its exit code, for
+[`autoGrow`](storage.md#the-full-disk-stop-of-an-instance) to grow them.
+
+When the volume holding the WAL files is full, the instance manager exits with
+code `4`, and names the volume in the termination log of the container,
+`/dev/termination-log`, which the kubelet reports in
+`lastState.terminated.message`:
+
+```json
+{"reason":"DiskFull","volumes":["wal"]}
+```
+
+The volume is named `wal`, or `pgdata` when the WAL files are in the `PGDATA`
+volume. The operator reads this message to grow the volume with
+[`autoGrow`](storage.md#the-full-disk-stop-of-an-instance), and does not
+trigger a failover for an instance that exited with code `4`.
+
+That allows the root cause to be addressed.
 
 In such a case, if supported by the storage class, the quickest course of action
-is currently to:
-
-1. Expand the storage size of the full PVC
-2. Increase the size in the `Cluster` resource to the same value
+is to increase the size in the `Cluster` resource: the operator still resizes
+the PVCs while the instance is stopped. A storage section with
+[`autoGrow`](storage.md#growing-the-volumes-automatically) is grown by the
+operator, before it is full or once the instance is stopped.
 
 Once the issue is resolved and there is sufficient free space for WAL segments,
 the Pod will restart and the cluster will become healthy.

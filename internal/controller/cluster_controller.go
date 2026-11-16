@@ -532,7 +532,7 @@ func (r *ClusterReconciler) reconcile(ctx context.Context, cluster *apiv1.Cluste
 		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
 	}
 
-	if res, err := r.ensureNoFailoverOnFullDisk(ctx, cluster, instancesStatus); err != nil || !res.IsZero() {
+	if res, err := r.ensureNoFailoverOnFullDisk(ctx, cluster, resources, instancesStatus); err != nil || !res.IsZero() {
 		return res, err
 	}
 
@@ -603,7 +603,22 @@ func (r *ClusterReconciler) reconcile(ctx context.Context, cluster *apiv1.Cluste
 
 	// Run plugin post-reconcile hooks, sync per-plugin statuses, and
 	// register PhaseHealthy as the LAST status mutation. See #8582.
-	return r.finalizeReconciliation(ctx, cnpgiClient.GetPluginClientFromContext(ctx), cluster)
+	final, err := r.finalizeReconciliation(ctx, cnpgiClient.GetPluginClientFromContext(ctx), cluster)
+	if err == nil && final.IsZero() && persistentvolumeclaim.IsVolumeExpansionRefused(cluster) {
+		// the refused expansion did not stop this pass, nothing else
+		// would retry it
+		return ctrl.Result{RequeueAfter: persistentvolumeclaim.VolumeExpansionRetryInterval}, nil
+	}
+	if err == nil && final.IsZero() && persistentvolumeclaim.IsFileSystemResizeAwaited(resources.pvcs.Items) {
+		// a filesystem still waiting after the grace period means a Pod
+		// to restart, which nothing else would tell
+		return ctrl.Result{RequeueAfter: persistentvolumeclaim.FileSystemResizeGracePeriod}, nil
+	}
+	if err == nil && final.IsZero() && persistentvolumeclaim.HasAutoGrow(cluster) {
+		// a volume filling up changes nothing the operator watches
+		return ctrl.Result{RequeueAfter: persistentvolumeclaim.AutoGrowCheckInterval}, nil
+	}
+	return final, err
 }
 
 // evaluatePodReadinessGuards short-circuits the reconciliation loop with a
@@ -697,13 +712,14 @@ func (r *ClusterReconciler) evaluatePodReadinessGuards(
 func (r *ClusterReconciler) ensureNoFailoverOnFullDisk(
 	ctx context.Context,
 	cluster *apiv1.Cluster,
+	resources *managedResources,
 	instances postgres.PostgresqlStatusList,
 ) (ctrl.Result, error) {
 	contextLogger := log.FromContext(ctx).WithName("ensure_sufficient_disk_space")
 
 	var instanceNames []string
 	for _, state := range instances.Items {
-		if !isWALSpaceAvailableOnPod(state.Pod) {
+		if !specs.IsWALSpaceAvailableOnPod(state.Pod) {
 			instanceNames = append(instanceNames, state.Pod.Name)
 		}
 	}
@@ -715,6 +731,15 @@ func (r *ClusterReconciler) ensureNoFailoverOnFullDisk(
 	contextLogger.Warning(
 		"Insufficient disk space detected in a pod. PostgreSQL cannot proceed until the PVC group is enlarged",
 	)
+
+	// the rest of the reconciliation is skipped, but the PVCs are still
+	// resized: a larger size, from the cluster or from autoGrow, is the way
+	// out for the instances
+	if _, err := persistentvolumeclaim.ReconcileExisting(
+		ctx, r.Client, r.Recorder, cluster, resources.pvcs.Items, instances,
+	); err != nil {
+		return ctrl.Result{}, err
+	}
 
 	reason := "Insufficient disk space detected in one or more pods is preventing PostgreSQL from running." +
 		"Please verify your storage settings. Further information inside .status.instancesReportedState"
@@ -926,6 +951,23 @@ func (r *ClusterReconciler) reconcileFailedBootstrapPods(
 	return &ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 }
 
+// growVolumesDuringInstanceJob keeps autoGrow going while a Job creates an
+// instance: creating a replica can take hours, during which the volumes of
+// the running instances keep filling
+func (r *ClusterReconciler) growVolumesDuringInstanceJob(
+	ctx context.Context,
+	cluster *apiv1.Cluster,
+	resources *managedResources,
+	instancesStatus postgres.PostgresqlStatusList,
+) error {
+	if !persistentvolumeclaim.HasAutoGrow(cluster) {
+		return nil
+	}
+	_, err := persistentvolumeclaim.ReconcileExisting(
+		ctx, r.Client, r.Recorder, cluster, resources.pvcs.Items, instancesStatus)
+	return err
+}
+
 // reconcileResources updates all the objects managed by the controller
 func (r *ClusterReconciler) reconcileResources(
 	ctx context.Context, cluster *apiv1.Cluster,
@@ -968,7 +1010,8 @@ func (r *ClusterReconciler) reconcileResources(
 
 	if len(runningJobs) > 0 {
 		contextLogger.Debug("A job is currently running. Waiting", "runningJobs", runningJobs)
-		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+		return ctrl.Result{RequeueAfter: 5 * time.Second},
+			r.growVolumesDuringInstanceJob(ctx, cluster, resources, instancesStatus)
 	}
 
 	if result, err := r.deleteTerminatedPods(ctx, cluster, resources); err != nil {
@@ -1030,9 +1073,11 @@ func (r *ClusterReconciler) reconcileResources(
 	if res, err := persistentvolumeclaim.Reconcile(
 		ctx,
 		r.Client,
+		r.Recorder,
 		cluster,
 		resources.instances.Items,
 		resources.pvcs.Items,
+		instancesStatus,
 	); err != nil || !res.IsZero() {
 		return res, err
 	}

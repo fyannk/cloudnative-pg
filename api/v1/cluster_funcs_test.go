@@ -345,6 +345,48 @@ var _ = Describe("resize in use volumes", func() {
 	})
 })
 
+var _ = Describe("autoGrow configuration", func() {
+	It("defaults the threshold to 80%", func() {
+		Expect((&AutoGrowConfiguration{}).GetThreshold()).To(Equal(80))
+		Expect((&AutoGrowConfiguration{Threshold: 60}).GetThreshold()).To(Equal(60))
+	})
+
+	DescribeTable("computes the step from the current size",
+		func(step, current, expected string) {
+			result, err := (&AutoGrowConfiguration{Step: step}).GetStep(resource.MustParse(current))
+			Expect(err).ToNot(HaveOccurred())
+			Expect(result.String()).To(Equal(expected))
+		},
+		Entry("20% by default", "", "10Gi", "2Gi"),
+		Entry("a percentage", "50%", "10Gi", "5Gi"),
+		Entry("a percentage rounded up to the mebibyte", "10%", "1Gi", "103Mi"),
+		Entry("at least one mebibyte", "1%", "10Mi", "1Mi"),
+		Entry("a quantity, whatever the size", "5Gi", "100Gi", "5Gi"),
+	)
+
+	DescribeTable("refuses an invalid step",
+		func(step string) {
+			_, err := (&AutoGrowConfiguration{Step: step}).GetStep(resource.MustParse("10Gi"))
+			Expect(err).To(HaveOccurred())
+		},
+		Entry("zero percent", "0%"),
+		Entry("above 100%", "101%"),
+		Entry("not a number", "abc%"),
+		Entry("not a quantity", "five"),
+		Entry("a zero quantity", "0"),
+		Entry("a negative quantity", "-1Gi"),
+	)
+
+	It("parses maxSize", func() {
+		maxSize, err := (&AutoGrowConfiguration{MaxSize: "100Gi"}).GetMaxSize()
+		Expect(err).ToNot(HaveOccurred())
+		Expect(maxSize.String()).To(Equal("100Gi"))
+
+		_, err = (&AutoGrowConfiguration{MaxSize: "lots"}).GetMaxSize()
+		Expect(err).To(HaveOccurred())
+	})
+})
+
 var _ = Describe("external cluster list", func() {
 	emptyCluster := &Cluster{}
 	cluster := Cluster{
@@ -2037,5 +2079,42 @@ var _ = Describe("FailureDomainKeys", func() {
 			NodeFailureDomainKeys: []string{"topology.kubernetes.io/zone"},
 		}
 		Expect(sync.FailureDomainKeys()).To(Equal([]string{"topology.kubernetes.io/zone"}))
+	})
+})
+
+var _ = Describe("MayArchiveWALs", func() {
+	It("is false without a Barman object store nor an enabled plugin", func() {
+		cluster := &Cluster{Spec: ClusterSpec{
+			Backup:  &BackupConfiguration{},
+			Plugins: []PluginConfiguration{{Name: "disabled", Enabled: ptr.To(false)}},
+		}}
+		Expect(cluster.MayArchiveWALs()).To(BeFalse())
+	})
+
+	It("is true with a Barman object store", func() {
+		cluster := &Cluster{Spec: ClusterSpec{
+			Backup: &BackupConfiguration{BarmanObjectStore: &BarmanObjectStoreConfiguration{}},
+		}}
+		Expect(cluster.MayArchiveWALs()).To(BeTrue())
+	})
+
+	It("is true with any enabled plugin, a WAL archiver or not", func() {
+		cluster := &Cluster{Spec: ClusterSpec{
+			Plugins: []PluginConfiguration{{Name: "barman-cloud.cloudnative-pg.io"}},
+		}}
+		Expect(cluster.MayArchiveWALs()).To(BeTrue())
+
+		cluster.Spec.Plugins[0].IsWALArchiver = ptr.To(true)
+		Expect(cluster.MayArchiveWALs()).To(BeTrue())
+	})
+
+	It("is false when the WAL archiving is disabled by annotation", func() {
+		cluster := &Cluster{
+			ObjectMeta: metav1.ObjectMeta{Annotations: map[string]string{utils.SkipWalArchiving: "enabled"}},
+			Spec: ClusterSpec{
+				Backup: &BackupConfiguration{BarmanObjectStore: &BarmanObjectStoreConfiguration{}},
+			},
+		}
+		Expect(cluster.MayArchiveWALs()).To(BeFalse())
 	})
 })

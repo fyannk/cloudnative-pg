@@ -24,6 +24,8 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"syscall"
+	"time"
 
 	"github.com/cloudnative-pg/machinery/pkg/fileutils"
 	"github.com/cloudnative-pg/machinery/pkg/log"
@@ -32,6 +34,7 @@ import (
 
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/executablehash"
+	"github.com/cloudnative-pg/cloudnative-pg/pkg/management/postgres/volumeusage"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/postgres"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/specs"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/versions"
@@ -119,8 +122,22 @@ func (instance *Instance) GetStatus() (result *postgres.PostgresqlStatus, err er
 	result.IsInstanceManagerUpgrading = instance.InstanceManagerIsUpgrading.Load()
 	result.SessionID = instance.SessionID
 
+	// a volume that cannot be read is only missing from the usages: it
+	// must not hide the rest of the status from the operator, nor leave a
+	// request blocked on a volume that does not answer
+	var usageErr error
+	result.VolumeUsages, usageErr = volumeusage.GetWithTimeout(
+		volumeusage.DefaultPaths, syscall.Statfs, statusVolumesReadTimeout)
+	if usageErr != nil {
+		log.Warning("Cannot read the usage of the volumes of the instance", "err", usageErr)
+	}
+
 	return result, nil
 }
+
+// statusVolumesReadTimeout bounds the reading of the volumes in a status
+// request, below the timeout of the operator asking for the status
+const statusVolumesReadTimeout = 5 * time.Second
 
 // updateResultForDecrease updates the given postgres.PostgresqlStatus
 // in case of pending restart, by checking whether the restart is due to hot standby
