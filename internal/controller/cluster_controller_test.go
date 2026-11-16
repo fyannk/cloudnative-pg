@@ -2124,6 +2124,6 @@ var _ = Describe("ensureNoFailoverOnFullDisk", func() {
 			}
 		},
 		Entry("with autoGrow", &apiv1.AutoGrowConfiguration{MaxSize: "10G"}, true),
-		Entry("without autoGrow, as upstream", nil, false),
+		Entry("without autoGrow", nil, false),
 	)
 })

@@ -483,10 +483,11 @@ described in ["Disk Full Failure"](instance_manager.md#disk-full-failure).
 - When the expansion of a step is refused to some PVCs of a volume, no
   `VolumeAutoGrow` event is recorded for that volume, even for the PVCs that
   accepted it: the `VolumeExpansionRefused` condition reports the refusal.
-- Outside of the volume holding the WAL files, a full-disk stop is detected
-  from the logs of PostgreSQL, and only a volume below the thresholds given
-  above counts as full: a write failing on a volume with more room left, or a
-  stop with no disk full error logged, grows no volume.
+- Outside of the volume holding the WAL files, a stop of PostgreSQL names only
+  the volumes with less than a PostgreSQL block (8kB) available, or with no
+  free inode: a write failing on a volume with more room left is not named,
+  and grows no volume until the usage reported by the instance reaches the
+  threshold.
 
 ### Re-creating storage
 
@@ -549,8 +550,8 @@ $ kubectl delete pvc/cluster-example-3 pod/cluster-example-3
 :::
 
 :::warning
-    In upstream releases, `resizeInUseVolumes: false` in `.spec.storage` also
-    prevents the resize of the WAL and tablespace volumes. Here each section
+    In earlier releases, `resizeInUseVolumes: false` in `.spec.storage` also
+    prevents the resize of the WAL and tablespace volumes. Now each section
     has its own flag, defaulting to `true`, so after the operator upgrade the
     existing WAL and tablespace PVCs whose requested size in the `Cluster` is
     larger than their current one are resized. When their

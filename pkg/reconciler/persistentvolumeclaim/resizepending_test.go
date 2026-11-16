@@ -38,7 +38,7 @@ import (
 )
 
 // A storage class that cannot resize a volume in use leaves the filesystem
-// as it is until the Pod restarts: upstream documents the restart, and the
+// as it is until the Pod restarts: Kubernetes documents the restart, and the
 // operator now says which instances wait for it
 var _ = Describe("filesystem resize waiting for a restart of the Pod", func() {
 	clock := time.Date(2026, 11, 14, 12, 0, 0, 0, time.UTC)

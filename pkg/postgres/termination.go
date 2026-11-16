@@ -29,9 +29,9 @@ import (
 const TerminationReasonDiskFull = "DiskFull"
 
 // TerminationMessage is the message the instance manager writes to the
-// termination log of the PostgreSQL container when it exits with the
-// MissingWALDiskSpaceExitCode exit code, for the kubelet to report it in the
-// status of the container, such as:
+// termination log of the PostgreSQL container when it exits with full
+// volumes, whatever its exit code, for the kubelet to report it in the status
+// of the container, such as:
 //
 //	{"reason":"DiskFull","volumes":["tbs-alpha"]}
 type TerminationMessage struct {
