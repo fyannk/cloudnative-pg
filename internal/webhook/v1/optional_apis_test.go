@@ -184,18 +184,40 @@ var _ = Describe("Objects asking for an unavailable optional API", func() {
 			Expect(warnings).To(BeEmpty())
 		})
 
-		DescribeTable("is only warned about without the Node API, on the field asking for node labels",
+		It("is not affected while the node state comes from the instance Pods", func() {
+			configuration.Current.APINodeEnabled = false
+			configuration.Current.NodeStatusSource = configuration.NodeStatusSourcePods
+			errs, warnings := getClusterUnavailableAPIProblems(withTopology([]string{"kubernetes.io/hostname"}, nil), nil)
+			Expect(errs).To(BeEmpty())
+			Expect(warnings).To(BeEmpty())
+		})
+
+		It("is warned about once, on creation, when the operator reads no node state", func() {
+			configuration.Current.NodeStatusSource = configuration.NodeStatusSourceNone
+			cluster := withTopology(nil, nil)
+			errs, warnings := getClusterUnavailableAPIProblems(cluster, nil)
+			Expect(errs).To(BeEmpty())
+			Expect(warnings).To(ConsistOf(configuration.NodeStatusUnavailableMessage))
+
+			errs, warnings = getClusterUnavailableAPIProblems(cluster, cluster)
+			Expect(errs).To(BeEmpty())
+			Expect(warnings).To(BeEmpty())
+		})
+
+		DescribeTable("is only warned about without node state, on the field asking for node labels",
 			func(cluster *apiv1.Cluster, path string, keys string) {
-				configuration.Current.APINodeEnabled = false
-				for _, old := range []*apiv1.Cluster{nil, cluster} {
-					errs, warnings := getClusterUnavailableAPIProblems(cluster, old)
-					Expect(errs).To(BeEmpty())
-					Expect(warnings).To(ConsistOf(SatisfyAll(
-						HavePrefix(path+": the Node API is not available to this operator"),
-						ContainSubstring("API_NODE_ENABLED"),
-						ContainSubstring("the node labels "+keys+" cannot be resolved"),
-					)))
-				}
+				configuration.Current.NodeStatusSource = configuration.NodeStatusSourceNone
+				onTheField := SatisfyAll(
+					HavePrefix(path+": the operator reads no node state (NODE_STATUS_SOURCE=none)"),
+					ContainSubstring("the node labels "+keys+" cannot be resolved"),
+				)
+				errs, warnings := getClusterUnavailableAPIProblems(cluster, nil)
+				Expect(errs).To(BeEmpty())
+				Expect(warnings).To(ConsistOf(configuration.NodeStatusUnavailableMessage, onTheField))
+
+				errs, warnings = getClusterUnavailableAPIProblems(cluster, cluster)
+				Expect(errs).To(BeEmpty())
+				Expect(warnings).To(ConsistOf(onTheField))
 			},
 			Entry("the election constraint",
 				withTopology([]string{"kubernetes.io/hostname", "topology.kubernetes.io/zone"}, nil),
@@ -208,9 +230,10 @@ var _ = Describe("Objects asking for an unavailable optional API", func() {
 		)
 
 		It("is not affected by pod failure domain keys, which keep working", func() {
-			configuration.Current.APINodeEnabled = false
-			errs, warnings := getClusterUnavailableAPIProblems(withTopology([]string{"kubernetes.io/hostname"},
-				&apiv1.SynchronousReplicaConfiguration{PodFailureDomainKeys: []string{"zone"}}), nil)
+			configuration.Current.NodeStatusSource = configuration.NodeStatusSourceNone
+			cluster := withTopology([]string{"kubernetes.io/hostname"},
+				&apiv1.SynchronousReplicaConfiguration{PodFailureDomainKeys: []string{"zone"}})
+			errs, warnings := getClusterUnavailableAPIProblems(cluster, cluster)
 			Expect(errs).To(BeEmpty())
 			Expect(warnings).To(BeEmpty())
 		})

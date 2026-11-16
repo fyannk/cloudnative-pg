@@ -451,6 +451,50 @@ var _ = Describe("cluster_create unit tests", func() {
 	})
 })
 
+var _ = Describe("the primary PodDisruptionBudget without node state", func() {
+	var env *testingEnvironment
+	BeforeEach(func() {
+		env = buildTestEnvironment()
+	})
+
+	DescribeTable("follows NODE_STATUS_UNAVAILABLE_POLICY",
+		func(ctx SpecContext, source, policy string, primaryKept bool) {
+			namespace := newFakeNamespace(env.client)
+			cluster := newFakeCNPGCluster(env.client, namespace)
+			pdbPrimaryName := specs.BuildPrimaryPodDisruptionBudget(cluster).Name
+			pdbReplicaName := specs.BuildReplicasPodDisruptionBudget(cluster).Name
+
+			By("reconciling the PDBs while the node state is read", func() {
+				Expect(env.clusterReconciler.reconcilePodDisruptionBudget(ctx, cluster)).To(Succeed())
+				expectResourceExists(env.client, pdbPrimaryName, namespace, &policyv1.PodDisruptionBudget{})
+				expectResourceExists(env.client, pdbReplicaName, namespace, &policyv1.PodDisruptionBudget{})
+			})
+
+			By("reconciling them again with the policy", func() {
+				env.clusterReconciler.nodeStatusSource = source
+				env.clusterReconciler.nodeStatusUnavailablePolicy = policy
+				Expect(env.clusterReconciler.reconcilePodDisruptionBudget(ctx, cluster)).To(Succeed())
+			})
+
+			if primaryKept {
+				expectResourceExists(env.client, pdbPrimaryName, namespace, &policyv1.PodDisruptionBudget{})
+			} else {
+				expectResourceDoesntExist(env.client, pdbPrimaryName, namespace, &policyv1.PodDisruptionBudget{})
+			}
+			// the replicas keep their PDB whatever the policy
+			expectResourceExists(env.client, pdbReplicaName, namespace, &policyv1.PodDisruptionBudget{})
+		},
+		Entry("none with keepPDB keeps it", configuration.NodeStatusSourceNone,
+			configuration.NodeStatusUnavailablePolicyKeepPDB, true),
+		Entry("none with disablePrimaryPDB removes it", configuration.NodeStatusSourceNone,
+			configuration.NodeStatusUnavailablePolicyDisablePrimaryPDB, false),
+		Entry("api with disablePrimaryPDB keeps it", configuration.NodeStatusSourceAPI,
+			configuration.NodeStatusUnavailablePolicyDisablePrimaryPDB, true),
+		Entry("pods with disablePrimaryPDB keeps it", configuration.NodeStatusSourcePods,
+			configuration.NodeStatusUnavailablePolicyDisablePrimaryPDB, true),
+	)
+})
+
 var _ = Describe("check if bootstrap recovery can proceed", func() {
 	var env *testingEnvironment
 	var namespace, clusterName, name string

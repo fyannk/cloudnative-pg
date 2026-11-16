@@ -20,6 +20,7 @@ SPDX-License-Identifier: Apache-2.0
 package controller
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"time"
@@ -1554,6 +1555,184 @@ var _ = Describe("isNodeUnschedulableOrBeingDrained", func() {
 		Entry("node is tainted", nodeTainted, true),
 		Entry("node has an unknown taint", nodeWithUnknownTaint, false),
 	)
+})
+
+var _ = Describe("The node state of an instance per source", func() {
+	const prefix = "bridge.example.com/"
+
+	var env *testingEnvironment
+	var cordonedNode, plainNode corev1.Node
+
+	BeforeEach(func() {
+		env = buildTestEnvironment()
+		plainNode = corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "plain-node"}}
+		cordonedNode = corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{Name: "cordoned-node"},
+			Spec:       corev1.NodeSpec{Unschedulable: true},
+		}
+		Expect(env.client.Create(context.Background(), &plainNode)).To(Succeed())
+		Expect(env.client.Create(context.Background(), &cordonedNode)).To(Succeed())
+	})
+
+	reconciler := func(source string) *ClusterReconciler {
+		return &ClusterReconciler{
+			Client:           env.client,
+			drainTaints:      configuration.DefaultDrainTaints,
+			nodeStatusSource: source,
+			nodeStatus:       utils.NodeStatusReader{KeyPrefix: prefix, EvictionMaxAge: 10 * time.Minute},
+		}
+	}
+
+	instance := func(nodeName string, labels, annotations map[string]string) *postgres.PostgresqlStatus {
+		return &postgres.PostgresqlStatus{
+			Node: nodeName,
+			Pod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{Name: "pg-1", Labels: labels, Annotations: annotations},
+				Spec:       corev1.PodSpec{NodeName: nodeName},
+			},
+		}
+	}
+
+	cordonedMark := map[string]string{prefix + "unschedulable": "true"}
+	taintMark := map[string]string{prefix + "taints": `[{"key":"karpenter.sh/disrupted","effect":"NoSchedule"}]`}
+	evictionMark := map[string]string{prefix + "eviction-requested": time.Now().Add(-time.Minute).Format(time.RFC3339)}
+	staleEvictionMark := map[string]string{
+		prefix + "eviction-requested": time.Now().Add(-time.Hour).Format(time.RFC3339),
+	}
+
+	DescribeTable("whether the node is cordoned or being drained",
+		func(source, nodeName string, labels, annotations map[string]string, expected bool) {
+			draining, err := reconciler(source).isInstanceOnDrainingNode(
+				context.Background(), instance(nodeName, labels, annotations))
+			Expect(err).ToNot(HaveOccurred())
+			Expect(draining).To(Equal(expected))
+		},
+		Entry("api: the Node is read", configuration.NodeStatusSourceAPI, "cordoned-node", nil, nil, true),
+		Entry("api: a plain Node", configuration.NodeStatusSourceAPI, "plain-node", nil, nil, false),
+		Entry("api: the marks on the Pod do not count", configuration.NodeStatusSourceAPI, "plain-node",
+			cordonedMark, taintMark, false),
+		Entry("pods: the cordon mark", configuration.NodeStatusSourcePods, "plain-node", cordonedMark, nil, true),
+		Entry("pods: the drain taint mark", configuration.NodeStatusSourcePods, "plain-node", nil, taintMark, true),
+		Entry("pods: the Node does not count", configuration.NodeStatusSourcePods, "cordoned-node", nil, nil, false),
+		Entry("none: nothing counts", configuration.NodeStatusSourceNone, "cordoned-node", cordonedMark, taintMark, false),
+	)
+
+	It("api: fails when the Node cannot be read", func() {
+		_, err := reconciler(configuration.NodeStatusSourceAPI).isInstanceOnDrainingNode(
+			context.Background(), instance("unknown-node", nil, nil))
+		Expect(err).To(HaveOccurred())
+	})
+
+	It("pods: an instance without a Pod is not on a draining node", func() {
+		draining, err := reconciler(configuration.NodeStatusSourcePods).isInstanceOnDrainingNode(
+			context.Background(), &postgres.PostgresqlStatus{Node: "cordoned-node"})
+		Expect(err).ToNot(HaveOccurred())
+		Expect(draining).To(BeFalse())
+	})
+
+	DescribeTable("whether an eviction of the instance was requested",
+		func(source string, annotations map[string]string, expected bool) {
+			Expect(reconciler(source).isEvictionRequested(instance("plain-node", nil, annotations))).To(Equal(expected))
+		},
+		Entry("pods: a fresh request", configuration.NodeStatusSourcePods, evictionMark, true),
+		Entry("pods: a request older than the maximum age", configuration.NodeStatusSourcePods, staleEvictionMark, false),
+		Entry("pods: no request", configuration.NodeStatusSourcePods, nil, false),
+		Entry("api: the mark does not count", configuration.NodeStatusSourceAPI, evictionMark, false),
+		Entry("none: the mark does not count", configuration.NodeStatusSourceNone, evictionMark, false),
+	)
+
+	It("pods: an instance without a Pod has no eviction requested", func() {
+		Expect(reconciler(configuration.NodeStatusSourcePods).isEvictionRequested(
+			&postgres.PostgresqlStatus{Node: "plain-node"})).To(BeFalse())
+	})
+})
+
+var _ = Describe("The new primary chosen when the primary leaves its node", func() {
+	const prefix = "bridge.example.com/"
+
+	var env *testingEnvironment
+	var cluster *apiv1.Cluster
+
+	BeforeEach(func(ctx SpecContext) {
+		env = buildTestEnvironment()
+		namespace := newFakeNamespace(env.client)
+		cluster = newFakeCNPGCluster(env.client, namespace, func(cluster *apiv1.Cluster) {
+			cluster.Spec.Instances = 3
+		})
+		cluster.Status.Instances = 3
+		cluster.Status.ReadyInstances = 3
+		cluster.Status.CurrentPrimary = cluster.Name + "-1"
+		cluster.Status.TargetPrimary = cluster.Name + "-1"
+		Expect(env.client.Status().Update(ctx, cluster)).To(Succeed())
+	})
+
+	reconciler := func(maxAge time.Duration) *ClusterReconciler {
+		return &ClusterReconciler{
+			Client:           env.client,
+			Scheme:           env.scheme,
+			Recorder:         record.NewFakeRecorder(10),
+			drainTaints:      configuration.DefaultDrainTaints,
+			nodeStatusSource: configuration.NodeStatusSourcePods,
+			nodeStatus:       utils.NodeStatusReader{KeyPrefix: prefix, EvictionMaxAge: maxAge},
+		}
+	}
+
+	evictionRequested := func(ago time.Duration) map[string]string {
+		return map[string]string{prefix + "eviction-requested": time.Now().Add(-ago).Format(time.RFC3339)}
+	}
+
+	// instances builds the status of the three instances, the primary first,
+	// each on its own node, ready and streaming, with the given annotations
+	instances := func(annotations ...map[string]string) postgres.PostgresqlStatusList {
+		var list postgres.PostgresqlStatusList
+		for idx, podAnnotations := range annotations {
+			name := fmt.Sprintf("%s-%d", cluster.Name, idx+1)
+			list.Items = append(list.Items, postgres.PostgresqlStatus{
+				Node:                fmt.Sprintf("node-%d", idx+1),
+				IsPrimary:           idx == 0,
+				IsPodReady:          true,
+				IsWalReceiverActive: idx > 0,
+				Pod: &corev1.Pod{
+					ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: cluster.Namespace, Annotations: podAnnotations},
+					Spec:       corev1.PodSpec{NodeName: fmt.Sprintf("node-%d", idx+1)},
+					Status: corev1.PodStatus{Conditions: []corev1.PodCondition{
+						{Type: corev1.PodReady, Status: corev1.ConditionTrue},
+					}},
+				},
+			})
+		}
+		return list
+	}
+
+	switchOver := func(ctx context.Context, r *ClusterReconciler, status postgres.PostgresqlStatusList) string {
+		newPrimary, err := r.setPrimaryOnSchedulableNode(ctx, cluster, status, &status.Items[0],
+			"eviction of the primary requested")
+		Expect(err).ToNot(HaveOccurred())
+		return newPrimary
+	}
+
+	It("skips a replica whose eviction was requested too", func(ctx SpecContext) {
+		status := instances(evictionRequested(time.Minute), evictionRequested(time.Minute), nil)
+		Expect(switchOver(ctx, reconciler(10*time.Minute), status)).To(Equal(cluster.Name + "-3"))
+		Expect(cluster.Status.TargetPrimary).To(Equal(cluster.Name + "-3"))
+	})
+
+	It("skips a replica whose request never expires, with no maximum age", func(ctx SpecContext) {
+		status := instances(evictionRequested(time.Minute), evictionRequested(48*time.Hour), nil)
+		Expect(switchOver(ctx, reconciler(0), status)).To(Equal(cluster.Name + "-3"))
+	})
+
+	It("keeps a replica whose request is older than the maximum age", func(ctx SpecContext) {
+		status := instances(evictionRequested(time.Minute), evictionRequested(time.Hour), nil)
+		Expect(switchOver(ctx, reconciler(10*time.Minute), status)).To(Equal(cluster.Name + "-2"))
+	})
+
+	It("does not switch over when every replica has its eviction requested", func(ctx SpecContext) {
+		status := instances(evictionRequested(time.Minute), evictionRequested(time.Minute),
+			evictionRequested(48*time.Hour))
+		Expect(switchOver(ctx, reconciler(0), status)).To(BeEmpty())
+		Expect(cluster.Status.TargetPrimary).To(Equal(cluster.Name + "-1"))
+	})
 })
 
 var _ = Describe("evaluatePodReadinessGuards", func() {

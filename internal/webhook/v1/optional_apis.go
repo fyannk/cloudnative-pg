@@ -111,14 +111,19 @@ func getClusterUnavailableAPIProblems(r, old *apiv1.Cluster) (field.ErrorList, a
 		problems.optional(field.NewPath("spec", "monitoring", "enablePodMonitor"), podMonitorUnavailable)
 	}
 
-	if _, nodeLabelKeys := r.GetTopologyLabelKeys(); len(nodeLabelKeys) > 0 && !configuration.Current.APINodeEnabled {
-		path := field.NewPath("spec", "postgresql", "syncReplicaElectionConstraint", "nodeLabelsAntiAffinity")
-		if sync := r.Spec.PostgresConfiguration.Synchronous; sync != nil && len(sync.NodeFailureDomainKeys) > 0 {
-			path = field.NewPath("spec", "postgresql", "synchronous", "nodeFailureDomainKeys")
+	if configuration.Current.NodeStatusSource == configuration.NodeStatusSourceNone {
+		if old == nil {
+			problems.warnings = append(problems.warnings, configuration.NodeStatusUnavailableMessage)
 		}
-		problems.optional(path, unavailableAPIMessage("Node", "API_NODE_ENABLED")+": the node labels "+
-			strings.Join(nodeLabelKeys, ", ")+" cannot be resolved and the failure domain constraints "+
-			"of the synchronous replicas are not applied")
+		if _, nodeLabelKeys := r.GetTopologyLabelKeys(); len(nodeLabelKeys) > 0 {
+			path := field.NewPath("spec", "postgresql", "syncReplicaElectionConstraint", "nodeLabelsAntiAffinity")
+			if sync := r.Spec.PostgresConfiguration.Synchronous; sync != nil && len(sync.NodeFailureDomainKeys) > 0 {
+				path = field.NewPath("spec", "postgresql", "synchronous", "nodeFailureDomainKeys")
+			}
+			problems.optional(path, "the operator reads no node state (NODE_STATUS_SOURCE=none): the node labels "+
+				strings.Join(nodeLabelKeys, ", ")+" cannot be resolved and the failure domain constraints "+
+				"of the synchronous replicas are not applied")
+		}
 	}
 
 	return problems.errs, problems.warnings
