@@ -39,6 +39,7 @@ import (
 	"github.com/cloudnative-pg/machinery/pkg/types"
 	jsonpatch "github.com/evanphx/json-patch/v5"
 	volumesnapshotv1 "github.com/kubernetes-csi/external-snapshotter/client/v8/apis/volumesnapshot/v1"
+	admissionv1 "k8s.io/api/admission/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -50,9 +51,11 @@ import (
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
+	"github.com/cloudnative-pg/cloudnative-pg/internal/configuration"
 	"github.com/cloudnative-pg/cloudnative-pg/internal/webhook/guard"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/postgres"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/postgres/hba"
@@ -72,14 +75,17 @@ var clusterLog = log.WithName("cluster-resource").WithValues("version", "v1")
 func SetupClusterWebhookWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewWebhookManagedBy(mgr, &apiv1.Cluster{}).
 		WithValidator(newBypassableValidator[*apiv1.Cluster](&ClusterCustomValidator{})).
-		WithDefaulter(&ClusterCustomDefaulter{}).
+		WithDefaulter(&ClusterCustomDefaulter{reader: mgr.GetAPIReader()}).
 		Complete()
 }
 
 // NewClusterAdmissionGuard creates a guard to protect a reconciliation loop.
-func NewClusterAdmissionGuard() *guard.Admission[*apiv1.Cluster] {
+// The reader lists the PVCs of a Cluster, to tell whether it is a new one
+// before writing the default StorageClass into it (see
+// ClusterCustomDefaulter); with a nil reader the guard never writes it.
+func NewClusterAdmissionGuard(reader client.Reader) *guard.Admission[*apiv1.Cluster] {
 	return &guard.Admission[*apiv1.Cluster]{
-		Defaulter: &ClusterCustomDefaulter{},
+		Defaulter: &ClusterCustomDefaulter{reader: reader},
 		Validator: newBypassableValidator[*apiv1.Cluster](&ClusterCustomValidator{}),
 	}
 }
@@ -90,15 +96,109 @@ func NewClusterAdmissionGuard() *guard.Admission[*apiv1.Cluster] {
 
 // ClusterCustomDefaulter struct is responsible for setting default values on the custom resource of the
 // Kind Cluster when those are created or updated.
-type ClusterCustomDefaulter struct{}
+type ClusterCustomDefaulter struct {
+	// reader lists the PVCs of a Cluster, to tell a new Cluster from one
+	// re-created over existing volumes. When nil, the default StorageClass
+	// is never written.
+	reader client.Reader
+}
 
 // Default implements webhook.CustomDefaulter so a webhook will be registered for the Kind Cluster.
-func (d *ClusterCustomDefaulter) Default(_ context.Context, cluster *apiv1.Cluster) error {
+func (d *ClusterCustomDefaulter) Default(ctx context.Context, cluster *apiv1.Cluster) error {
 	clusterLog.Debug("Defaulting for Cluster", "name", cluster.GetName(), "namespace", cluster.GetNamespace())
 
 	cluster.Default()
 
+	return d.setDefaultStorageClass(ctx, cluster)
+}
+
+// setDefaultStorageClass writes the default StorageClass of the operator
+// configuration into a new Cluster only. A new Cluster is one being created
+// (the create operation or, when these defaults are replayed outside an
+// admission request because the webhook is not installed, a Cluster that
+// has created no instance) that has no PVC either: a Cluster object
+// re-created without its status (a backup restore, a GitOps tool deleting
+// and creating it again) while its PVCs still exist is not new, and keeps
+// its storage sections as they are so that its next volumes land on the
+// same class as its existing ones. Any PVC of the Cluster, whatever its
+// role, keeps every storage section as it is, as a Cluster that has created
+// an instance does.
+//
+// When the PVCs cannot be listed, the class is not written: in the
+// admission webhook the request goes on with the error logged, and the
+// operator checks again before it creates the first volume; outside an
+// admission request the error is returned and the reconciliation retries.
+func (d *ClusterCustomDefaulter) setDefaultStorageClass(ctx context.Context, cluster *apiv1.Cluster) error {
+	if configuration.Current.DefaultStorageClass == "" {
+		return nil
+	}
+
+	namespace := cluster.GetNamespace()
+	req, err := admission.RequestFromContext(ctx)
+	inAdmission := err == nil
+	switch {
+	case inAdmission && req.Operation != admissionv1.Create:
+		return nil
+	case !inAdmission && cluster.HasCreatedInstances():
+		return nil
+	case inAdmission && req.Namespace != "":
+		// the object of a create request may come without its namespace
+		namespace = req.Namespace
+	}
+
+	if d.reader == nil {
+		return nil
+	}
+
+	hasPVCs, err := hasPersistentVolumeClaims(ctx, d.reader, namespace, cluster.GetName())
+	if err != nil {
+		if inAdmission {
+			clusterLog.Error(err, "Cannot list the PVCs of the Cluster, not writing the default StorageClass",
+				"name", cluster.GetName(), "namespace", namespace)
+			return nil
+		}
+		return fmt.Errorf("while listing the PVCs of the Cluster for its default StorageClass: %w", err)
+	}
+	if hasPVCs {
+		clusterLog.Info("The Cluster has PVCs already, not writing the default StorageClass",
+			"name", cluster.GetName(), "namespace", namespace)
+		return nil
+	}
+
+	cluster.SetDefaultStorageClass()
 	return nil
+}
+
+// hasPersistentVolumeClaims tells whether a PVC labeled as belonging to the
+// named Cluster exists in the namespace. A Cluster without a name yet (one
+// created with generateName) has none. The PVCs being deleted do not count:
+// they are those of a deleted Cluster of the same name, on their way out
+// while its Pods stop, and the new Cluster will not use them.
+func hasPersistentVolumeClaims(
+	ctx context.Context,
+	reader client.Reader,
+	namespace, clusterName string,
+) (bool, error) {
+	if clusterName == "" {
+		return false, nil
+	}
+
+	var pvcs corev1.PersistentVolumeClaimList
+	if err := reader.List(
+		ctx,
+		&pvcs,
+		client.InNamespace(namespace),
+		client.MatchingLabels{utils.ClusterLabelName: clusterName},
+	); err != nil {
+		return false, err
+	}
+
+	for idx := range pvcs.Items {
+		if pvcs.Items[idx].DeletionTimestamp == nil {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // TODO(user): change verbs to "verbs=create;update;delete" if you want to enable deletion validation.

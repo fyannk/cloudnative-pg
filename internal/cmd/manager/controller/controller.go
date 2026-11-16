@@ -318,7 +318,7 @@ func setupReconcilers(
 		pluginRepository,
 		conf.DrainTaints,
 		operatorClientCert,
-		webhookv1.NewClusterAdmissionGuard(),
+		webhookv1.NewClusterAdmissionGuard(mgr.GetAPIReader()),
 	).SetupWithManager(ctx, mgr, maxConcurrentReconciles); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Cluster")
 		return err

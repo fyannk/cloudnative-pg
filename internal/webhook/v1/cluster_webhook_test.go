@@ -31,13 +31,20 @@ import (
 	"github.com/cloudnative-pg/machinery/pkg/image/reference"
 	pgversion "github.com/cloudnative-pg/machinery/pkg/postgres/version"
 	volumesnapshotv1 "github.com/kubernetes-csi/external-snapshotter/client/v8/apis/volumesnapshot/v1"
+	admissionv1 "k8s.io/api/admission/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/utils/ptr"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
+	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
+	"github.com/cloudnative-pg/cloudnative-pg/internal/configuration"
+	"github.com/cloudnative-pg/cloudnative-pg/internal/scheme"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/utils"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/versions"
 
@@ -7552,5 +7559,238 @@ var _ = Describe("pg_basebackup tablespaceMapping validation", func() {
 		Expect(result).To(HaveLen(1))
 		Expect(result[0].Type).To(Equal(field.ErrorTypeDuplicate))
 		Expect(result[0].Field).To(Equal("spec.bootstrap.pg_basebackup.tablespaceMapping[1].sourceLocation"))
+	})
+})
+
+var _ = Describe("default storage class in the defaulting webhook", func() {
+	const defaultClass = "cnpg-ssd"
+
+	var d *ClusterCustomDefaulter
+
+	// withPVCs returns a defaulter whose reader lists the given PVCs
+	withPVCs := func(pvcs ...client.Object) *ClusterCustomDefaulter {
+		return &ClusterCustomDefaulter{
+			reader: fake.NewClientBuilder().WithScheme(scheme.BuildWithAllKnownScheme()).WithObjects(pvcs...).Build(),
+		}
+	}
+
+	// failingList returns a defaulter whose reader cannot list
+	failingList := func() *ClusterCustomDefaulter {
+		return &ClusterCustomDefaulter{
+			reader: fake.NewClientBuilder().WithScheme(scheme.BuildWithAllKnownScheme()).
+				WithInterceptorFuncs(interceptor.Funcs{
+					List: func(context.Context, client.WithWatch, client.ObjectList, ...client.ListOption) error {
+						return fmt.Errorf("list refused")
+					},
+				}).Build(),
+		}
+	}
+
+	newPVC := func(namespace, clusterName string) *corev1.PersistentVolumeClaim {
+		return &corev1.PersistentVolumeClaim{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      clusterName + "-1",
+				Namespace: namespace,
+				Labels:    map[string]string{utils.ClusterLabelName: clusterName},
+			},
+		}
+	}
+
+	BeforeEach(func() {
+		d = withPVCs()
+
+		current := configuration.Current
+		config := *current
+		config.DefaultStorageClass = defaultClass
+		configuration.Current = &config
+		DeferCleanup(func() { configuration.Current = current })
+	})
+
+	newCluster := func() *apiv1.Cluster {
+		return &apiv1.Cluster{
+			ObjectMeta: metav1.ObjectMeta{Name: "cluster-example", Namespace: "default"},
+			Spec: apiv1.ClusterSpec{
+				StorageConfiguration: apiv1.StorageConfiguration{Size: "1Gi"},
+				WalStorage:           &apiv1.StorageConfiguration{Size: "1Gi"},
+				Tablespaces: []apiv1.TablespaceConfiguration{
+					{Name: "first", Storage: apiv1.StorageConfiguration{Size: "1Gi"}},
+				},
+			},
+		}
+	}
+
+	withOperation := func(operation admissionv1.Operation) context.Context {
+		return admission.NewContextWithRequest(context.Background(), admission.Request{
+			AdmissionRequest: admissionv1.AdmissionRequest{Operation: operation, Namespace: "default"},
+		})
+	}
+
+	expectNoClass := func(cluster *apiv1.Cluster) {
+		GinkgoHelper()
+		Expect(cluster.Spec.StorageConfiguration.StorageClass).To(BeNil())
+		Expect(cluster.Spec.WalStorage.StorageClass).To(BeNil())
+		Expect(cluster.Spec.Tablespaces[0].Storage.StorageClass).To(BeNil())
+	}
+
+	expectDefaultClass := func(cluster *apiv1.Cluster) {
+		GinkgoHelper()
+		Expect(cluster.Spec.StorageConfiguration.StorageClass).To(HaveValue(Equal(defaultClass)))
+		Expect(cluster.Spec.WalStorage.StorageClass).To(HaveValue(Equal(defaultClass)))
+		Expect(cluster.Spec.Tablespaces[0].Storage.StorageClass).To(HaveValue(Equal(defaultClass)))
+	}
+
+	It("writes the class over the PVCs being deleted of a previous Cluster", func() {
+		terminating := newPVC("default", "cluster-example")
+		terminating.DeletionTimestamp = ptr.To(metav1.Now())
+		terminating.Finalizers = []string{"kubernetes.io/pvc-protection"}
+		d = withPVCs(terminating)
+
+		cluster := newCluster()
+		Expect(d.Default(withOperation(admissionv1.Create), cluster)).To(Succeed())
+		expectDefaultClass(cluster)
+	})
+
+	It("does not write the class while one PVC of the Cluster is not being deleted", func() {
+		terminating := newPVC("default", "cluster-example")
+		terminating.DeletionTimestamp = ptr.To(metav1.Now())
+		terminating.Finalizers = []string{"kubernetes.io/pvc-protection"}
+		kept := newPVC("default", "cluster-example")
+		kept.Name = "cluster-example-2"
+		d = withPVCs(terminating, kept)
+
+		cluster := newCluster()
+		Expect(d.Default(withOperation(admissionv1.Create), cluster)).To(Succeed())
+		expectNoClass(cluster)
+	})
+
+	It("writes the class when the Cluster is created", func() {
+		cluster := newCluster()
+		Expect(d.Default(withOperation(admissionv1.Create), cluster)).To(Succeed())
+		Expect(cluster.Spec.StorageConfiguration.StorageClass).To(HaveValue(Equal(defaultClass)))
+		Expect(cluster.Spec.WalStorage.StorageClass).To(HaveValue(Equal(defaultClass)))
+		Expect(cluster.Spec.Tablespaces[0].Storage.StorageClass).To(HaveValue(Equal(defaultClass)))
+		// the other defaults are applied as before
+		Expect(cluster.Spec.Bootstrap.InitDB.Database).To(Equal("app"))
+	})
+
+	It("keeps the class set by the Cluster being created", func() {
+		cluster := newCluster()
+		cluster.Spec.StorageConfiguration.StorageClass = ptr.To("data-class")
+		cluster.Spec.WalStorage.PersistentVolumeClaimTemplate = &corev1.PersistentVolumeClaimSpec{
+			StorageClassName: ptr.To(""),
+		}
+		Expect(d.Default(withOperation(admissionv1.Create), cluster)).To(Succeed())
+		Expect(cluster.Spec.StorageConfiguration.StorageClass).To(HaveValue(Equal("data-class")))
+		Expect(cluster.Spec.WalStorage.StorageClass).To(BeNil())
+		Expect(cluster.Spec.Tablespaces[0].Storage.StorageClass).To(HaveValue(Equal(defaultClass)))
+	})
+
+	It("does not touch the storage sections when the Cluster is updated", func() {
+		cluster := newCluster()
+		Expect(d.Default(withOperation(admissionv1.Update), cluster)).To(Succeed())
+		Expect(cluster.Spec.StorageConfiguration.StorageClass).To(BeNil())
+		Expect(cluster.Spec.WalStorage.StorageClass).To(BeNil())
+		Expect(cluster.Spec.Tablespaces[0].Storage.StorageClass).To(BeNil())
+		Expect(cluster.Spec.Bootstrap.InitDB.Database).To(Equal("app"))
+	})
+
+	It("writes the class without an admission request while the Cluster has created no instance", func() {
+		cluster := newCluster()
+		Expect(d.Default(context.Background(), cluster)).To(Succeed())
+		Expect(cluster.Spec.StorageConfiguration.StorageClass).To(HaveValue(Equal(defaultClass)))
+		Expect(cluster.Spec.WalStorage.StorageClass).To(HaveValue(Equal(defaultClass)))
+		Expect(cluster.Spec.Tablespaces[0].Storage.StorageClass).To(HaveValue(Equal(defaultClass)))
+	})
+
+	It("does not touch the storage sections without an admission request once an instance was created", func() {
+		cluster := newCluster()
+		cluster.Status.TargetPrimary = "cluster-example-1"
+		Expect(d.Default(context.Background(), cluster)).To(Succeed())
+		Expect(cluster.Spec.StorageConfiguration.StorageClass).To(BeNil())
+		Expect(cluster.Spec.WalStorage.StorageClass).To(BeNil())
+		Expect(cluster.Spec.Tablespaces[0].Storage.StorageClass).To(BeNil())
+	})
+
+	Context("on a Cluster re-created over its PVCs (a backup restore, a GitOps tool deleting and creating it)",
+		func() {
+			It("does not write the class on create", func() {
+				d = withPVCs(newPVC("default", "cluster-example"))
+				cluster := newCluster()
+				Expect(d.Default(withOperation(admissionv1.Create), cluster)).To(Succeed())
+				expectNoClass(cluster)
+				Expect(cluster.Spec.Bootstrap.InitDB.Database).To(Equal("app"))
+			})
+
+			It("looks for the PVCs in the namespace of the request", func() {
+				d = withPVCs(newPVC("default", "cluster-example"))
+				cluster := newCluster()
+				cluster.Namespace = ""
+				Expect(d.Default(withOperation(admissionv1.Create), cluster)).To(Succeed())
+				expectNoClass(cluster)
+			})
+
+			It("does not write the class without an admission request, the status being empty", func() {
+				d = withPVCs(newPVC("default", "cluster-example"))
+				cluster := newCluster()
+				Expect(d.Default(context.Background(), cluster)).To(Succeed())
+				expectNoClass(cluster)
+			})
+		})
+
+	It("writes the class when only the PVCs of another Cluster or namespace exist", func() {
+		d = withPVCs(newPVC("default", "another-cluster"), newPVC("another-namespace", "cluster-example"))
+		cluster := newCluster()
+		Expect(d.Default(withOperation(admissionv1.Create), cluster)).To(Succeed())
+		expectDefaultClass(cluster)
+	})
+
+	It("writes the class into a Cluster created with generateName", func() {
+		cluster := newCluster()
+		cluster.Name = ""
+		cluster.GenerateName = "cluster-"
+		Expect(d.Default(withOperation(admissionv1.Create), cluster)).To(Succeed())
+		expectDefaultClass(cluster)
+	})
+
+	It("lets the create go on without the class when the PVCs cannot be listed", func() {
+		d = failingList()
+		cluster := newCluster()
+		Expect(d.Default(withOperation(admissionv1.Create), cluster)).To(Succeed())
+		expectNoClass(cluster)
+		Expect(cluster.Spec.Bootstrap.InitDB.Database).To(Equal("app"))
+	})
+
+	It("fails without an admission request when the PVCs cannot be listed, so the reconciliation retries", func() {
+		d = failingList()
+		cluster := newCluster()
+		Expect(d.Default(context.Background(), cluster)).To(MatchError(ContainSubstring("list refused")))
+		expectNoClass(cluster)
+	})
+
+	It("does not list the PVCs once the Cluster has created an instance", func() {
+		d = failingList()
+		cluster := newCluster()
+		cluster.Status.TargetPrimary = "cluster-example-1"
+		Expect(d.Default(context.Background(), cluster)).To(Succeed())
+		expectNoClass(cluster)
+	})
+
+	It("never writes the class without a reader", func() {
+		d = &ClusterCustomDefaulter{}
+		cluster := newCluster()
+		Expect(d.Default(withOperation(admissionv1.Create), cluster)).To(Succeed())
+		expectNoClass(cluster)
+		cluster = newCluster()
+		Expect(d.Default(context.Background(), cluster)).To(Succeed())
+		expectNoClass(cluster)
+	})
+
+	It("does nothing when the operator configuration sets no class", func() {
+		configuration.Current.DefaultStorageClass = ""
+		cluster := newCluster()
+		Expect(d.Default(withOperation(admissionv1.Create), cluster)).To(Succeed())
+		Expect(cluster.Spec.StorageConfiguration.StorageClass).To(BeNil())
+		Expect(cluster.Spec.WalStorage.StorageClass).To(BeNil())
+		Expect(cluster.Spec.Tablespaces[0].Storage.StorageClass).To(BeNil())
 	})
 })

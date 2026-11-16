@@ -138,9 +138,13 @@ spec:
 ```
 
 Using the previous configuration, the generated PVCs are satisfied by the
-default storage class. If the target Kubernetes cluster has no default storage
-class, or even if you need your PVCs to be satisfied by a known storage class,
-you can set it into the custom resource:
+default storage class of the Kubernetes cluster, unless the operator
+configuration sets one with `DEFAULT_STORAGE_CLASS` (see
+[Operator configuration](operator_conf.md)): that class is then written into
+the `storageClass` field of every storage section of the `Cluster` that does
+not name one, when the `Cluster` is created. If the target Kubernetes cluster
+has no default storage class, or even if you need your PVCs to be satisfied by
+a known storage class, you can set it into the custom resource:
 
 ```yaml
 apiVersion: postgresql.cnpg.io/v1
@@ -153,6 +157,26 @@ spec:
     storageClass: standard
     size: 1Gi
 ```
+
+:::info
+    `DEFAULT_STORAGE_CLASS` applies to new `Cluster` resources only. It is not
+    written into a `Cluster` being created when PVCs labeled with its name
+    (`cnpg.io/cluster`) already exist in its namespace. That happens when a
+    `Cluster` object is created again over the volumes of a previous one with
+    the same name, for example when the Kubernetes resources are restored from
+    a backup, or when a GitOps tool deletes the `Cluster` and creates it again:
+    the object comes back without its status, and the operator reuses the
+    existing PVCs. Writing the class into such a `Cluster` would put its next
+    volumes on a different storage class than its existing ones. Its storage
+    sections are left as they are instead, so that new volumes are created as
+    the existing ones were: with the class named in the `Cluster`, or with the
+    default storage class of the Kubernetes cluster. Name the class in the
+    `Cluster` definition you restore or synchronize to make that explicit.
+    The PVCs being deleted do not count: after a `Cluster` is deleted, its
+    PVCs stay in the `Terminating` state until its Pods are gone, and a
+    `Cluster` created again with the same name in the meantime is a new one,
+    which gets the default class.
+:::
 
 ## Configuration via a PVC template
 

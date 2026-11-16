@@ -282,7 +282,9 @@ func runSubCommand( //nolint: gocyclo,gocognit
 		pluginRepository,
 		availablePluginNames,
 		leaseRunnable,
-		webhookv1.NewClusterAdmissionGuard(),
+		// The instance manager does not list PVCs, and leaves the default
+		// StorageClass to the operator
+		webhookv1.NewClusterAdmissionGuard(nil),
 	)
 	err = ctrl.NewControllerManagedBy(mgr).
 		For(&apiv1.Cluster{}).

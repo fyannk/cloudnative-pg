@@ -196,3 +196,15 @@ var _ = Describe("Webhook configuration names", func() {
 		Expect(config.GetValidatingWebhookConfigurationName()).To(Equal(DefaultValidatingWebhookConfigurationName))
 	})
 })
+
+var _ = Describe("Default storage class", func() {
+	It("is empty by default", func() {
+		Expect(newDefaultConfig().DefaultStorageClass).To(BeEmpty())
+	})
+
+	It("is read from DEFAULT_STORAGE_CLASS", func() {
+		config := newDefaultConfig()
+		config.ReadConfigMap(map[string]string{"DEFAULT_STORAGE_CLASS": "cnpg-ssd"})
+		Expect(config.DefaultStorageClass).To(Equal("cnpg-ssd"))
+	})
+})
