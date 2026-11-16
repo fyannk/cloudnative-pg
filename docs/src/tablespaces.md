@@ -371,4 +371,5 @@ Please note that above output is available in verbose mode only (`kubectl cnpg s
 ## Limitations
 
 Currently, you can't remove tablespaces from an existing CloudNativePG
-cluster.
+cluster: the `Cluster` CRD rejects the update. A cluster can declare at most
+64 tablespaces.

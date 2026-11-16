@@ -631,8 +631,8 @@ _Appears in:_
 | `imageCatalogRef` _[ImageCatalogRef](#imagecatalogref)_ | Defines the major PostgreSQL version we want to use within an ImageCatalog |  |  |  |
 | `imagePullPolicy` _[PullPolicy](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.34/#pullpolicy-v1-core)_ | Image pull policy.<br />One of `Always`, `Never` or `IfNotPresent`.<br />If not defined, it defaults to `IfNotPresent`.<br />Cannot be updated.<br />More info: https://kubernetes.io/docs/concepts/containers/images#updating-images |  |  |  |
 | `schedulerName` _string_ | If specified, the pod will be dispatched by specified Kubernetes<br />scheduler. If not specified, the pod will be dispatched by the default<br />scheduler. More info:<br />https://kubernetes.io/docs/concepts/scheduling-eviction/kube-scheduler/ |  |  |  |
-| `postgresUID` _integer_ | The UID of the `postgres` user inside the image, defaults to `26` |  | 26 |  |
-| `postgresGID` _integer_ | The GID of the `postgres` user inside the image, defaults to `26` |  | 26 |  |
+| `postgresUID` _integer_ | The UID of the `postgres` user inside the image, defaults to `26`.<br />It cannot be changed once the cluster is created. |  | 26 |  |
+| `postgresGID` _integer_ | The GID of the `postgres` user inside the image, defaults to `26`.<br />It cannot be changed once the cluster is created. |  | 26 |  |
 | `instances` _integer_ | Number of instances required in the cluster | True | 1 | Minimum: 1 <br /> |
 | `minSyncReplicas` _integer_ | Minimum number of instances required in synchronous replication with the<br />primary. Undefined or 0 allow writes to complete when no standby is<br />available. |  | 0 | Minimum: 0 <br /> |
 | `maxSyncReplicas` _integer_ | The target value for the synchronous replication quorum, that can be<br />decreased if the number of ready standbys is lower than this.<br />Undefined or 0 disable synchronous replication. |  | 0 | Minimum: 0 <br /> |
@@ -676,7 +676,7 @@ _Appears in:_
 | `seccompProfile` _[SeccompProfile](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.34/#seccompprofile-v1-core)_ | The SeccompProfile applied to every Pod and Container.<br />Defaults to: `RuntimeDefault` |  |  |  |
 | `podSecurityContext` _[PodSecurityContext](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.34/#podsecuritycontext-v1-core)_ | Override the PodSecurityContext applied to every Pod of the cluster.<br />When set, this overrides the operator's default PodSecurityContext for the cluster.<br />If omitted, the operator defaults are used.<br />This field doesn't have any effect if SecurityContextConstraints are present. |  |  |  |
 | `securityContext` _[SecurityContext](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.34/#securitycontext-v1-core)_ | Override the SecurityContext applied to every Container in the Pod of the cluster.<br />When set, this overrides the operator's default Container SecurityContext.<br />If omitted, the operator defaults are used. |  |  |  |
-| `tablespaces` _[TablespaceConfiguration](#tablespaceconfiguration) array_ | The tablespaces configuration |  |  |  |
+| `tablespaces` _[TablespaceConfiguration](#tablespaceconfiguration) array_ | The tablespaces configuration. A tablespace cannot be removed once created. |  |  | MaxItems: 64 <br /> |
 | `enablePDB` _boolean_ | Manage the `PodDisruptionBudget` resources within the cluster. When<br />configured as `true` (default setting), the pod disruption budgets<br />will safeguard the primary node from being terminated. Conversely,<br />setting it to `false` will result in the absence of any<br />`PodDisruptionBudget` resource, permitting the shutdown of all nodes<br />hosting the PostgreSQL cluster. This latter configuration is<br />advisable for any PostgreSQL cluster employed for<br />development/staging purposes. |  | true |  |
 | `plugins` _[PluginConfiguration](#pluginconfiguration) array_ | The plugins configuration, containing<br />any plugin to be loaded with the corresponding configuration |  |  |  |
 | `probes` _[ProbesConfiguration](#probesconfiguration)_ | The configuration of the probes to be injected<br />in the PostgreSQL Pods. |  |  |  |
@@ -3332,7 +3332,7 @@ _Appears in:_
 
 | Field | Description | Required | Default | Validation |
 | --- | --- | --- | --- | --- |
-| `name` _string_ | The name of the tablespace | True |  |  |
+| `name` _string_ | The name of the tablespace | True |  | MaxLength: 63 <br /> |
 | `storage` _[StorageConfiguration](#storageconfiguration)_ | The storage configuration for the tablespace | True |  |  |
 | `owner` _[DatabaseRoleRef](#databaseroleref)_ | Owner is the PostgreSQL user owning the tablespace |  |  |  |
 | `temporary` _boolean_ | When set to true, the tablespace will be added as a `temp_tablespaces`<br />entry in PostgreSQL, and will be available to automatically house temp<br />database objects, or other temporary files. Please refer to PostgreSQL<br />documentation for more information on the `temp_tablespaces` GUC. |  | false |  |
