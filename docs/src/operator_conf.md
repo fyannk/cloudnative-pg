@@ -56,7 +56,7 @@ Name | Description
 `NODE_STATUS_POD_KEY_PREFIX` | With `NODE_STATUS_SOURCE=pods`, the prefix of the keys read on the instance Pods: `<prefix>unschedulable`, `<prefix>taints` and `<prefix>eviction-requested`. Required with `pods`.
 `NODE_STATUS_LABEL_PREFIX` | With `NODE_STATUS_SOURCE=pods`, the prefix under which the node labels are copied onto the instance Pods: the node label `<key>` is read from the Pod label `<prefix><key>`. Empty by default: the node label keys themselves.
 `NODE_STATUS_EVICTION_MAX_AGE` | With `NODE_STATUS_SOURCE=pods`, the age in seconds after which an eviction request echoed onto an instance Pod is ignored: on the primary it no longer triggers a switchover, and the instance can again be chosen as the new primary. Default `600`; `0` means no limit.
-`NODE_STATUS_UNAVAILABLE_POLICY` | What the operator does when it reads no node state, that is when `NODE_STATUS_SOURCE` resolves to `none`: `keepPDB` (default) runs in degraded mode and keeps the `PodDisruptionBudgets`, so the primary blocks the drain of its node; `disablePrimaryPDB` runs in degraded mode without the primary `PodDisruptionBudget`, so a drain evicts the primary and a failover follows; `fail` refuses to start when `NODE_STATUS_SOURCE` is unset and the `Node` API is not accessible, as upstream does. Any other value refuses to start. See [Running without node state](#running-without-node-state).
+`NODE_STATUS_UNAVAILABLE_POLICY` | What the operator does when it reads no node state, that is when `NODE_STATUS_SOURCE` resolves to `none`: `keepPDB` (default) runs in degraded mode and keeps the `PodDisruptionBudgets`, so the primary blocks the drain of its node; `disablePrimaryPDB` runs in degraded mode without the primary `PodDisruptionBudget`, so a drain evicts the primary and a failover follows; `fail` refuses to start when `NODE_STATUS_SOURCE` is unset and the `Node` API is not accessible, as the operator did before this setting. Any other value refuses to start. See [Running without node state](#running-without-node-state).
 `DRAIN_TAINTS` | Specifies the taint keys that should be interpreted as indicators of node drain. By default, it includes the taints commonly applied by [kubectl](https://kubernetes.io/docs/concepts/scheduling-eviction/taint-and-toleration/), [Cluster Autoscaler](https://github.com/kubernetes/autoscaler), and [Karpenter](https://github.com/aws/karpenter-provider-aws): `node.kubernetes.io/unschedulable`, `ToBeDeletedByClusterAutoscaler`, `karpenter.sh/disrupted`, `karpenter.sh/disruption`.
 `ENABLE_INSTANCE_MANAGER_INPLACE_UPDATES` | When set to `true`, enables in-place updates of the instance manager after an update of the operator, avoiding rolling updates of the cluster (default `false`)
 `ENABLE_WEBHOOK_NAMESPACE_SUFFIX` | When set to `true`, the operator looks up its `MutatingWebhookConfiguration` and `ValidatingWebhookConfiguration` under names suffixed with `-<OPERATOR_NAMESPACE>` (e.g. `cnpg-mutating-webhook-configuration-cnpg-team-a` and `cnpg-validating-webhook-configuration-cnpg-team-a`). Use this when running multiple namespaced operator instances on the same cluster to avoid name collisions. The operator does not create the suffixed configurations; you must create them before starting the operator with this flag enabled. If `OPERATOR_NAMESPACE` is not set when this flag is enabled, the operator will refuse to start. Default is `false`.
@@ -280,8 +280,8 @@ out of the candidates for as long as it carries the annotation. When no
 replica is left to choose, no switchover happens. No new watch is needed, the instance Pods already wake their Cluster
 up on any change.
 
-[NodeEcho](https://github.com/fyannk/NodeEcho) is one such bridge. This rule
-pair echoes what the operator reads, and holds the eviction of a primary with
+For example, with a bridge configured by rules such as the following, this
+rule pair echoes what the operator reads, and holds the eviction of a primary with
 an HTTP 429, as a PodDisruptionBudget does, until the operator has switched it
 over, which covers the case where the Cluster disables its PodDisruptionBudget:
 
@@ -299,7 +299,7 @@ rules:
 ```
 
 with `NODE_STATUS_SOURCE=pods` and
-`NODE_STATUS_POD_KEY_PREFIX=nodeecho.fyannk.dev/` on the operator. Keep the
+`NODE_STATUS_POD_KEY_PREFIX=bridge.example.com/` on the operator. Keep the
 `deny` answer for primaries only: the operator moves the primary role away,
 nobody moves a replica, and a replica nobody can evict blocks the drain. A
 single-instance Cluster has no replica to switch over to: its eviction is held
@@ -349,7 +349,7 @@ and the primary `PodDisruptionBudget` is created again.
 `keepPDB` and `disablePrimaryPDB` apply whenever no node state is read, an
 explicit `NODE_STATUS_SOURCE=none` included. `fail` only applies when
 `NODE_STATUS_SOURCE` is left unset and the `Node` API is not accessible at
-startup, which is when upstream CloudNativePG refuses to start: an explicit
+startup, which is when the operator refused to start before this setting: an explicit
 `NODE_STATUS_SOURCE=none` is the choice of the administrator, and the
 operator then starts whatever the policy.
 
