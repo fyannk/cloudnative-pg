@@ -335,8 +335,8 @@ $ kubectl delete pvc/cluster-example-3 pod/cluster-example-3
 :::
 
 :::warning
-    In upstream releases, `resizeInUseVolumes: false` in `.spec.storage` also
-    prevents the resize of the WAL and tablespace volumes. Here each section
+    In earlier releases, `resizeInUseVolumes: false` in `.spec.storage` also
+    prevents the resize of the WAL and tablespace volumes. Now each section
     has its own flag, defaulting to `true`, so after the operator upgrade the
     existing WAL and tablespace PVCs whose requested size in the `Cluster` is
     larger than their current one are resized. When their
