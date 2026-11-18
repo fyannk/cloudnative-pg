@@ -34,7 +34,7 @@ jobs:
         run: |
           tag="${GITHUB_REF#refs/tags/v}"
           # A fork release is the upstream version it is based on, followed
-          # by its own sequence number: 1.30.1-1, 1.30.1-2, ...
+          # by its own sequence number: 1.30.2-1, 1.30.2-2, ...
           if [[ ! "$tag" =~ ^[0-9]+\.[0-9]+\.[0-9]+-[0-9]+$ ]]; then
             echo "::error::v${tag} is not a fork release tag (vX.Y.Z-N)"
             exit 1
@@ -157,7 +157,7 @@ jobs:
           author_email=$(git show -s --format='%ae' "${commit_sha}" | head -n1)
 
           # The version is the tag: git describe would read the fork
-          # sequence number of 1.30.1-1 as a count of commits (1.30.1-dev1)
+          # sequence number of 1.30.2-1 as a count of commits (1.30.2-dev1)
           commit_version="${tag}"
           commit_short=$(git rev-parse --short "${commit_sha}")
 

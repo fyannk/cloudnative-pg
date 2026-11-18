@@ -5,22 +5,22 @@
 <h1 align="center">cloudnative-pg, fyannk build</h1>
 
 <p align="center">
-  <strong>An unofficial build of the CloudNativePG 1.30.1 operator, with fixes and features proposed upstream.</strong><br>
-  It accepts the same manifests and replaces a stock 1.30.1 operator in place; every difference is documented.
+  <strong>An unofficial build of the CloudNativePG 1.30.2 operator, with fixes and features proposed upstream.</strong><br>
+  It accepts the same manifests and replaces a stock 1.30.2 operator in place; every difference is documented.
 </p>
 
 <p align="center">
-  <a href="https://github.com/fyannk/cloudnative-pg/actions/workflows/continuous-integration.yml?query=branch%3Av1.30.1-fyannk"><img src="https://github.com/fyannk/cloudnative-pg/actions/workflows/continuous-integration.yml/badge.svg?branch=v1.30.1-fyannk" alt="CI status"></a>
+  <a href="https://github.com/fyannk/cloudnative-pg/actions/workflows/continuous-integration.yml?query=branch%3Av1.30.2-fyannk"><img src="https://github.com/fyannk/cloudnative-pg/actions/workflows/continuous-integration.yml/badge.svg?branch=v1.30.2-fyannk" alt="CI status"></a>
   <a href="https://github.com/fyannk/cloudnative-pg/releases"><img src="https://img.shields.io/github/v/release/fyannk/cloudnative-pg?style=flat-square&color=090c0a&labelColor=1b231d&label=release" alt="Latest release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-090c0a?style=flat-square&labelColor=1b231d" alt="Apache-2.0 license"></a>
-  <img src="https://img.shields.io/badge/based%20on-CloudNativePG%201.30.1-090c0a?style=flat-square&logo=postgresql&logoColor=b3bf3a&labelColor=1b231d" alt="Based on CloudNativePG 1.30.1">
+  <img src="https://img.shields.io/badge/based%20on-CloudNativePG%201.30.2-090c0a?style=flat-square&logo=postgresql&logoColor=b3bf3a&labelColor=1b231d" alt="Based on CloudNativePG 1.30.2">
   <img src="https://img.shields.io/badge/Go-1.26-090c0a?style=flat-square&logo=go&logoColor=b3bf3a&labelColor=1b231d" alt="Go 1.26">
 </p>
 
 This repository is a personal fork of
 [CloudNativePG](https://github.com/cloudnative-pg/cloudnative-pg), the
-Kubernetes operator for PostgreSQL. The `v1.30.1-fyannk` branch is the stock
-`v1.30.1` release plus the changes listed below. Each change is also proposed
+Kubernetes operator for PostgreSQL. The `v1.30.2-fyannk` branch is the stock
+`v1.30.2` release plus the changes listed below. Each change is also proposed
 upstream as its own pull request; this build lets them run in production
 before they are merged, or instead of it.
 
@@ -32,7 +32,7 @@ before they are merged, or instead of it.
 > operator, go to
 > [cloudnative-pg/cloudnative-pg](https://github.com/cloudnative-pg/cloudnative-pg).
 
-## What differs from stock 1.30.1
+## What differs from stock 1.30.2
 
 Nothing below needs a new permission, and the object names are unchanged.
 
@@ -76,23 +76,23 @@ Prerequisites: a Kubernetes cluster supported by CloudNativePG 1.30, and
 
 ```sh
 kubectl apply --server-side -f \
-  https://github.com/fyannk/cloudnative-pg/releases/download/v1.30.1-6/cnpg-1.30.1-6.yaml
+  https://github.com/fyannk/cloudnative-pg/releases/download/v1.30.2-1/cnpg-1.30.2-1.yaml
 ```
 
 The operator runs in the `cnpg-system` namespace, from the image
-`ghcr.io/fyannk/cloudnative-pg:1.30.1-6`. Clusters are then created as with
+`ghcr.io/fyannk/cloudnative-pg:1.30.2-1`. Clusters are then created as with
 stock CloudNativePG: see its
 [quickstart](https://cloudnative-pg.io/docs/1.30/quickstart).
 
-To replace a stock 1.30.1 operator, or to go back to it, read
-[Replacing an upstream 1.30.1 operator](docs/src/fork_differences.md#replacing-an-upstream-1301-operator)
+To replace a stock 1.30.2 operator, or to go back to it, read
+[Replacing an upstream 1.30.2 operator](docs/src/fork_differences.md#replacing-an-upstream-1302-operator)
 first: apply the full manifest, not only the image.
 
 ## Versions
 
 Releases are named after the stock version they are based on, followed by a
-sequence number: `1.30.1-1`, `1.30.1-2`, and so on. In semantic versioning
-this suffix sorts below the stock `1.30.1`, so keep this build out of the
+sequence number: `1.30.2-1`, `1.30.2-2`, and so on. In semantic versioning
+this suffix sorts below the stock `1.30.2`, so keep this build out of the
 channels and update rules of the official one: see
 [Unofficial fork builds](docs/src/installation_upgrade.md#unofficial-fork-builds).
 

@@ -8,9 +8,9 @@ title: Differences from CloudNativePG
 <!-- SPDX-License-Identifier: CC-BY-4.0 -->
 
 This build is an [unofficial fork](installation_upgrade.md#unofficial-fork-builds)
-of CloudNativePG 1.30.1. It accepts the same manifests, uses the same object
+of CloudNativePG 1.30.2. It accepts the same manifests, uses the same object
 names and needs no permission the upstream operator lacks, so it can replace
-an upstream 1.30.1 operator in place. This page lists what behaves differently
+an upstream 1.30.2 operator in place. This page lists what behaves differently
 from upstream, starting with what changes without any new setting.
 
 ## What changes without opting in
@@ -81,7 +81,7 @@ These features change nothing until they are configured:
 | Standard five-field cron schedules | `SCHEDULED_BACKUP_CRON_FORMAT`: see [Cron schedule](backup.md#cron-schedule) |
 | External webhook certificate, named webhook configurations, several operators in one namespace | `WEBHOOK_CERT_DIR`, `OPERATOR_DEPLOYMENT_NAME` and the related settings: see [Webhook certificates and configurations](operator_conf.md#webhook-certificates-and-configurations) |
 
-## Replacing an upstream 1.30.1 operator
+## Replacing an upstream 1.30.2 operator
 
 1. Check whether the upstream operator Deployment has proxy variables. If it
    does, either accept one restart of every instance and pooler, or set
