@@ -32,7 +32,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
-	"github.com/cloudnative-pg/cloudnative-pg/pkg/utils"
 )
 
 // primaryLeasePredicate enqueues the parent Cluster only when the owned Lease
@@ -83,16 +82,10 @@ func (r *ClusterReconciler) reconcilePrimaryLease(ctx context.Context, cluster *
 	// to it; if it is controlled by anything else we refuse to take over.
 	switch classifyLeaseAdoption(existing, cluster) {
 	case adoptAlreadyOurs:
-		if isReconcileLabelled(existing) {
-			return nil
-		}
-		// A patch of the label only: the primary renews this Lease, and a
-		// full update would conflict with its renewal
-		origLease := existing.DeepCopy()
-		utils.LabelReconciled(&existing.ObjectMeta)
-		if err := r.Patch(ctx, existing, client.MergeFrom(origLease)); err != nil {
-			return err
-		}
+		// Never written to, not even to add the reconcile label to a Lease
+		// created without it: the primary renews it, and a failure here
+		// would end the reconciliation before the failover
+		return nil
 	case adoptRefuseForeign:
 		owner := metav1.GetControllerOf(existing)
 		err := fmt.Errorf("primary lease %s/%s is controlled by %s %q, refusing to adopt",

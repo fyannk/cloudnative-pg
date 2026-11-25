@@ -114,7 +114,7 @@ var _ = Describe("the cache label on the objects the operator creates", func() {
 
 	// Objects created by an operator version without the label must get it on
 	// the next reconciliation, including the kinds the reconcilers rewrite only
-	// when their content changes: Role, RoleBinding, primary Lease, PKI Secrets,
+	// when their content changes: Role, RoleBinding, PKI Secrets,
 	// Pooler Deployment and RBAC. That is what makes a later switch to a
 	// filtered cache safe: the cache would not see an unlabelled object.
 	It("is added to the objects created before the label existed", func(ctx SpecContext) {
@@ -129,6 +129,7 @@ var _ = Describe("the cache label on the objects the operator creates", func() {
 		Expect(env.poolerReconciler.updateOwnedObjects(ctx, pooler, &poolerManagedResources{Cluster: cluster})).
 			To(Succeed())
 
+		// Not the primary Lease, which is never written to once owned
 		lists := []client.ObjectList{
 			&corev1.SecretList{},
 			&corev1.ServiceList{},
@@ -136,7 +137,6 @@ var _ = Describe("the cache label on the objects the operator creates", func() {
 			&rbacv1.RoleList{},
 			&rbacv1.RoleBindingList{},
 			&policyv1.PodDisruptionBudgetList{},
-			&coordinationv1.LeaseList{},
 			&appsv1.DeploymentList{},
 		}
 		stripReconcileLabel(ctx, env.client, namespace, lists...)

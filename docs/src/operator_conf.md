@@ -205,17 +205,30 @@ unlabeled objects from the operator.
     invisible, it can start a failover.
 :::
 
-Before switching, check that no Pod, PVC or Job of a Cluster, and no Pooler
-Deployment or Pod, lacks the label, in every namespace the operator watches:
+The primary `Lease` of a Cluster created by a version that did not set the
+label, such as an upstream release, is never labeled by the operator, which
+does not write to the `Lease` renewed by the primary: label it by hand.
+Without the label, a filtered mode still reads the `Lease` from the API
+server, but its deletion is only noticed at the next reconciliation of the
+Cluster.
+
+Before switching, check that no Pod, PVC or Job of a Cluster, no Pooler
+Deployment or Pod, and no primary `Lease` lacks the label, in every namespace
+the operator watches:
 
 ```sh
 kubectl get pods,pvc,jobs --all-namespaces \
   -l 'cnpg.io/cluster,cnpg.io/reconcile!=true'
 kubectl get deployments,pods --all-namespaces \
   -l 'cnpg.io/poolerName,cnpg.io/reconcile!=true'
+kubectl get leases --all-namespaces -l 'cnpg.io/reconcile!=true' \
+  -o custom-columns='NAMESPACE:.metadata.namespace,NAME:.metadata.name,OWNER:.metadata.ownerReferences[*].kind' \
+  --no-headers | awk '$3 == "Cluster"'
 ```
 
-Both commands must return no resources. The selector `cnpg.io/reconcile!=true`
+The three commands must return no resources; a `Lease` in the output of the
+last one gets the label with
+`kubectl label lease <cluster-name> -n <namespace> cnpg.io/reconcile=true`. The selector `cnpg.io/reconcile!=true`
 also matches the objects without the label at all. Pods and PVCs get the label
 from the reconciliation of their Cluster, but the Jobs created by a version
 that did not set it never do: once such a Job has completed and its instance
