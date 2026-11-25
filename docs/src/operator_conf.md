@@ -210,7 +210,8 @@ label, such as an upstream release, is never labeled by the operator, which
 does not write to the `Lease` renewed by the primary: label it by hand.
 Without the label, a filtered mode still reads the `Lease` from the API
 server, but its deletion is only noticed at the next reconciliation of the
-Cluster.
+Cluster. A `Pooler` with the `cnpg.io/reconcilePodSpec: disabled` annotation
+keeps its pod template, without the label, until the annotation is removed.
 
 Before switching, check that no Pod, PVC or Job of a Cluster, no Pooler
 Deployment or Pod, and no primary `Lease` lacks the label, in every namespace

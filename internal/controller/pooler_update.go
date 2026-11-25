@@ -111,8 +111,11 @@ func (r *PoolerReconciler) updateDeployment(
 	case resources.Deployment != nil:
 		currentVersion := resources.Deployment.Annotations[utils.PoolerSpecHashAnnotationName]
 		updatedVersion := generatedDeployment.Annotations[utils.PoolerSpecHashAnnotationName]
+		// With `cnpg.io/reconcilePodSpec: disabled` the pod template is left
+		// alone, label included: changing it would roll the pooler out
+		podSpecDisabled := utils.IsPodSpecReconciliationDisabled(&pooler.ObjectMeta)
 		labelled := isReconcileLabelled(resources.Deployment) &&
-			hasReconcileLabel(resources.Deployment.Spec.Template.Labels)
+			(podSpecDisabled || hasReconcileLabel(resources.Deployment.Spec.Template.Labels))
 		if currentVersion == updatedVersion && labelled {
 			// Everything fine, the two deployments are using the
 			// same specifications
@@ -124,12 +127,12 @@ func (r *PoolerReconciler) updateDeployment(
 
 		// If the Pooler is annotated with `cnpg.io/reconcilePodSpec: disabled`,
 		// we avoid patching the deployment spec, except the number replicas
-		if !utils.IsPodSpecReconciliationDisabled(&pooler.ObjectMeta) {
+		if !podSpecDisabled {
 			deployment.Spec = generatedDeployment.Spec
+			utils.LabelReconciled(&deployment.Spec.Template.ObjectMeta)
 		}
 
 		utils.MergeObjectsMetadata(deployment, generatedDeployment)
-		utils.LabelReconciled(&deployment.Spec.Template.ObjectMeta)
 
 		contextLog.Info("Updating deployment")
 		err = r.Patch(ctx, deployment, client.MergeFrom(resources.Deployment))

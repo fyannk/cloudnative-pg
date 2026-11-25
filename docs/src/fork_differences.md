@@ -19,7 +19,7 @@ from upstream, starting with what changes without any new setting.
 
 | Change | Effect when the operator is replaced | Details |
 |---|---|---|
-| Every object the operator manages carries the `cnpg.io/reconcile=true` label | Existing objects are patched in place, with no restart, except the primary `Lease`, which is left as it is. Each `Pooler` rolls out once, as it does on any operator upgrade | [Operator cache](operator_conf.md#operator-cache) |
+| Every object the operator manages carries the `cnpg.io/reconcile=true` label | Existing objects are patched in place, with no restart, except the primary `Lease`, which is left as it is. Each `Pooler` rolls out once, as it does on any operator upgrade, unless it carries `cnpg.io/reconcilePodSpec: disabled` | [Operator cache](operator_conf.md#operator-cache) |
 | Every `Cluster` reports the operator version in `status.operator.version` | One status write per `Cluster`. `OPERATOR_STATUS_IDENTITY=off` disables it | [Several operators in one namespace](operator_conf.md#several-operators-in-one-namespace) |
 | The proxy settings of the operator (`HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`) are set on the instances and the poolers | **When the operator Deployment has such variables, every instance and every pooler restarts once.** Nothing changes otherwise. `PROPAGATE_PROXY_ENV=false` disables it | [Proxy settings](operator_conf.md#proxy-settings) |
 | The WAL and tablespace volumes are resized according to their own storage section, not to the `resizeInUseVolumes` of `.spec.storage` | A WAL or tablespace PVC whose size in the `Cluster` is above its current request is expanded at the first reconciliation, which cannot be undone | [Storage](storage.md#using-the-volume-expansion-kubernetes-feature) |

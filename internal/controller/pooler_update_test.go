@@ -472,6 +472,55 @@ var _ = Describe("unit test of pooler_update reconciliation logic", func() {
 	})
 })
 
+var _ = Describe("a Pooler Deployment created without the reconcile label", func() {
+	// What the replacement of an operator that does not set the label finds
+	unlabelled := func(ctx context.Context, env *testingEnvironment) (*apiv1.Pooler, *poolerManagedResources) {
+		cluster := newFakeCNPGCluster(env.client, newFakeNamespace(env.client))
+		pooler := newFakePooler(env.client, cluster)
+		res := &poolerManagedResources{Cluster: cluster}
+		Expect(env.poolerReconciler.updateDeployment(ctx, pooler, res)).To(Succeed())
+		orig := res.Deployment.DeepCopy()
+		delete(res.Deployment.Labels, utils.ReconcileLabelName)
+		delete(res.Deployment.Spec.Template.Labels, utils.ReconcileLabelName)
+		Expect(env.client.Patch(ctx, res.Deployment, k8client.MergeFrom(orig))).To(Succeed())
+		return pooler, res
+	}
+
+	It("keeps its pod template when the pod spec reconciliation is disabled", func(ctx SpecContext) {
+		env := buildTestEnvironment()
+		pooler, res := unlabelled(ctx, env)
+		pooler.Annotations[utils.ReconcilePodSpecAnnotationName] = "disabled"
+		before := getPoolerDeployment(ctx, env.client, pooler)
+
+		Expect(env.poolerReconciler.updateDeployment(ctx, pooler, res)).To(Succeed())
+
+		after := getPoolerDeployment(ctx, env.client, pooler)
+		Expect(after.Labels).To(HaveKeyWithValue(utils.ReconcileLabelName, "true"))
+		Expect(after.Spec.Template).To(Equal(before.Spec.Template))
+
+		By("not writing it again at the next reconciliation")
+		Expect(env.poolerReconciler.updateDeployment(ctx, pooler, res)).To(Succeed())
+		Expect(getPoolerDeployment(ctx, env.client, pooler).ResourceVersion).To(Equal(after.ResourceVersion))
+
+		By("labelling the template once the reconciliation is enabled again")
+		delete(pooler.Annotations, utils.ReconcilePodSpecAnnotationName)
+		Expect(env.poolerReconciler.updateDeployment(ctx, pooler, res)).To(Succeed())
+		Expect(getPoolerDeployment(ctx, env.client, pooler).Spec.Template.Labels).
+			To(HaveKeyWithValue(utils.ReconcileLabelName, "true"))
+	})
+
+	It("gets the label on its pod template otherwise", func(ctx SpecContext) {
+		env := buildTestEnvironment()
+		pooler, res := unlabelled(ctx, env)
+
+		Expect(env.poolerReconciler.updateDeployment(ctx, pooler, res)).To(Succeed())
+
+		after := getPoolerDeployment(ctx, env.client, pooler)
+		Expect(after.Labels).To(HaveKeyWithValue(utils.ReconcileLabelName, "true"))
+		Expect(after.Spec.Template.Labels).To(HaveKeyWithValue(utils.ReconcileLabelName, "true"))
+	})
+})
+
 var _ = Describe("ensureServiceAccountPullSecret", func() {
 	var (
 		r                *PoolerReconciler
