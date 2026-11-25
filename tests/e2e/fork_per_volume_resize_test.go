@@ -34,10 +34,10 @@ import (
 	. "github.com/onsi/gomega"
 )
 
-// The WAL volume is resized according to the `resizeInUseVolumes` of its own
-// storage section, not to the one of `.spec.storage`, see "On the objects of
-// existing clusters" in docs/src/fork_differences.md and "Re-creating
-// storage" in docs/src/storage.md.
+// A WAL volume follows the `resizeInUseVolumes` of its own storage section,
+// and is never resized when the one of `.spec.storage` forbids it, see "On the
+// objects of existing clusters" in docs/src/fork_differences.md and
+// "Re-creating storage" in docs/src/storage.md.
 var _ = Describe("Per-volume resize", Label(tests.LabelFork, tests.LabelStorage), func() {
 	const (
 		clusterFile     = forkFixturesDir + "/cluster-per-volume-resize.yaml.template"
@@ -52,7 +52,7 @@ var _ = Describe("Per-volume resize", Label(tests.LabelFork, tests.LabelStorage)
 		skipUnlessCSIStorageClassExpands()
 	})
 
-	It("expands the WAL volume while PGDATA, with resizeInUseVolumes disabled, keeps its size", func() {
+	It("resizes no volume while spec.storage forbids it, then only those whose own section allows it", func() {
 		namespace, err := env.CreateUniqueTestNamespace(env.Ctx, env.Client, namespacePrefix)
 		Expect(err).ToNot(HaveOccurred())
 		clusterName, err := yaml.GetResourceNameFromYAML(env.Scheme, clusterFile)
@@ -74,16 +74,33 @@ var _ = Describe("Per-volume resize", Label(tests.LabelFork, tests.LabelStorage)
 			}, 60, 5).Should(Succeed())
 		})
 
-		By("expanding the WAL volume", func() {
-			Eventually(func() (string, error) {
-				return pvcStorageRequest(namespace, walPVC)
-			}, 120).Should(Equal("2Gi"))
+		expectSize := func(pvcName, size string) {
+			Consistently(func() (string, error) {
+				return pvcStorageRequest(namespace, pvcName)
+			}, 30*time.Second, 2*time.Second).Should(Equal(size))
+		}
+
+		By("leaving both volumes at their size, as spec.storage forbids the resize", func() {
+			expectSize(dataPVC, "1Gi")
+			expectSize(walPVC, "1Gi")
 		})
 
-		By("leaving the PGDATA volume at its size", func() {
-			Consistently(func() (string, error) {
+		By("allowing the resize in spec.storage, and forbidding it in walStorage", func() {
+			Eventually(func() error {
+				_, _, err := run.Unchecked(fmt.Sprintf(
+					`kubectl patch cluster %v -n %v --type=merge `+
+						`-p '{"spec":{"storage":{"resizeInUseVolumes":true},`+
+						`"walStorage":{"resizeInUseVolumes":false}}}'`,
+					clusterName, namespace))
+				return err
+			}, 60, 5).Should(Succeed())
+		})
+
+		By("expanding the PGDATA volume only", func() {
+			Eventually(func() (string, error) {
 				return pvcStorageRequest(namespace, dataPVC)
-			}, 30*time.Second, 2*time.Second).Should(Equal("1Gi"))
+			}, 120).Should(Equal("2Gi"))
+			expectSize(walPVC, "1Gi")
 		})
 
 		By("keeping the Cluster healthy, without a refused expansion", func() {

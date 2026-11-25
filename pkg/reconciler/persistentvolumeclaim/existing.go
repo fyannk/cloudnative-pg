@@ -88,7 +88,7 @@ func reconcileExistingPVCs(
 			storageConfiguration.Size = size.String()
 		}
 
-		for _, reconciler := range getReconciliationUnits(&storageConfiguration) {
+		for _, reconciler := range getReconciliationUnits(cluster, &storageConfiguration) {
 			err := reconciler(ctx, c, &storageConfiguration, pvc)
 			var refusal *volumeExpansionRefusal
 			if errors.As(err, &refusal) {
@@ -105,12 +105,18 @@ func reconcileExistingPVCs(
 }
 
 // getReconciliationUnits returns the reconciliation units enabled by the
-// storage configuration of a PVC role: each PVC follows the configuration of
-// its own role, not the one of the PGDATA volume
-func getReconciliationUnits(storageConfiguration *apiv1.StorageConfiguration) []reconciliationUnit {
+// storage configuration of a PVC role. A PVC is resized when the section of
+// its own role allows it, and the one of PGDATA, `.spec.storage`, too: disabling
+// the resize there freezes every volume. A section with autoGrow asks for
+// the resize of its volumes, and only its own flag counts.
+func getReconciliationUnits(
+	cluster *apiv1.Cluster,
+	storageConfiguration *apiv1.StorageConfiguration,
+) []reconciliationUnit {
 	var reconciliationUnits []reconciliationUnit
 
-	if storageConfiguration.ShouldResizeInUseVolumes() {
+	if storageConfiguration.ShouldResizeInUseVolumes() &&
+		(storageConfiguration.AutoGrow != nil || cluster.ShouldResizeInUseVolumes()) {
 		reconciliationUnits = append(reconciliationUnits, reconcilePVCQuantity)
 	}
 	if storageConfiguration.PersistentVolumeClaimTemplate != nil {

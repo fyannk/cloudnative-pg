@@ -42,8 +42,8 @@ Nothing below needs a new permission, and the object names are unchanged.
   `Cluster` reports the operator that reconciled it in `status.operator`.
 - The proxy settings of the operator reach the instances and the poolers
   (`PROPAGATE_PROXY_ENV=false` disables it).
-- The WAL and tablespace volumes are resized according to their own storage
-  section.
+- `resizeInUseVolumes: false` in the section of the WAL or of a tablespace
+  prevents the resize of its volumes.
 - Stalls are visible: a refused volume expansion, a resize waiting for a Pod
   restart, a blocked `Pooler`, a failed major upgrade or a failed
   reconciliation each get a condition, a phase or a Warning event.

@@ -755,11 +755,21 @@ var _ = Describe("Reconcile existing PVCs with the storage configuration of thei
 		Expect(size(pvcs[utils.PVCRolePgWal])).To(Equal("2Gi"))
 		Expect(size(pvcs[utils.PVCRolePgTablespace])).To(Equal("2Gi"))
 
-		By("disabling the resize on spec.storage only: the WAL and tablespace volumes are still resized")
-		pvcs = reconcile(spec(storage(ptr.To(false)), storage(nil), storage(nil)))
+		By("disabling the resize on spec.storage only: no volume is resized, whatever the other sections say")
+		for _, flag := range []*bool{nil, ptr.To(true)} {
+			pvcs = reconcile(spec(storage(ptr.To(false)), storage(flag), storage(flag)))
+			Expect(size(pvcs[utils.PVCRolePgData])).To(Equal("1Gi"))
+			Expect(size(pvcs[utils.PVCRolePgWal])).To(Equal("1Gi"))
+			Expect(size(pvcs[utils.PVCRolePgTablespace])).To(Equal("1Gi"))
+		}
+
+		By("disabling the resize on spec.storage, with autoGrow on walStorage: only the WAL volume is resized")
+		growing := storage(nil)
+		growing.AutoGrow = &apiv1.AutoGrowConfiguration{MaxSize: "5Gi"}
+		pvcs = reconcile(spec(storage(ptr.To(false)), growing, storage(nil)))
 		Expect(size(pvcs[utils.PVCRolePgData])).To(Equal("1Gi"))
 		Expect(size(pvcs[utils.PVCRolePgWal])).To(Equal("2Gi"))
-		Expect(size(pvcs[utils.PVCRolePgTablespace])).To(Equal("2Gi"))
+		Expect(size(pvcs[utils.PVCRolePgTablespace])).To(Equal("1Gi"))
 
 		By("disabling the resize on walStorage only, as the documentation says to re-create the WAL volume")
 		pvcs = reconcile(spec(storage(nil), storage(ptr.To(false)), storage(nil)))
