@@ -600,8 +600,8 @@ func probeOptionalAPIs(ctx context.Context, c client.Reader, conf *configuration
 }
 
 // logProxyPropagation tells which proxy settings of the operator reach the
-// workloads, without the credentials of the proxy URLs, and warns about the
-// settings that are not valid URLs.
+// workloads, by name only as their values may hold credentials, and warns
+// about the settings that are not valid URLs.
 func logProxyPropagation() {
 	settings := specs.OperatorProxySettings()
 	if len(settings) == 0 {
@@ -613,9 +613,9 @@ func logProxyPropagation() {
 	for _, setting := range settings {
 		if err := setting.Validate(); err != nil {
 			setupLog.Warning("A proxy setting propagated to the workloads is not a valid URL",
-				"name", setting.Name, "error", err.Error())
+				"name", setting.Name)
 		}
-		summary = append(summary, setting.Name+"="+setting.Redacted())
+		summary = append(summary, setting.Name)
 	}
 	setupLog.Info("Propagating the proxy settings of the operator to the workloads", "settings", summary)
 }

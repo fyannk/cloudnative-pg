@@ -326,8 +326,8 @@ Keep in mind:
     template with a `valueFrom.secretKeyRef`, or for the whole installation
     by setting `PROPAGATE_PROXY_ENV` to `false`.
 :::
-- At startup, the operator logs the settings it propagates, without the
-  credentials of the URLs, and warns when a value is not a valid URL.
+- At startup, the operator logs the names of the settings it propagates, not
+  their values, and warns when a value is not a valid URL.
 
 ## Webhook certificates and configurations
 

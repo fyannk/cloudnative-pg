@@ -132,24 +132,6 @@ func (setting ProxySetting) Validate() error {
 	return err
 }
 
-// Redacted returns the setting as it can be logged: the credentials of a
-// proxy URL are replaced, and a value that is not a valid URL is hidden
-func (setting ProxySetting) Redacted() string {
-	if !setting.IsURL() {
-		return setting.Value
-	}
-
-	proxyURL, err := parseProxyURL(setting.Value)
-	if err != nil {
-		return "(not a valid URL)"
-	}
-	if proxyURL.User != nil {
-		proxyURL.User = url.User("REDACTED")
-	}
-
-	return proxyURL.String()
-}
-
 // parseProxyURL parses a proxy URL the way Go's http.ProxyFromEnvironment
 // does: a value without a scheme is read as an http URL
 func parseProxyURL(value string) (*url.URL, error) {

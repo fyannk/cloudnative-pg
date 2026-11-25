@@ -131,27 +131,26 @@ var _ = Describe("Proxy settings of the operator", func() {
 			nil),
 	)
 
-	// Goal: the startup log shows which proxy is used without leaking credentials
-	DescribeTable("are logged without credentials",
-		func(setting ProxySetting, expected string, valid bool) {
-			Expect(setting.Redacted()).To(Equal(expected))
+	// Goal: a setting that is not a URL Go accepts is warned about
+	DescribeTable("are validated as Go reads them",
+		func(setting ProxySetting, valid bool) {
 			if valid {
 				Expect(setting.Validate()).To(Succeed())
 			} else {
 				Expect(setting.Validate()).ToNot(Succeed())
 			}
 		},
-		Entry("a plain URL", ProxySetting{Name: "HTTP_PROXY", Value: "http://proxy:3128"}, "http://proxy:3128", true),
+		Entry("a plain URL", ProxySetting{Name: "HTTP_PROXY", Value: "http://proxy:3128"}, true),
 		Entry("a URL with credentials",
-			ProxySetting{Name: "HTTPS_PROXY", Value: "http://login:secret@proxy:3128/"}, "http://REDACTED@proxy:3128/", true),
+			ProxySetting{Name: "HTTPS_PROXY", Value: "http://login:secret@proxy:3128/"}, true),
 		Entry("a URL with a user only",
-			ProxySetting{Name: "HTTPS_PROXY", Value: "socks5://login@proxy:1080"}, "socks5://REDACTED@proxy:1080", true),
+			ProxySetting{Name: "HTTPS_PROXY", Value: "socks5://login@proxy:1080"}, true),
 		Entry("a host and port without scheme, read as http like Go does",
-			ProxySetting{Name: "HTTP_PROXY", Value: "proxy:3128"}, "http://proxy:3128", true),
+			ProxySetting{Name: "HTTP_PROXY", Value: "proxy:3128"}, true),
 		Entry("a value that is not a URL",
-			ProxySetting{Name: "HTTP_PROXY", Value: "http://login:se%cret@proxy"}, "(not a valid URL)", false),
+			ProxySetting{Name: "HTTP_PROXY", Value: "http://login:se%cret@proxy"}, false),
 		Entry("NO_PROXY as is",
-			ProxySetting{Name: "NO_PROXY", Value: "10.0.0.0/8,.svc,login@host"}, "10.0.0.0/8,.svc,login@host", true),
+			ProxySetting{Name: "NO_PROXY", Value: "10.0.0.0/8,.svc,login@host"}, true),
 	)
 
 	// Goal: the workloads get the settings unless PROPAGATE_PROXY_ENV is switched off

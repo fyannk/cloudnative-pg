@@ -37,7 +37,7 @@ from upstream, starting with what changes without any new setting.
 | Change | Details |
 |---|---|
 | The optional APIs (`PodMonitor`, `VolumeSnapshot`, `ClusterImageCatalog`, `Node`) are probed once, when the operator starts. Installing the Prometheus Operator CRDs later requires restarting the operator to get the `PodMonitor` objects; upstream notices them at the next reconciliation | [Restricted installations](operator_conf.md#restricted-installations) |
-| The operator ConfigMap and Secret are read before the manager starts, so `WATCH_NAMESPACE` set there now restricts the cache | |
+| The operator ConfigMap and Secret are read before the manager starts, so `WATCH_NAMESPACE` and `METRICS_CERT_DIR` set there take effect, as documented; upstream reads them too early. They override the environment of the operator Deployment, an empty value included. The startup log gives the watched namespaces | [Available options](operator_conf.md#available-options) |
 | A `Cluster` whose resized volumes wait for a restart of their Pod, with a storage class that does not resize a volume in use, gets the `VolumeResizePending` condition and a Warning event naming the instances to restart | [Storage](storage.md#using-the-volume-expansion-kubernetes-feature) |
 | A `Cluster` whose volume expansion is refused keeps being reconciled, with the `VolumeExpansionRefused` condition, and the expansion is retried every minute | [When the expansion is refused](storage.md#when-the-expansion-is-refused) |
 | The creation of the objects of a `Cluster` goes on after a failure of the default monitoring queries ConfigMap, reported by a `DefaultMonitoringQueriesError` Warning event | |
@@ -85,9 +85,19 @@ These features change nothing until they are configured:
 
 1. Check whether the upstream operator Deployment has proxy variables. If it
    does, either accept one restart of every instance and pooler, or set
-   `PROPAGATE_PROXY_ENV=false` in the operator configuration first.
-2. Check that no WAL or tablespace storage section holds a size above the
-   current request of its PVCs that you do not want applied.
+   `PROPAGATE_PROXY_ENV=false` in the operator configuration first. A
+   password in a proxy URL is copied in clear text into the Pods.
+2. Check `WATCH_NAMESPACE` and `METRICS_CERT_DIR` in the operator ConfigMap
+   and Secret. The upstream operator ignores them there, this one applies
+   them. Remove the ones that must not take effect; with `METRICS_CERT_DIR`,
+   the directory must hold `tls.crt` and `tls.key`:
+
+   ```sh
+   kubectl get configmap,secret -n cnpg-system -o json \
+     cnpg-controller-manager-config --ignore-not-found |
+     jq -r '(.items // [.])[] | .kind as $k | .data // {} | keys[]
+       | select(. == "WATCH_NAMESPACE" or . == "METRICS_CERT_DIR") | "\($k): \(.)"'
+   ```
 3. Apply the manifest of the fork release, not only its image: it brings the
    CRDs with the new fields and rules, the webhook of the `scale` subresource
    and two ClusterRoles.
