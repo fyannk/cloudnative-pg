@@ -73,7 +73,7 @@ activities:
   [`docs/src/operator_capability_levels.md`](../docs/src/operator_capability_levels.md)
   is up-to-date and approved by the maintainers. This also applies to the
   [`docs/src/index.md`](../docs/src/index.md) page, and the OLM CSV file
-  [`config/olm-manifests/bases/cloudnative-pg.clusterserviceversion.yaml`](config/olm-manifests/bases/cloudnative-pg.clusterserviceversion.yaml).
+  [`config/olm-manifests/bases/cloudnative-pg-fyannk.clusterserviceversion.yaml`](config/olm-manifests/bases/cloudnative-pg-fyannk.clusterserviceversion.yaml).
 
 - **Documentation on website:** Remember that after the release, you will
   need to update the documentation in the

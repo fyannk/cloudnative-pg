@@ -2412,11 +2412,11 @@ jobs:
             '{auths: {($registry): {auth: $auth}}}' > docker-config.json
 
           # preflight's DeployableByOLM check installs the operator into a namespace
-          # with a random 5-char suffix (cloudnative-pg-xxxxx) since v1.20.0. cnpg-pull-secret
+          # with a random 5-char suffix (cloudnative-pg-fyannk-xxxxx) since v1.20.0. cnpg-pull-secret
           # can't be pre-created. Watch for the namespace as it appears and stamp the secret into it.
           (
             while true; do
-              for ns in $(oc get ns -o name | grep -oE 'cloudnative-pg-[a-z0-9]+$' || true); do
+              for ns in $(oc get ns -o name | grep -oE 'cloudnative-pg-fyannk-[a-z0-9]+$' || true); do
                 echo "Found operator deployment namespace: $ns"
                 oc create secret docker-registry cnpg-pull-secret -n "$ns" \
                   --docker-server="$REGISTRY" --docker-username="$REGISTRY_USER" --docker-password="$REGISTRY_PASSWORD" \
@@ -2445,9 +2445,9 @@ jobs:
         run: |
           # Before running on OpenShift we make sure that the catalog is created
           # in the openshift-marketplace namespace
-          sed -i -e 's/namespace: operators/namespace: openshift-marketplace/' cloudnative-pg-catalog.yaml
-          find -type f -name "cloudnative-pg-catalog.yaml"
-          cat cloudnative-pg-catalog.yaml
+          sed -i -e 's/namespace: operators/namespace: openshift-marketplace/' cloudnative-pg-fyannk-catalog.yaml
+          find -type f -name "cloudnative-pg-fyannk-catalog.yaml"
+          cat cloudnative-pg-fyannk-catalog.yaml
           KUBECONFIG=$(pwd)/hack/auth/kubeconfig bash -x hack/e2e/run-e2e-ocp.sh
 
       -

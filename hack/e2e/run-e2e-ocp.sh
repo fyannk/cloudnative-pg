@@ -90,7 +90,7 @@ export E2E_CSI_STORAGE_CLASS=${E2E_CSI_STORAGE_CLASS:-}
 export TEST_CLOUD_VENDOR="ocp"
 
 # create the catalog source
-oc apply -f cloudnative-pg-catalog.yaml
+oc apply -f cloudnative-pg-fyannk-catalog.yaml
 
 # create the secret for the index to be pulled in the marketplace
 oc create secret docker-registry -n openshift-marketplace --docker-server="${REGISTRY}" --docker-username="${REGISTRY_USER}" --docker-password="${REGISTRY_PASSWORD}" cnpg-pull-secret || true
@@ -100,12 +100,12 @@ oc apply -f - <<EOF
 apiVersion: operators.coreos.com/v1alpha1
 kind: Subscription
 metadata:
-  name: cloudnative-pg
+  name: cloudnative-pg-fyannk
   namespace: openshift-operators
 spec:
   channel: stable-v1
-  name: cloudnative-pg
-  source: cloudnative-pg-catalog
+  name: cloudnative-pg-fyannk
+  source: cloudnative-pg-fyannk-catalog
   sourceNamespace: openshift-marketplace
   config:
     env:
@@ -128,7 +128,7 @@ echo "Waiting 60s for the operator deployment to be ready"
 sleep 60
 
 # We wait later for the deployment to be available, but if it doesn't exist if fails. Let's wait again.
-CSV_NAME=$(oc get csv -n openshift-operators -l 'operators.coreos.com/cloudnative-pg.openshift-operators=' -o jsonpath='{.items[0].metadata.name}')
+CSV_NAME=$(oc get csv -n openshift-operators -l 'operators.coreos.com/cloudnative-pg-fyannk.openshift-operators=' -o jsonpath='{.items[0].metadata.name}')
 DEPLOYMENT_NAME=$(oc get csv -n openshift-operators "$CSV_NAME" -o jsonpath='{.spec.install.spec.deployments[0].name}')
 wait_for deployment openshift-operators "$DEPLOYMENT_NAME" 5 60
 

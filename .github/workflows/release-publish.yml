@@ -384,4 +384,4 @@ jobs:
           path: |
             bundle.Dockerfile
             bundle/
-            cloudnative-pg-catalog.yaml
+            cloudnative-pg-fyannk-catalog.yaml

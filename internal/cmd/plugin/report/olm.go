@@ -26,6 +26,7 @@ import (
 	"path/filepath"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -46,13 +47,21 @@ func getOlmResourceList(
 		Resource: resource,
 	}
 
-	resourceList, err := dynamicClient.Resource(gvr).Namespace(namespace).
-		List(ctx, metav1.ListOptions{LabelSelector: getLabelOperatorsNamespace()})
-	if err != nil {
-		return nil, fmt.Errorf("could not list resource: %v, %v", gvr, err)
+	var result *unstructured.UnstructuredList
+	for _, label := range getLabelsOperatorsNamespace() {
+		resourceList, err := dynamicClient.Resource(gvr).Namespace(namespace).
+			List(ctx, metav1.ListOptions{LabelSelector: label})
+		if err != nil {
+			return nil, fmt.Errorf("could not list resource: %v, %v", gvr, err)
+		}
+		if result == nil {
+			result = resourceList
+			continue
+		}
+		result.Items = append(result.Items, resourceList.Items...)
 	}
 
-	return resourceList, nil
+	return result, nil
 }
 
 // olmOperatorReport contains the operator data in OLM

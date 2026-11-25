@@ -1,5 +1,5 @@
 resources:
-- bases/cloudnative-pg.clusterserviceversion.yaml
+- bases/cloudnative-pg-fyannk.clusterserviceversion.yaml
 - ../olm-default
 - ../olm-samples
 - ../olm-scorecard

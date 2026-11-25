@@ -44,7 +44,6 @@ const (
 	defaultConfigmapName    = "cnpg-controller-manager-config"
 	labelOperatorNameKey    = "app.kubernetes.io/name"
 	labelOperatorName       = "cloudnative-pg"
-	labelOperatorKeyPrefix  = "operators.coreos.com/cloudnative-pg."
 	managerContainerName    = "manager"
 	managerCommand          = "/manager"
 	managerControllerArg    = "controller"
@@ -52,8 +51,13 @@ const (
 
 var errNoOperatorDeployment = fmt.Errorf("no deployment found")
 
-func getLabelOperatorsNamespace() string {
-	return labelOperatorKeyPrefix + plugin.Namespace
+// getLabelsOperatorsNamespace returns the labels OLM sets on the objects of the
+// operator, one per package the operator is distributed in
+func getLabelsOperatorsNamespace() []string {
+	return []string{
+		"operators.coreos.com/cloudnative-pg-fyannk." + plugin.Namespace,
+		"operators.coreos.com/cloudnative-pg." + plugin.Namespace,
+	}
 }
 
 // getOperatorDeployment returns the operator Deployment: the one named when a
