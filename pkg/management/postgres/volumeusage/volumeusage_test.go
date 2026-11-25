@@ -146,4 +146,38 @@ var _ = Describe("reading the filesystems with a timeout", func() {
 			return err
 		}).Should(Succeed())
 	})
+
+	instant := func(_ string, stat *syscall.Statfs_t) error {
+		*stat = syscall.Statfs_t{Bsize: 4096, Blocks: 100, Bfree: 50, Bavail: 50}
+		return nil
+	}
+
+	It("never stays refusing the reads once the blocked one returned", func() {
+		for range 10000 {
+			_, _ = GetWithTimeout(paths, instant, time.Nanosecond)
+		}
+		Eventually(func() error {
+			_, err := GetWithTimeout(paths, instant, time.Second)
+			return err
+		}).Should(Succeed())
+	})
+
+	It("allows overlapping reads while none ran out of time", func() {
+		started, release := make(chan struct{}), make(chan struct{})
+		slow := func(path string, stat *syscall.Statfs_t) error {
+			close(started)
+			<-release
+			return instant(path, stat)
+		}
+		first := make(chan error, 1)
+		go func() {
+			_, err := GetWithTimeout(paths, slow, 10*time.Second)
+			first <- err
+		}()
+		Eventually(started).Should(BeClosed())
+		_, err := GetWithTimeout(paths, instant, time.Second)
+		Expect(err).ToNot(HaveOccurred())
+		close(release)
+		Eventually(first).Should(Receive(BeNil()))
+	})
 })

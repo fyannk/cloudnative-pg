@@ -148,36 +148,46 @@ func GetWALVolumeName(paths Paths) string {
 // answer, such as a network mount whose server is gone
 var ErrNotAnswering = errors.New("the filesystem of a volume does not answer")
 
-// notAnswering is set while a read of the filesystems that ran out of time
-// is still blocked: no other read is started until it returns, so that the
-// blocked reads do not pile up
-var notAnswering atomic.Bool
+// blockedRead is closed when the last read of the filesystems that ran out of
+// time returns: no other read is started until then, so that the blocked reads
+// do not pile up
+var blockedRead atomic.Pointer[chan struct{}]
+
+func isReadBlocked() bool {
+	finished := blockedRead.Load()
+	if finished == nil {
+		return false
+	}
+	select {
+	case <-*finished:
+		return false
+	default:
+		return true
+	}
+}
 
 // GetWithTimeout is Get, giving up after the timeout: reading a filesystem
 // cannot be interrupted, and must not hold a scrape of the metrics forever
 func GetWithTimeout(paths Paths, statfs Statfs, timeout time.Duration) ([]postgres.VolumeUsage, error) {
-	if notAnswering.Load() {
+	if isReadBlocked() {
 		return nil, ErrNotAnswering
 	}
 
-	type result struct {
-		usages []postgres.VolumeUsage
-		err    error
-	}
-	done := make(chan result, 1)
+	var usages []postgres.VolumeUsage
+	var err error
+	finished := make(chan struct{})
 	go func() {
-		usages, err := Get(paths, statfs)
-		notAnswering.Store(false)
-		done <- result{usages: usages, err: err}
+		defer close(finished)
+		usages, err = Get(paths, statfs)
 	}()
 
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
 	select {
-	case read := <-done:
-		return read.usages, read.err
+	case <-finished:
+		return usages, err
 	case <-timer.C:
-		notAnswering.Store(true)
+		blockedRead.Store(&finished)
 		return nil, fmt.Errorf("%w after %s", ErrNotAnswering, timeout)
 	}
 }
