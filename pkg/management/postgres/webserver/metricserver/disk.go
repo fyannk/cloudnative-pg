@@ -102,11 +102,11 @@ func (d diskMetrics) reset() {
 
 // updateDiskMetrics updates the disk metrics. It runs apart from the instance
 // metrics, which are skipped while the instance is fenced or PostgreSQL is
-// down: a full volume is one of the causes.
+// down: a full volume is one of the causes. A failure has its own counter, and
+// leaves the error gauge to the collection of the instance metrics.
 func (e *Exporter) updateDiskMetrics() {
 	if err := collectDiskMetrics(e); err != nil {
 		log.Error(err, "while collecting disk metrics")
-		e.Metrics.Error.Set(1)
 		e.Metrics.PgCollectionErrors.WithLabelValues("Collect.Disk").Inc()
 	}
 }

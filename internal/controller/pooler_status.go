@@ -115,11 +115,9 @@ func (r *PoolerReconciler) updatePoolerStatus(
 		// write correcting the first one would make a blocked Pooler flap
 		// between the two, each write starting a new reconciliation
 		updatedStatus.Phase = apiv1.PoolerPhaseActive
-		updatedStatus.PhaseReason = ""
-		if reason := deploymentBlockedReason(resources.Deployment); reason != "" {
-			updatedStatus.Phase = apiv1.PoolerPhaseInactive
-			updatedStatus.PhaseReason = reason
-		}
+		// a blocked Deployment may still serve with its previous Pods: it is
+		// reported in the reason only
+		updatedStatus.PhaseReason = deploymentBlockedReason(resources.Deployment)
 		updatedStatus.Image = image
 	}
 

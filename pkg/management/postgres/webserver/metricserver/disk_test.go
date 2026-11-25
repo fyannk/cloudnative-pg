@@ -177,12 +177,12 @@ var _ = Describe("disk metrics", func() {
 		Expect(diskSeries(exporter.Metrics.Disk.Inodes)).To(ConsistOf("pgdata"))
 	})
 
-	It("counts a failed read as a collection error", func() {
+	It("counts a failed read, and leaves the error gauge alone", func() {
 		exporter.statfs = fakeStatfs(nil, map[string]error{exporter.diskPaths.PgData: syscall.EIO})
 
 		exporter.updateDiskMetrics()
 
-		Expect(gaugeValue(exporter.Metrics.Error)).To(BeEquivalentTo(1))
+		Expect(gaugeValue(exporter.Metrics.Error)).To(BeEquivalentTo(0))
 		Expect(gaugeValue(exporter.Metrics.PgCollectionErrors.WithLabelValues("Collect.Disk"))).To(
 			BeEquivalentTo(1))
 	})

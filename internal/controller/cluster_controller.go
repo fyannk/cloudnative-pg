@@ -1039,13 +1039,12 @@ func (r *ClusterReconciler) reconcileResources(
 			// to an unready instance.
 			contextLogger.Debug("Instance pod not active. Retrying...")
 
-			// Register a phase indicating some instances aren't active yet,
-			// with what the Pods report as the cause
+			// Register a phase indicating some instances aren't active yet
 			if err := r.RegisterPhase(
 				ctx,
 				cluster,
 				apiv1.PhaseWaitingForInstancesToBeActive,
-				resources.waitingForInstancesReason(),
+				"Some instances are not yet active. Please wait.",
 			); err != nil {
 				return ctrl.Result{}, err
 			}

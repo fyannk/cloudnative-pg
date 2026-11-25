@@ -32,7 +32,6 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/rand"
 	"k8s.io/client-go/tools/record"
-	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
@@ -493,13 +492,8 @@ var _ = Describe("updateClusterStatusThatRequiresInstancesState tests", func() {
 	})
 })
 
-// While the operator waits for an instance Pod that is not active, the
-// cause is on the Pod (scheduling, a container that cannot start). The
-// owner of the Cluster, who may not know where to look, gets it in the
-// phase reason next to the generic sentence. The Pod here is scheduled but
-// its container cannot start (an unschedulable Pod has its own handling).
-var _ = Describe("waiting for an instance that reports why it is not active", func() {
-	It("copies the Pod's cause into the phase reason", func(ctx SpecContext) {
+var _ = Describe("waiting for an instance that is not active", func() {
+	It("keeps a constant phase reason, so that a change of the Pod writes no status", func(ctx SpecContext) {
 		pendingPod := corev1.Pod{
 			ObjectMeta: metav1.ObjectMeta{Name: "cluster-example-1", Namespace: "default"},
 			Status: corev1.PodStatus{
@@ -526,15 +520,14 @@ var _ = Describe("waiting for an instance that reports why it is not active", fu
 		Expect(err).ToNot(HaveOccurred())
 		Expect(result).To(Equal(ctrl.Result{RequeueAfter: time.Second}))
 		Expect(cluster.Status.Phase).To(Equal(apiv1.PhaseWaitingForInstancesToBeActive))
-		Expect(cluster.Status.PhaseReason).To(Equal("Some instances are not yet active. Please wait. " +
-			"cluster-example-1: container postgres waiting (ContainerCreating: " +
-			"MountVolume.SetUp failed for volume \"app-secret\": secret \"app\" not found)"))
+		Expect(cluster.Status.PhaseReason).To(Equal("Some instances are not yet active. Please wait."))
+		version := cluster.ResourceVersion
 
-		// A Pod that reports nothing yet keeps the generic sentence alone
 		resources.instances.Items[0].Status.ContainerStatuses = nil
 		_, err = r.reconcileResources(ctx, cluster, resources, postgres.PostgresqlStatusList{})
 		Expect(err).ToNot(HaveOccurred())
 		Expect(cluster.Status.PhaseReason).To(Equal("Some instances are not yet active. Please wait."))
+		Expect(cluster.ResourceVersion).To(Equal(version))
 	})
 })
 
@@ -657,6 +650,22 @@ var _ = Describe("topology resolution by source of node state", func() {
 		Expect(topology.SuccessfullyExtracted).To(BeFalse())
 	})
 
+	// An unknown Node fails the extraction with the Node API, as upstream,
+	// even when no label is asked for: the nodes used are then not counted
+	DescribeTable("a Pod on an unknown Node, with no label needed",
+		func(source, nodeName string, extracted bool, nodesUsed int) {
+			r := &ClusterReconciler{nodeStatusSource: source, nodeStatus: reader}
+			pods := []corev1.Pod{pod("pg-1", "node-1", nil), pod("pg-2", nodeName, nil)}
+			topology := getPodsTopologyWithNodeLabels(context.Background(), pods, nil, r.nodeLabelsResolver(nodes))
+			Expect(topology.SuccessfullyExtracted).To(Equal(extracted))
+			Expect(topology.NodesUsed).To(BeEquivalentTo(nodesUsed))
+		},
+		Entry("api, deleted Node", configuration.NodeStatusSourceAPI, "node-9", false, 0),
+		Entry("api, Pending Pod", configuration.NodeStatusSourceAPI, "", false, 0),
+		Entry("pods", configuration.NodeStatusSourcePods, "node-9", true, 2),
+		Entry("none, Pending Pod", configuration.NodeStatusSourceNone, "", true, 1),
+	)
+
 	DescribeTable("the resolver of the node labels follows the source of node state",
 		func(source string, expected bool) {
 			r := &ClusterReconciler{nodeStatusSource: source, nodeStatus: reader}
@@ -759,74 +768,5 @@ var _ = Describe("updateNodeStatusAvailability", func() {
 		r.updateNodeStatusAvailability(cluster)
 		Expect(meta.IsStatusConditionTrue(cluster.Status.Conditions,
 			string(apiv1.ConditionNodeStatusUnavailable))).To(BeTrue())
-	})
-})
-
-var _ = Describe("stale ContinuousArchiving condition", func() {
-	failing := metav1.Condition{
-		Type:   string(apiv1.ConditionContinuousArchiving),
-		Status: metav1.ConditionFalse,
-		Reason: string(apiv1.ConditionReasonContinuousArchivingFailing),
-	}
-	ready := metav1.Condition{
-		Type:   string(apiv1.ConditionClusterReady),
-		Status: metav1.ConditionTrue,
-		Reason: string(apiv1.ClusterReady),
-	}
-
-	It("is removed when the cluster has no WAL archiver anymore", func() {
-		cluster := &apiv1.Cluster{Status: apiv1.ClusterStatus{Conditions: []metav1.Condition{failing, ready}}}
-
-		removeStaleContinuousArchivingCondition(cluster)
-
-		Expect(cluster.Status.Conditions).To(ConsistOf(ready))
-	})
-
-	It("is removed when the WAL archiving is disabled by annotation", func() {
-		cluster := &apiv1.Cluster{
-			ObjectMeta: metav1.ObjectMeta{Annotations: map[string]string{utils.SkipWalArchiving: "enabled"}},
-			Spec: apiv1.ClusterSpec{Backup: &apiv1.BackupConfiguration{
-				BarmanObjectStore: &apiv1.BarmanObjectStoreConfiguration{},
-			}},
-			Status: apiv1.ClusterStatus{Conditions: []metav1.Condition{failing}},
-		}
-
-		removeStaleContinuousArchivingCondition(cluster)
-
-		Expect(cluster.Status.Conditions).To(BeEmpty())
-	})
-
-	It("is kept while a Barman object store or a plugin may archive the WAL files", func() {
-		withBarman := &apiv1.Cluster{
-			Spec: apiv1.ClusterSpec{Backup: &apiv1.BackupConfiguration{
-				BarmanObjectStore: &apiv1.BarmanObjectStoreConfiguration{},
-			}},
-			Status: apiv1.ClusterStatus{Conditions: []metav1.Condition{failing}},
-		}
-		withPlugin := &apiv1.Cluster{
-			Spec: apiv1.ClusterSpec{Plugins: []apiv1.PluginConfiguration{{
-				Name: "barman-cloud.cloudnative-pg.io", IsWALArchiver: ptr.To(true),
-			}}},
-			Status: apiv1.ClusterStatus{Conditions: []metav1.Condition{failing}},
-		}
-
-		removeStaleContinuousArchivingCondition(withBarman)
-		removeStaleContinuousArchivingCondition(withPlugin)
-
-		Expect(withBarman.Status.Conditions).To(ConsistOf(failing))
-		Expect(withPlugin.Status.Conditions).To(ConsistOf(failing))
-	})
-
-	It("keeps a condition reporting a working archiving", func() {
-		working := metav1.Condition{
-			Type:   string(apiv1.ConditionContinuousArchiving),
-			Status: metav1.ConditionTrue,
-			Reason: string(apiv1.ConditionReasonContinuousArchivingSuccess),
-		}
-		cluster := &apiv1.Cluster{Status: apiv1.ClusterStatus{Conditions: []metav1.Condition{working}}}
-
-		removeStaleContinuousArchivingCondition(cluster)
-
-		Expect(cluster.Status.Conditions).To(ConsistOf(working))
 	})
 })

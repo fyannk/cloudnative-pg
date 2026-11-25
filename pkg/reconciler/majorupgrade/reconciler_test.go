@@ -595,7 +595,7 @@ func buildFailedUpgradeJob() *batchv1.Job {
 // runs: a failed Job used to leave the cluster down with "Upgrading" as its
 // only signal, since the completion it waits for never comes.
 var _ = Describe("Major upgrade job failure", func() {
-	It("registers the Unrecoverable phase with the job name", func(ctx SpecContext) {
+	It("keeps the upgrade phase, naming the job and the rollback, once", func(ctx SpecContext) {
 		job := buildFailedUpgradeJob()
 		job.Status.Conditions = []batchv1.JobCondition{{
 			Type: batchv1.JobFailed, Status: corev1.ConditionTrue, Reason: "BackoffLimitExceeded",
@@ -615,13 +615,24 @@ var _ = Describe("Major upgrade job failure", func() {
 			WithStatusSubresource(cluster).
 			Build()
 
-		result, err := Reconcile(ctx, fakeClient, record.NewFakeRecorder(10), cluster, nil, nil, []batchv1.Job{*job})
+		recorder := record.NewFakeRecorder(10)
+		result, err := Reconcile(ctx, fakeClient, recorder, cluster, nil, nil, []batchv1.Job{*job})
 		Expect(err).ToNot(HaveOccurred())
 		Expect(result).To(Equal(&ctrl.Result{RequeueAfter: 30 * time.Second}))
 
 		var updated apiv1.Cluster
 		Expect(fakeClient.Get(ctx, client.ObjectKeyFromObject(cluster), &updated)).To(Succeed())
-		Expect(updated.Status.Phase).To(Equal(apiv1.PhaseUnrecoverable))
-		Expect(updated.Status.PhaseReason).To(ContainSubstring("Major upgrade failed for job cluster-example-major-upgrade"))
+		Expect(updated.Status.Phase).To(Equal(apiv1.PhaseMajorUpgrade))
+		Expect(updated.Status.PhaseReason).To(And(
+			ContainSubstring("Major upgrade failed for job cluster-example-major-upgrade"),
+			ContainSubstring("revert the image")))
+		Expect(recorder.Events).To(Receive(ContainSubstring("MajorUpgradeFailed")))
+
+		_, err = Reconcile(ctx, fakeClient, recorder, updated.DeepCopy(), nil, nil, []batchv1.Job{*job})
+		Expect(err).ToNot(HaveOccurred())
+		var again apiv1.Cluster
+		Expect(fakeClient.Get(ctx, client.ObjectKeyFromObject(cluster), &again)).To(Succeed())
+		Expect(again.ResourceVersion).To(Equal(updated.ResourceVersion))
+		Expect(recorder.Events).ToNot(Receive())
 	})
 })

@@ -73,7 +73,7 @@ func Reconcile(
 			return result, err
 		}
 
-		if result, err := handleFailedJob(ctx, c, cluster, majorUpgradeJob); result != nil || err != nil {
+		if result, err := handleFailedJob(ctx, c, recorder, cluster, majorUpgradeJob); result != nil || err != nil {
 			return result, err
 		}
 
@@ -438,14 +438,16 @@ func handleRollbackIfNeeded(
 	return &ctrl.Result{RequeueAfter: 10 * time.Second}, nil
 }
 
-// handleFailedJob registers the Unrecoverable phase when the major upgrade
-// Job has failed. The Job has no retry (BackoffLimit 0): one failure is
-// final, and the instance Pods were deleted before it ran, so waiting for a
-// completion would leave the cluster down with "Upgrading" as its only
-// signal. The cause is in the Job logs.
+// handleFailedJob reports, in the reason of the upgrade phase, that the major
+// upgrade Job has failed. The Job has no retry (BackoffLimit 0): one failure
+// is final, and the instance Pods were deleted before it ran, so waiting for
+// a completion would leave the cluster down with "Upgrading" as its only
+// signal. The cause is in the Job logs, and reverting the image recovers the
+// cluster.
 func handleFailedJob(
 	ctx context.Context,
 	c client.Client,
+	recorder record.EventRecorder,
 	cluster *apiv1.Cluster,
 	job *batchv1.Job,
 ) (*ctrl.Result, error) {
@@ -453,14 +455,19 @@ func handleFailedJob(
 		return nil, nil
 	}
 
+	result := &ctrl.Result{RequeueAfter: 30 * time.Second}
+	reason := fmt.Sprintf("Major upgrade failed for job %s. Check the job logs to investigate "+
+		"the cause of the failure, and revert the image to roll back.", job.Name)
+	if cluster.Status.Phase == apiv1.PhaseMajorUpgrade && cluster.Status.PhaseReason == reason {
+		return result, nil
+	}
+
 	log.FromContext(ctx).Warning("Major upgrade job failed", "jobName", job.Name)
-	if err := registerPhase(ctx, c, cluster, apiv1.PhaseUnrecoverable,
-		fmt.Sprintf("Major upgrade failed for job %s. "+
-			"Check the job logs to investigate the cause of the failure.", job.Name),
-	); err != nil {
+	if err := registerPhase(ctx, c, cluster, apiv1.PhaseMajorUpgrade, reason); err != nil {
 		return nil, err
 	}
-	return &ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+	recorder.Event(cluster, "Warning", "MajorUpgradeFailed", reason)
+	return result, nil
 }
 
 // registerPhase sets a phase into the cluster

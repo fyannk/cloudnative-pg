@@ -107,34 +107,6 @@ func (resources *managedResources) inactiveInstanceNames() []string {
 }
 
 // Check if every managed Pod is active and will be schedules
-// inactiveInstanceReasons returns, for each inactive instance Pod, what the
-// Pod reports as the cause ("name: cause"), skipping Pods reporting nothing
-func (resources *managedResources) inactiveInstanceReasons() []string {
-	result := make([]string, 0, len(resources.instances.Items))
-	for idx := range resources.instances.Items {
-		pod := resources.instances.Items[idx]
-		if utils.IsPodActive(pod) {
-			continue
-		}
-		if reason := utils.PodInactiveReason(pod); reason != "" {
-			result = append(result, fmt.Sprintf("%s: %s", pod.Name, reason))
-		}
-	}
-	return result
-}
-
-// waitingForInstancesReason is the reason of the PhaseWaitingForInstancesToBeActive
-// phase: the generic sentence, followed by what each inactive Pod reports as
-// the cause, which the owner of the Cluster would otherwise have to find on
-// the Pods themselves
-func (resources *managedResources) waitingForInstancesReason() string {
-	reason := "Some instances are not yet active. Please wait."
-	if causes := resources.inactiveInstanceReasons(); len(causes) > 0 {
-		reason = fmt.Sprintf("%s %s", reason, strings.Join(causes, "; "))
-	}
-	return reason
-}
-
 func (resources *managedResources) allInstancesAreActive() bool {
 	return len(resources.inactiveInstanceNames()) == 0
 }
@@ -417,29 +389,10 @@ func (r *ClusterReconciler) updateResourceStatus(
 		})
 	}
 
-	removeStaleContinuousArchivingCondition(cluster)
-
 	if !reflect.DeepEqual(existingClusterStatus, cluster.Status) {
 		return r.Status().Update(ctx, cluster)
 	}
 	return nil
-}
-
-// removeStaleContinuousArchivingCondition removes a failing
-// ContinuousArchiving condition from a cluster whose instances cannot archive
-// WAL files anymore. Only the instances set this condition, when they archive
-// a WAL file: once the archiving configuration is removed, a failure stays
-// reported forever when no WAL file is archived again, such as when
-// PostgreSQL is stopped by a full disk or archive_mode is off, and autoGrow
-// keeps refusing to grow the volume holding the WAL files. A True condition
-// is left alone: the instances set it at each WAL file they skip, and removing
-// it would only make the status flap.
-func removeStaleContinuousArchivingCondition(cluster *apiv1.Cluster) {
-	if cluster.MayArchiveWALs() ||
-		!meta.IsStatusConditionFalse(cluster.Status.Conditions, string(apiv1.ConditionContinuousArchiving)) {
-		return
-	}
-	meta.RemoveStatusCondition(&cluster.Status.Conditions, string(apiv1.ConditionContinuousArchiving))
 }
 
 // removeConditionsWithInvalidReason will remove every condition which has a not valid
@@ -934,8 +887,9 @@ func nodeLabelsFromNodes(nodes map[string]corev1.Node) nodeLabelsResolver {
 	}
 }
 
-func noNodeLabels(*corev1.Pod, []string) (map[string]string, bool) {
-	return nil, false
+// noNodeLabels resolves nothing, which is enough when no label is needed
+func noNodeLabels(_ *corev1.Pod, keys []string) (map[string]string, bool) {
+	return nil, len(keys) == 0
 }
 
 func (r *ClusterReconciler) nodeLabelsResolver(nodes map[string]corev1.Node) nodeLabelsResolver {
@@ -962,13 +916,6 @@ func getPodsTopologyWithNodeLabels(
 	for _, pod := range pods {
 		podName := apiv1.PodName(pod.Name)
 		data[podName] = make(map[string]string, 0)
-		if len(nodeLabelKeys) == 0 {
-			if pod.Spec.NodeName != "" {
-				nodesMap[pod.Spec.NodeName] = append(nodesMap[pod.Spec.NodeName], podName)
-			}
-			continue
-		}
-
 		labels, ok := nodeLabels(&pod, nodeLabelKeys)
 		if !ok {
 			contextLogger.Debug("node labels not resolved, skipping pod topology matching",

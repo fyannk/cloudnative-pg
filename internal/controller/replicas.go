@@ -81,11 +81,13 @@ func (r *ClusterReconciler) reconcileTargetPrimaryFromPods(
 			contextLogger.Info("Primary is running on an unschedulable node, will try switching over",
 				"node", primary.Node, "primary", primary.Pod.Name)
 			return r.setPrimaryOnSchedulableNode(ctx, cluster, status, &primary,
+				fmt.Sprintf("Current primary is running on unschedulable node %v", primary.Node),
 				fmt.Sprintf("primary instance was running on unschedulable node %v", primary.Node))
 		case r.isEvictionRequested(&primary):
 			contextLogger.Info("Eviction of the primary requested, will try switching over",
 				"node", primary.Node, "primary", primary.Pod.Name)
 			return r.setPrimaryOnSchedulableNode(ctx, cluster, status, &primary,
+				"An eviction of the current primary was requested",
 				"an eviction of the primary instance was requested")
 		}
 	}
@@ -316,13 +318,14 @@ func (r *ClusterReconciler) isEvictionRequested(instance *postgres.PostgresqlSta
 // setPrimaryOnSchedulableNode picks the next primary on a schedulable node,
 // when the current one must leave its node: a drain is in progress, or its
 // eviction was requested. Candidates on a draining node or whose own
-// eviction was requested are skipped. The reason is reported in the Event
-// and the phase.
+// eviction was requested are skipped. The event cause opens the Event, and the
+// reason is reported in the phase.
 func (r *ClusterReconciler) setPrimaryOnSchedulableNode(
 	ctx context.Context,
 	cluster *apiv1.Cluster,
 	status postgres.PostgresqlStatusList,
 	primaryPod *postgres.PostgresqlStatus,
+	eventCause string,
 	reason string,
 ) (string, error) {
 	contextLogger := log.FromContext(ctx)
@@ -385,8 +388,8 @@ func (r *ClusterReconciler) setPrimaryOnSchedulableNode(
 			"targetPrimary", candidate.Pod.Name, "targetPrimaryNode", candidate.Node)
 		status.LogStatus(ctx)
 		r.Recorder.Eventf(cluster, "Normal", "SwitchingOver",
-			"Switching over from %v to %v, because %s",
-			cluster.Status.TargetPrimary, candidate.Pod.Name, reason)
+			"%s, switching over from %v to %v",
+			eventCause, cluster.Status.TargetPrimary, candidate.Pod.Name)
 		if err := r.RegisterPhase(ctx, cluster, apiv1.PhaseSwitchover,
 			fmt.Sprintf("Switching over to %v, because %s", candidate.Pod.Name, reason)); err != nil {
 			return "", err

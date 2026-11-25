@@ -514,6 +514,7 @@ var _ = Describe("autoGrow plan", func() {
 	})
 
 	It("does not grow the volume holding the WAL files while the WAL archiving fails", func() {
+		cluster.Spec.Backup = &apiv1.BackupConfiguration{BarmanObjectStore: &apiv1.BarmanObjectStoreConfiguration{}}
 		cluster.Status.Conditions = []metav1.Condition{{
 			Type:   string(apiv1.ConditionContinuousArchiving),
 			Status: metav1.ConditionFalse,
@@ -530,6 +531,20 @@ var _ = Describe("autoGrow plan", func() {
 		}))
 	})
 
+	It("ignores a WAL archiving failure left over by a removed configuration", func() {
+		cluster.Status.Conditions = []metav1.Condition{{
+			Type:   string(apiv1.ConditionContinuousArchiving),
+			Status: metav1.ConditionFalse,
+			Reason: string(apiv1.ConditionReasonContinuousArchivingFailing),
+		}}
+
+		plan, err := planAutoGrow(cluster, dataPVCs("10Gi"), instancesReporting(reporting("1", used("pgdata", 10, 90))))
+
+		Expect(err).ToNot(HaveOccurred())
+		Expect(sizesOf(plan)[pgData]).To(Equal("12Gi"))
+		Expect(plan.stops).To(BeEmpty())
+	})
+
 	It("grows each volume from its own section and usage, PGDATA despite failing archiving", func() {
 		cluster.Spec.WalStorage = &apiv1.StorageConfiguration{
 			Size:     "2Gi",
@@ -542,6 +557,7 @@ var _ = Describe("autoGrow plan", func() {
 			}},
 			{Name: "beta", Storage: apiv1.StorageConfiguration{Size: "5Gi"}},
 		}
+		cluster.Spec.Backup = &apiv1.BackupConfiguration{BarmanObjectStore: &apiv1.BarmanObjectStoreConfiguration{}}
 		cluster.Status.Conditions = []metav1.Condition{{
 			Type:   string(apiv1.ConditionContinuousArchiving),
 			Status: metav1.ConditionFalse,

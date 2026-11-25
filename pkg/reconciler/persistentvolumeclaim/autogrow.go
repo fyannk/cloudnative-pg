@@ -375,7 +375,9 @@ func planAutoGrow(
 	}
 
 	largestRequests := getLargestRequests(pvcs)
-	archivingFails := meta.IsStatusConditionFalse(
+	// only the instances set this condition, when they archive a WAL file: a
+	// failure stays reported once nothing is archived anymore
+	archivingFails := cluster.MayArchiveWALs() && meta.IsStatusConditionFalse(
 		cluster.Status.Conditions, string(apiv1.ConditionContinuousArchiving))
 
 	for _, volume := range volumes {

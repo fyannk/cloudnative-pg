@@ -294,8 +294,9 @@ var _ = Describe("pooler_status unit tests", func() {
 })
 
 // A Pooler whose Deployment cannot run its Pods (a Pod creation rejected by
-// a quota, a rollout past its deadline) used to stay "active": the cause is
-// on the Deployment, which the owner of the Pooler may not know to look at.
+// a quota, a rollout past its deadline) stays "active", as its previous Pods may
+// still serve: the phase reason gives the cause, which is on the Deployment,
+// which the owner of the Pooler may not know to look at.
 var _ = Describe("pooler phase from its Deployment", func() {
 	var (
 		env       *testingEnvironment
@@ -315,7 +316,7 @@ var _ = Describe("pooler phase from its Deployment", func() {
 		Expect(pooler.Status.Phase).To(Equal(apiv1.PoolerPhaseActive))
 	})
 
-	It("turns inactive with the Deployment's message when a Pod creation is rejected", func(ctx SpecContext) {
+	It("stays active, with the Deployment's message as the reason, when a Pod is rejected", func(ctx SpecContext) {
 		resources.Deployment.Status.Conditions = []appsv1.DeploymentCondition{
 			{
 				Type: appsv1.DeploymentAvailable, Status: corev1.ConditionFalse, Reason: "MinimumReplicasUnavailable",
@@ -327,22 +328,22 @@ var _ = Describe("pooler phase from its Deployment", func() {
 			},
 		}
 		Expect(env.poolerReconciler.updatePoolerStatus(ctx, pooler, resources)).To(Succeed())
-		Expect(pooler.Status.Phase).To(Equal(apiv1.PoolerPhaseInactive))
+		Expect(pooler.Status.Phase).To(Equal(apiv1.PoolerPhaseActive))
 		Expect(pooler.Status.PhaseReason).To(Equal("Deployment " + resources.Deployment.Name +
 			": FailedCreate: pods \"pooler-rw-679866557-48wkx\" is forbidden: exceeded quota: pods-cap"))
 
 		var stored apiv1.Pooler
 		Expect(env.client.Get(ctx, client.ObjectKeyFromObject(pooler), &stored)).To(Succeed())
-		Expect(stored.Status.Phase).To(Equal(apiv1.PoolerPhaseInactive))
+		Expect(stored.Status.Phase).To(Equal(apiv1.PoolerPhaseActive))
 
 		By("not writing the status again while the Deployment stays blocked")
 		Expect(env.poolerReconciler.updatePoolerStatus(ctx, pooler, resources)).To(Succeed())
 		var again apiv1.Pooler
 		Expect(env.client.Get(ctx, client.ObjectKeyFromObject(pooler), &again)).To(Succeed())
 		Expect(again.ResourceVersion).To(Equal(stored.ResourceVersion))
-		Expect(again.Status.Phase).To(Equal(apiv1.PoolerPhaseInactive))
+		Expect(again.Status.Phase).To(Equal(apiv1.PoolerPhaseActive))
 
-		By("turning active again once the Deployment recovers")
+		By("clearing the reason once the Deployment recovers")
 		resources.Deployment.Status.Conditions = nil
 		Expect(env.poolerReconciler.updatePoolerStatus(ctx, pooler, resources)).To(Succeed())
 		Expect(pooler.Status.Phase).To(Equal(apiv1.PoolerPhaseActive))

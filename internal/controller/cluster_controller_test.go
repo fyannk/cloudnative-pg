@@ -1151,7 +1151,7 @@ var _ = Describe("The new primary chosen when the primary leaves its node", func
 
 	switchOver := func(ctx context.Context, r *ClusterReconciler, status postgres.PostgresqlStatusList) string {
 		newPrimary, err := r.setPrimaryOnSchedulableNode(ctx, cluster, status, &status.Items[0],
-			"eviction of the primary requested")
+			"An eviction of the current primary was requested", "an eviction of the primary instance was requested")
 		Expect(err).ToNot(HaveOccurred())
 		return newPrimary
 	}

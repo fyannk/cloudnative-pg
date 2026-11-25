@@ -939,7 +939,7 @@ func (fullStatus *PostgresqlStatus) printInstancesStatus() {
 				instance.Pod.Name,
 				"-",
 				"-",
-				apierrs.ReasonForError(instance.Error),
+				instanceErrorSummary(instance),
 				instance.Pod.Status.QOSClass,
 				"-",
 				instance.Pod.Spec.NodeName,
@@ -965,6 +965,16 @@ func (fullStatus *PostgresqlStatus) printInstancesStatus() {
 	}
 	status.Print()
 	fmt.Println()
+}
+
+// instanceErrorSummary returns the error of an instance, followed by what its
+// Pod reports as the cause when it is not active
+func instanceErrorSummary(instance postgres.PostgresqlStatus) string {
+	summary := string(apierrs.ReasonForError(instance.Error))
+	if cause := utils.PodInactiveReason(*instance.Pod); cause != "" {
+		summary = strings.TrimSpace(summary + " " + cause)
+	}
+	return summary
 }
 
 func (fullStatus *PostgresqlStatus) printCertificatesStatus() {
