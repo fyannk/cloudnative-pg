@@ -1067,6 +1067,7 @@ func (r *InstanceReconciler) reconcileMonitoringQueries(
 	}
 
 	queriesCollector := metrics.NewQueriesCollector("cnpg", r.instance, dbname)
+	queriesCollector.SetReservedNames(metricserver.IsReservedMetricName)
 	queriesCollector.InjectUserQueries(metricserver.DefaultQueries)
 
 	if cluster.Spec.Monitoring == nil {

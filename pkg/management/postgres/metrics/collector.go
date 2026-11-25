@@ -56,6 +56,9 @@ type QueriesCollector struct {
 	mappings       map[string]MetricMapSet
 	variableLabels map[string]VariableSet
 
+	// isReservedName tells the names of the metrics custom queries cannot use
+	isReservedName func(name string) bool
+
 	errorUserQueries      *prometheus.CounterVec
 	errorUserQueriesGauge prometheus.Gauge
 	lastUpdateTimestamp   prometheus.Gauge
@@ -399,11 +402,46 @@ func (q *QueriesCollector) ParseQueries(customQueries []byte) error {
 		if query.Name != "" {
 			metricMapNamespace = query.Name
 		}
-		q.mappings[name], q.variableLabels[name] = query.ToMetricMap(
-			fmt.Sprintf("%v_%v", q.Name(), metricMapNamespace))
+		namespace := fmt.Sprintf("%v_%v", q.Name(), metricMapNamespace)
+		q.mappings[name], q.variableLabels[name] = q.withoutReservedNames(name, namespace, query).ToMetricMap(namespace)
 	}
 
 	return nil
+}
+
+// SetReservedNames sets the check of the metric names a custom query cannot
+// use, as the exporter already exposes them
+func (q *QueriesCollector) SetReservedNames(isReserved func(name string) bool) {
+	q.isReservedName = isReserved
+}
+
+// withoutReservedNames discards, with a warning, the columns of a custom query
+// whose metric has a reserved name: exposing both would fail the scrape
+func (q *QueriesCollector) withoutReservedNames(name, namespace string, query UserQuery) UserQuery {
+	if q.isReservedName == nil {
+		return query
+	}
+
+	columns := make([]Mapping, 0, len(query.Metrics))
+	for _, mapping := range query.Metrics {
+		kept := make(Mapping, len(mapping))
+		for column, usage := range mapping {
+			metricName := column
+			if usage.Name != "" {
+				metricName = usage.Name
+			}
+			metricName = fmt.Sprintf("%v_%v", namespace, metricName)
+			if usage.Usage != LABEL && usage.Usage != DISCARD && q.isReservedName(metricName) {
+				log.Warning("The metric of a custom query has the name of a predefined metric. Skipping it.",
+					"queryName", name, "column", column, "metricName", metricName)
+				usage = ColumnMapping{Usage: DISCARD}
+			}
+			kept[column] = usage
+		}
+		columns = append(columns, kept)
+	}
+	query.Metrics = columns
+	return query
 }
 
 // InjectUserQueries injects the passed queries

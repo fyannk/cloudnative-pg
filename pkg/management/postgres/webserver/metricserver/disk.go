@@ -20,6 +20,7 @@ SPDX-License-Identifier: Apache-2.0
 package metricserver
 
 import (
+	"strings"
 	"time"
 
 	"github.com/cloudnative-pg/machinery/pkg/log"
@@ -73,6 +74,18 @@ func newDiskMetrics() diskMetrics {
 			Help: "Number of free inodes of the filesystem of the volume. " +
 				"Not reported when the filesystem does not report inodes",
 		}, []string{"volume"}),
+	}
+}
+
+// IsReservedMetricName tells whether the name is the one of a disk metric, which
+// a custom query cannot use: two metrics with the same name and other labels
+// would fail the whole scrape
+func IsReservedMetricName(name string) bool {
+	switch strings.TrimPrefix(name, PrometheusNamespace+"_disk_") {
+	case "total_bytes", "available_bytes", "used_bytes", "inodes", "inodes_free":
+		return strings.HasPrefix(name, PrometheusNamespace+"_disk_")
+	default:
+		return false
 	}
 }
 

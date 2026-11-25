@@ -23,6 +23,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -30,6 +31,7 @@ import (
 
 	"github.com/cloudnative-pg/cloudnative-pg/internal/management/cache"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/management/postgres"
+	m "github.com/cloudnative-pg/cloudnative-pg/pkg/management/postgres/metrics"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/management/postgres/volumeusage"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -204,5 +206,60 @@ var _ = Describe("disk metrics", func() {
 		Expect(names).To(ContainElements("cnpg_disk_total_bytes", "cnpg_disk_inodes_free", "cnpg_collector_fencing_on"))
 		Expect(gaugeValue(exporter.Metrics.Disk.InodesFree.WithLabelValues("pgdata"))).To(BeZero())
 		Expect(gaugeValue(exporter.Metrics.FencingOn)).To(BeEquivalentTo(1))
+	})
+})
+
+// A custom query exposing the name of a disk metric used to fail the whole
+// scrape, as Prometheus refuses two descriptions of the same metric
+var _ = Describe("a custom query named disk", func() {
+	It("loses the metrics having a reserved name, and keeps the others", func() {
+		queries := m.NewQueriesCollector("cnpg", nil, "postgres")
+		queries.SetReservedNames(IsReservedMetricName)
+		Expect(queries.ParseQueries([]byte(`
+disk:
+  query: "SELECT 'a' AS mount, 1 AS used_bytes, 2 AS other"
+  metrics:
+    - mount:
+        usage: LABEL
+    - used_bytes:
+        usage: GAUGE
+        description: used
+    - other:
+        usage: GAUGE
+        description: other
+renamed:
+  name: disk
+  query: "SELECT 1 AS inodes_free"
+  metrics:
+    - inodes_free:
+        usage: COUNTER
+        description: inodes
+`))).To(Succeed())
+
+		ch := make(chan *prometheus.Desc, 100)
+		queries.Describe(ch)
+		close(ch)
+		var names []string
+		for desc := range ch {
+			// the labels have no description
+			if desc != nil {
+				names = append(names, desc.String())
+			}
+		}
+		Expect(names).To(ContainElement(ContainSubstring("cnpg_disk_other")))
+		Expect(names).ToNot(ContainElement(ContainSubstring("cnpg_disk_used_bytes")))
+		Expect(names).ToNot(ContainElement(ContainSubstring("cnpg_disk_inodes_free")))
+	})
+
+	It("reserves exactly the names of the disk metrics", func() {
+		ch := make(chan *prometheus.Desc, 100)
+		newDiskMetrics().describe(ch)
+		close(ch)
+		for desc := range ch {
+			name := strings.Split(desc.String(), "\"")[1]
+			Expect(IsReservedMetricName(name)).To(BeTrue(), name)
+		}
+		Expect(IsReservedMetricName("cnpg_disk_other")).To(BeFalse())
+		Expect(IsReservedMetricName("used_bytes")).To(BeFalse())
 	})
 })
