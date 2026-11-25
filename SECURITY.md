@@ -1,5 +1,11 @@
 # Security Policy
 
+This is the security policy of the upstream project. For the unofficial build
+of the fyannk/cloudnative-pg fork, report a vulnerability privately through a
+[security advisory](https://github.com/fyannk/cloudnative-pg/security/advisories/new)
+on the fork. How to verify its assets is described in
+[Verifying release assets](docs/src/installation_upgrade.md#verifying-release-assets).
+
 ## EU Cyber Resilience Act (CRA)
 
 CRA stewardship: This project is supported under the Linux Foundation CRA

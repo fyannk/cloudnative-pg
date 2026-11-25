@@ -327,7 +327,9 @@ metrics, which can be classified in three major categories:
 
 - Volume related metrics, starting with `cnpg_disk_*`: size, used and
   available bytes, and total and free inodes of the filesystem of each volume
-  of the instance
+  of the instance. These names are reserved: a metric of a custom query taking
+  one of them, such as the column `used_bytes` of a query named `disk`, is
+  skipped with a warning in the log of the instance
 
 - Go runtime related metrics, starting with `go_*`
 
@@ -1043,6 +1045,7 @@ for more details), and two families of its own:
   [Restricted installations](operator_conf.md#restricted-installations)), is
   not counted and has no series: the operator does not watch it, and listing
   it from the cache would wait forever for a watch that never starts.
+  Only the elected replica of the operator reports it.
 - `cnpg_operator_build_info{version, commit, date}`: always `1`, with the
   build of the running operator in its labels.
 

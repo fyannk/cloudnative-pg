@@ -287,9 +287,15 @@ The consequences on an existing installation are described below.
   usual.
 - On an operator that already runs behind a proxy, the first start of a
   version with this setting, such as an upgrade from an upstream release,
-  rolls every cluster and pooler once, as the pods receive the proxy
-  variables. Set `PROPAGATE_PROXY_ENV` to `false` before the upgrade to
-  avoid it.
+  adds them to every cluster and pooler. The rollout that any operator upgrade
+  starts brings them, unless that upgrade would have kept the pods, with
+  [in-place updates](installation_upgrade.md#in-place-updates-of-the-instance-manager):
+  every instance is then restarted. Set `PROPAGATE_PROXY_ENV` to `false`
+  before the upgrade to keep the pods without them; it does not prevent the
+  rollout of the upgrade itself.
+- A workload that reached an object store directly goes through the proxy once
+  it has the variables, unless `NO_PROXY` matches the name of the object store:
+  check it before the upgrade.
 - A downgrade to a version without this setting, such as an upstream
   release, removes the propagated variables from the pods, which rolls every
   cluster and pooler that received them once more.

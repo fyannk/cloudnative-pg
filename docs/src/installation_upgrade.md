@@ -14,12 +14,12 @@ title: Installation and upgrades
 The operator can be installed like any other resource in Kubernetes,
 through a YAML manifest applied via `kubectl`.
 
-You can install the [latest operator manifest](https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/release-1.30/releases/cnpg-1.30.2.yaml)
-for this minor release as follows:
+You can install the [operator manifest](https://github.com/fyannk/cloudnative-pg/releases/download/v1.30.2-2/cnpg-1.30.2-2.yaml)
+of this [unofficial fork build](#unofficial-fork-builds) as follows:
 
 ```sh
 kubectl apply --server-side -f \
-  https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/release-1.30/releases/cnpg-1.30.2.yaml
+  https://github.com/fyannk/cloudnative-pg/releases/download/v1.30.2-2/cnpg-1.30.2-2.yaml
 ```
 
 You can verify that with:
@@ -61,6 +61,11 @@ for a more comprehensive example.
 
 ### Testing the latest development snapshot
 
+:::warning
+    The snapshots are the ones of the upstream operator, without the changes
+    of this fork.
+:::
+
 If you want to test or evaluate the latest development snapshot of
 CloudNativePG before the next official patch release, you can download the
 manifests from the
@@ -92,11 +97,15 @@ curl -sSfL \
 
 ### Using the Helm Chart
 
-The operator can be installed using the provided [Helm chart](https://github.com/cloudnative-pg/charts).
+The upstream operator can be installed using the provided [Helm chart](https://github.com/cloudnative-pg/charts).
+
+The chart does not support this fork: it installs neither its CRDs nor its
+webhook. Do not apply the fork manifest on top of a Helm installation either:
+it would add a second operator Deployment.
 
 ### Using OLM
 
-CloudNativePG can also be installed via the [Operator Lifecycle Manager (OLM)](https://olm.operatorframework.io/docs/)
+The upstream operator can also be installed via the [Operator Lifecycle Manager (OLM)](https://olm.operatorframework.io/docs/)
 directly from [OperatorHub.io](https://operatorhub.io/operator/cloudnative-pg).
 
 For deployments on Red Hat OpenShift, EDB offers and fully supports a certified
@@ -110,15 +119,19 @@ after the upstream version it is based on, followed by its own sequence
 number: `1.30.2-1`, `1.30.2-2`, and so on. In semantic versioning, the
 suffix makes it a pre-release, which sorts *below* the upstream `1.30.2`:
 
-- keep the fork bundles in their own OLM catalog, subscribed to on their own
-  channel, and do not mix them with the upstream bundles of the
-  `cloudnative-pg` package: OLM would treat the upstream `1.30.2` as an
-  upgrade of every `1.30.2-N` build, and never upgrade an upstream `1.30.2`
-  to a fork build;
+- the OLM bundle and catalog of the fork have a package of their own,
+  `cloudnative-pg-fyannk`, so OLM never upgrades one operator to the other. The
+  two packages define the same CRDs and cannot be installed together: OLM
+  refuses the second one. Moving from one to the other means removing the
+  `Subscription` and the `ClusterServiceVersion` of the first; keep the CRDs,
+  as deleting them deletes the clusters;
 - dependency update tools such as Renovate, which compare versions the same
   way, see a fork release as older than the upstream release it is based on,
   and propose the upstream one as an update. Pin the fork images and
-  manifests explicitly, or restrict such tools to the fork versions.
+  manifests explicitly, or restrict such tools to the fork versions;
+- the `kubectl-cnpg` `rpm` and `deb` packages of the fork have the same name as
+  the upstream ones, and a package manager replaces them with the upstream
+  `1.30.2`. Use the `tar.gz` archive, or hold the package.
 
 What the fork changes, with and without new settings, and how to replace an
 upstream operator or go back to it, is described in
@@ -461,7 +474,7 @@ in the monitoring documentation.
 
 ## Verifying release assets
 
-CloudNativePG cryptographically signs all official release assets. Verifying these
+The release workflow cryptographically signs the release manifest and the operator images. Verifying these
 signatures ensures the assets originate from the official repository and were
 published through our automated release workflow.
 
@@ -480,7 +493,7 @@ for more information.
 
 When installing via a direct YAML manifest, you should verify the manifest file
 using the corresponding bundle (the `.sigstore.json` file) provided on the
-[GitHub Release page](https://github.com/cloudnative-pg/cloudnative-pg/releases).
+[GitHub Release page](https://github.com/fyannk/cloudnative-pg/releases).
 
 Run the following command:
 
@@ -488,7 +501,7 @@ Run the following command:
 cosign verify-blob \
   cnpg-{version}.yaml \
   --bundle cnpg-{version}.sigstore.json \
-  --certificate-identity-regexp "^https://github.com/cloudnative-pg/cloudnative-pg/.github/workflows/release-publish.yml@refs/tags/v" \
+  --certificate-identity-regexp "^https://github.com/fyannk/cloudnative-pg/.github/workflows/release-publish.yml@refs/tags/v" \
   --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
 ```
 
@@ -496,23 +509,23 @@ cosign verify-blob \
 
 To verify a release binary, download both the artifact and the provenance file
 (`multiple.intoto.jsonl`) from the
-[GitHub release](https://github.com/cloudnative-pg/cloudnative-pg/releases),
+[GitHub release](https://github.com/fyannk/cloudnative-pg/releases),
 then run:
 
 ```shell
 slsa-verifier verify-artifact <ARTIFACT> \
   --provenance-path multiple.intoto.jsonl \
-  --source-uri github.com/cloudnative-pg/cloudnative-pg
+  --source-uri github.com/fyannk/cloudnative-pg
 ```
 
 ### Verifying the operator container images
 
-Run the following command to verify the signature of the CloudNativePG operator
-images:
+Run the following command to verify the signature of the operator images of
+this fork:
 
 ```bash
-cosign verify ghcr.io/cloudnative-pg/cloudnative-pg:{tag} \
-  --certificate-identity-regexp="^https://github.com/cloudnative-pg/cloudnative-pg/.github/workflows/release-publish.yml@refs/tags/v" \
+cosign verify ghcr.io/fyannk/cloudnative-pg:{tag} \
+  --certificate-identity-regexp="^https://github.com/fyannk/cloudnative-pg/.github/workflows/release-publish.yml@refs/tags/v" \
   --certificate-oidc-issuer="https://token.actions.githubusercontent.com"
 ```
 
@@ -523,14 +536,14 @@ command:
 To view the Software Bill of Materials (SBOM) in SPDX format:
 
 ```bash
-docker buildx imagetools inspect ghcr.io/cloudnative-pg/cloudnative-pg:{tag} \
+docker buildx imagetools inspect ghcr.io/fyannk/cloudnative-pg:{tag} \
   --format '{{ json (index .SBOM "linux/amd64").SPDX }}'
 ```
 
 To inspect the SLSA Provenance (build details):
 
 ```bash
-docker buildx imagetools inspect ghcr.io/cloudnative-pg/cloudnative-pg:{tag} \
+docker buildx imagetools inspect ghcr.io/fyannk/cloudnative-pg:{tag} \
   --format '{{ json (index .Provenance "linux/amd64").SLSA }}'
 ```
 

@@ -52,10 +52,10 @@ variable "revision" {
 suffix = (environment == "testing") ? "-testing" : ""
 
 title = "CloudNativePG Operator (unofficial fork build)"
-description = "Unofficial build of the CloudNativePG operator from the fyannk/cloudnative-pg fork for testing only. Not supported by the CloudNativePG project."
-authors = "The CloudNativePG Contributors"
+description = "Unofficial build of the CloudNativePG operator from the fyannk/cloudnative-pg fork. Not supported by the CloudNativePG project."
+authors = "fyannk, based on the work of The CloudNativePG Contributors"
 url = "https://github.com/fyannk/cloudnative-pg"
-documentation = "https://cloudnative-pg.io/docs/"
+documentation = "https://github.com/fyannk/cloudnative-pg/blob/v1.30.2-fyannk/docs/src/fork_differences.md"
 license = "Apache-2.0"
 now = timestamp()
 

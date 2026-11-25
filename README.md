@@ -6,7 +6,7 @@
 
 <p align="center">
   <strong>An unofficial build of the CloudNativePG 1.30.2 operator, with fixes and features proposed upstream.</strong><br>
-  It accepts the same manifests and replaces a stock 1.30.2 operator in place; every difference is documented.
+  Its manifest replaces the one of a stock 1.30.2 operator in place; the differences are documented.
 </p>
 
 <p align="center">
@@ -34,21 +34,24 @@ before they are merged, or instead of it.
 
 ## What differs from stock 1.30.2
 
-Nothing below needs a new permission, and the object names are unchanged.
+Nothing below needs a permission the stock release manifest does not grant, and
+the object names are unchanged.
 
 **Without any new setting**
 
-- Every managed object carries the `cnpg.io/reconcile=true` label, and each
+- The managed objects carry the `cnpg.io/reconcile=true` label, and each
   `Cluster` reports the operator that reconciled it in `status.operator`.
-- The proxy settings of the operator reach the instances and the poolers
+- The proxy settings of the operator reach the instances and the poolers,
+  whose traffic then goes through that proxy unless `NO_PROXY` matches
   (`PROPAGATE_PROXY_ENV=false` disables it).
 - `resizeInUseVolumes: false` in the section of the WAL or of a tablespace
   prevents the resize of its volumes.
 - Stalls are visible: a refused volume expansion, a resize waiting for a Pod
   restart, a blocked `Pooler`, a failed major upgrade or a failed
-  reconciliation each get a condition, a phase or a Warning event.
+  reconciliation each get a condition, a phase reason or a Warning event.
 - The instance manager names the full volumes when PostgreSQL stops, and a
-  demoted primary escalates its smart shutdown to a fast one.
+  demoted primary escalates its smart shutdown to a fast one, which cuts the
+  open sessions at once.
 - New metrics: `cnpg_pgbouncer_up`, `cnpg_disk_*`, `cnpg_operator_*`.
 
 **Stricter**
@@ -76,11 +79,11 @@ Prerequisites: a Kubernetes cluster supported by CloudNativePG 1.30, and
 
 ```sh
 kubectl apply --server-side -f \
-  https://github.com/fyannk/cloudnative-pg/releases/download/v1.30.2-1/cnpg-1.30.2-1.yaml
+  https://github.com/fyannk/cloudnative-pg/releases/download/v1.30.2-2/cnpg-1.30.2-2.yaml
 ```
 
 The operator runs in the `cnpg-system` namespace, from the image
-`ghcr.io/fyannk/cloudnative-pg:1.30.2-1`. Clusters are then created as with
+`ghcr.io/fyannk/cloudnative-pg:1.30.2-2`. Clusters are then created as with
 stock CloudNativePG: see its
 [quickstart](https://cloudnative-pg.io/docs/1.30/quickstart).
 

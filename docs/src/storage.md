@@ -324,6 +324,9 @@ the condition turns `False` with the `VolumeExpansionAccepted` reason, and a
 `Normal` event says so. A `Cluster` that never had a refused expansion has no
 such condition.
 
+While a `Cluster` is hibernated the condition is not evaluated: it keeps its
+last status and message until the `Cluster` is resumed.
+
 :::note[Known issue]
     Any `403 Forbidden` answer to the patch of a PVC is reported as a refused
     expansion, including an RBAC error, such as a missing `patch` permission
@@ -425,9 +428,9 @@ The WAL archiving is failing when the `ContinuousArchiving` condition of the
 `Cluster` is `False`. Only the instances set this condition, each time they
 archive a WAL file, so a failure would stay reported once the archiving
 configuration is removed, if no WAL file is archived again, for example while
-PostgreSQL is stopped by the full disk. The operator therefore removes a
-`False` `ContinuousArchiving` condition from a `Cluster` that has no Barman
-object store and no enabled plugin, or that disables the WAL archiving with the
+PostgreSQL is stopped by the full disk. The operator therefore ignores the
+condition, without changing it, for a `Cluster` that has no Barman object store
+and no enabled plugin, or that disables the WAL archiving with the
 `cnpg.io/skipWalArchiving` annotation: removing the archiving configuration
 lets `autoGrow` grow the volume again.
 
@@ -441,7 +444,10 @@ retried.
 expansion, preferably online. It reads the filesystem of the volume as the
 instance sees it: with a provisioner backing the volumes with a directory of a
 shared filesystem, such as `local-path` or NFS, that filesystem is not the one
-of the PVC, and the operator does not grow the volume.
+of the PVC, and its usage does not grow the volume. A full-disk stop still does,
+by one step at each stop and up to `maxSize`: an instance that is stopped
+reports no filesystem to compare with the PVC, so do not enable `autoGrow` with
+such a provisioner.
 
 #### The full-disk stop of an instance
 
@@ -573,8 +579,10 @@ $ kubectl delete pvc/cluster-example-3 pod/cluster-example-3
     `resizeInUseVolumes: false` in `.spec.storage` prevents the resize of
     every volume. A section with [`autoGrow`](#growing-the-volumes-automatically)
     follows its own flag only.
-    The `volumeAttributesClassName` of each `pvcTemplate` applies to the
-    volumes of its own section.
+    As upstream, a change of `volumeAttributesClassName` is applied only when
+    `.spec.storage.pvcTemplate` is set and `.spec.storage` allows the resize.
+    The operator then applies to each volume the class in the `pvcTemplate` of
+    its own section.
 :::
 
 :::note

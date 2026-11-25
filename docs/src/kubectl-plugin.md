@@ -18,6 +18,14 @@ You can install the `cnpg` plugin using a variety of methods.
     downloaded files, may be a good option.
 :::
 
+:::warning
+    The installation script and the package managers install the upstream
+    plugin. The one of this fork is in the assets of its
+    [releases](https://github.com/fyannk/cloudnative-pg/releases): use the
+    `tar.gz` archive, as a package manager replaces its `rpm` and `deb`
+    packages with the upstream ones of the same version.
+:::
+
 ### Via the installation script
 
 ```sh
@@ -1522,7 +1530,7 @@ table contains the full details:
 | publication     | clusters: get<br/>pods: get,list<br/>pods/exec: create                                                                                                                                                                                                                                                                                                |
 | reload          | clusters: get,patch                                                                                                                                                                                                                                                                                                                                   |
 | report cluster  | clusters: get<br/>pods: list<br/>pods/log: get<br/>jobs: list<br/>events: list<br/>PVCs: list                                                                                                                                                                                                                                                         |
-| report operator | **Required:**<br/>deployments: get<br/>**Optional (for full report):**<br/>configmaps: get<br/>events: list<br/>pods: list<br/>pods/log: get<br/>secrets: get<br/>services: get<br/>mutatingwebhookconfigurations: list[^1]<br/>validatingwebhookconfigurations: list[^1]<br/>**If OLM is present:**<br/>clusterserviceversions: list[^1]<br/>installplans: list[^1]<br/>subscriptions: list[^1] |
+| report operator | **Required:**<br/>deployments: get<br/>**Optional (for full report):**<br/>configmaps: get<br/>events: list<br/>pods: list<br/>pods/log: get<br/>secrets: get,list<br/>services: get<br/>mutatingwebhookconfigurations: list[^1]<br/>validatingwebhookconfigurations: list[^1]<br/>**If OLM is present:**<br/>clusterserviceversions: list[^1]<br/>installplans: list[^1]<br/>subscriptions: list[^1] |
 | restart         | clusters: get,patch<br/>clusters/status: patch<br/>pods: get,delete                                                                                                                                                                                                                                                                                   |
 | status          | clusters: get<br/>pods: list<br/>pods/exec: create (optional)<br/>pods/proxy: create<br/>PDBs: list<br/>objectstores.barmancloud.cnpg.io: get                                                                                                                                                                                                         |
 | subscription    | clusters: get<br/>pods: get,list<br/>pods/exec: create                                                                                                                                                                                                                                                                                                |

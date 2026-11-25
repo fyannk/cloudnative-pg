@@ -126,7 +126,8 @@ This process is automated via GitHub Actions and leverages
 
 The token issuer is `https://token.actions.githubusercontent.com`, and the
 signing identity corresponds to a GitHub workflow executed under the
-[cloudnative-pg](https://github.com/cloudnative-pg/cloudnative-pg/) repository.
+[fyannk/cloudnative-pg](https://github.com/fyannk/cloudnative-pg/) repository for the
+operator images of this fork.
 This workflow uses the [cosign-installer action](https://github.com/marketplace/actions/cosign-installer)
 to streamline the signing process.
 
@@ -134,8 +135,8 @@ To verify the authenticity of an operator image, use the following `cosign`
 command with the image digest:
 
 ```shell
-cosign verify ghcr.io/cloudnative-pg/cloudnative-pg@sha256:<DIGEST> \
-  --certificate-identity-regexp="^https://github.com/cloudnative-pg/cloudnative-pg/.github/workflows/release-publish.yml@refs/tags/v" \
+cosign verify ghcr.io/fyannk/cloudnative-pg@sha256:<DIGEST> \
+  --certificate-identity-regexp="^https://github.com/fyannk/cloudnative-pg/.github/workflows/release-publish.yml@refs/tags/v" \
   --certificate-oidc-issuer="https://token.actions.githubusercontent.com"
 ```
 
@@ -182,8 +183,8 @@ To verify a container image, pass its digest reference:
 
 ```shell
 slsa-verifier verify-image \
-  ghcr.io/cloudnative-pg/cloudnative-pg@sha256:<DIGEST> \
-  --source-uri github.com/cloudnative-pg/cloudnative-pg
+  ghcr.io/fyannk/cloudnative-pg@sha256:<DIGEST> \
+  --source-uri github.com/fyannk/cloudnative-pg
 ```
 
 ### Guidelines and Frameworks for Container Security
@@ -367,8 +368,9 @@ kubectl label clusterrole cnpg-cluster-status-editor-role \
 A label applies to every binding of the built-in role in every namespace.
 A write of the status bypasses the checks of the plugin (the target instance
 exists and is not fenced) and can change any status field, which is why it
-stays in a separate role. A write of the scale is validated by the operator
-webhook like a write of the spec.
+stays in a separate role. A write of the scale of a `Cluster` is
+validated by the operator webhook like a write of the spec. The scale of a
+`Pooler` is not checked by any webhook.
 
 The RBAC discussed here governs access to CloudNativePG's own custom resources.
 The next section covers the complementary side: the RBAC that the operator
