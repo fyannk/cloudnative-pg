@@ -24,11 +24,14 @@ import (
 	"errors"
 	"strings"
 
+	corev1 "k8s.io/api/core/v1"
 	apierrs "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
+	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/utils"
 )
 
@@ -54,9 +57,13 @@ const (
 // when an error ends the reconciliation, so that its owner sees the cause
 // without access to the operator logs. Errors that the operator causes
 // itself and retries at once (optimistic lock conflicts, loop control,
-// cancelled contexts) and errors already reported on the object by the
-// admission guard (terminal errors) are not recorded.
+// cancelled contexts), transient errors of the API server, retried too, the
+// ones of an object or a namespace being deleted, and errors already reported
+// on the object by the admission guard (terminal errors) are not recorded.
 func recordReconciliationError(recorder record.EventRecorder, object runtime.Object, err error) {
+	if isNotFoundOf(object, err) {
+		return
+	}
 	reason := reconciliationErrorReason(err)
 	if reason == "" {
 		return
@@ -67,6 +74,38 @@ func recordReconciliationError(recorder record.EventRecorder, object runtime.Obj
 		message = message[:eventMessageMaxLength-3] + "..."
 	}
 	recorder.Event(object, "Warning", reason, message)
+}
+
+// isNotFoundOf tells whether the error says that the reconciled object itself
+// does not exist anymore
+func isNotFoundOf(object runtime.Object, err error) bool {
+	if !apierrs.IsNotFound(err) {
+		return false
+	}
+	var status apierrs.APIStatus
+	accessor, accessorErr := meta.Accessor(object)
+	if accessorErr != nil || !errors.As(err, &status) || status.Status().Details == nil {
+		return false
+	}
+	details := status.Status().Details
+	return details.Group == apiv1.SchemeGroupVersion.Group && details.Name == accessor.GetName() &&
+		details.Kind == resourceOf(object)
+}
+
+// resourceOf returns the resource name of the kinds this function reports on
+func resourceOf(object runtime.Object) string {
+	switch object.(type) {
+	case *apiv1.Cluster:
+		return "clusters"
+	case *apiv1.Backup:
+		return "backups"
+	case *apiv1.ScheduledBackup:
+		return "scheduledbackups"
+	case *apiv1.Pooler:
+		return "poolers"
+	default:
+		return ""
+	}
 }
 
 // reconciliationErrorReason classifies an error ending a reconciliation into
@@ -81,7 +120,12 @@ func reconciliationErrorReason(err error) string {
 		errors.Is(err, utils.ErrTerminateLoop) ||
 		errors.Is(err, context.Canceled) ||
 		errors.Is(err, context.DeadlineExceeded) ||
-		apierrs.IsConflict(err) {
+		apierrs.IsConflict(err) ||
+		apierrs.IsTimeout(err) ||
+		apierrs.IsServerTimeout(err) ||
+		apierrs.IsTooManyRequests(err) ||
+		apierrs.IsServiceUnavailable(err) ||
+		apierrs.HasStatusCause(err, corev1.NamespaceTerminatingCause) {
 		return ""
 	}
 

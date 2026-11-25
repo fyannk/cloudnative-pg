@@ -840,17 +840,23 @@ var _ = Describe("handleSnapshotErrors", func() {
 		recorder := record.NewFakeRecorder(10)
 		se := &Reconciler{cli: cli, recorder: recorder}
 
-		result, err := se.handleSnapshotErrors(ctx, backup, &volumeSnapshotError{
+		snapshotErr := &volumeSnapshotError{
 			Name: "test-backup",
 			InternalError: volumesnapshotv1.VolumeSnapshotError{
 				Message: ptr.To("Failed to get snapshot class with error " +
 					"volumesnapshotclass.snapshot.storage.k8s.io \"sv-missing-class\" not found"),
 			},
-		})
+		}
+		result, err := se.handleSnapshotErrors(ctx, backup, snapshotErr)
 		Expect(err).ToNot(HaveOccurred())
 		Expect(result).To(Equal(&ctrl.Result{RequeueAfter: 10 * time.Second}))
 		Expect(recorder.Events).To(Receive(Equal("Warning VolumeSnapshotError VolumeSnapshot test-backup: " +
 			"Failed to get snapshot class with error " +
 			"volumesnapshotclass.snapshot.storage.k8s.io \"sv-missing-class\" not found (retrying until the deadline)")))
+
+		By("not recording it again at the next retry")
+		_, err = se.handleSnapshotErrors(ctx, backup, snapshotErr)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(recorder.Events).ToNot(Receive())
 	})
 })

@@ -489,6 +489,11 @@ var _ = Describe("scheduledbackup with a five-field schedule", func() {
 			ContainSubstring("Warning ScheduleFieldCount"),
 			ContainSubstring(`"0 2 * * *" has 5 fields instead of 6`),
 		)))
+
+		By("not recording it again at the next pass")
+		_, err = r.reconcileScheduledBackup(ctx, sb)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(recordedEvents(recorder)).ToNot(ContainElement(ContainSubstring("ScheduleFieldCount")))
 	})
 
 	It("reads it as standard cron, without the event, under SCHEDULED_BACKUP_CRON_FORMAT=standard",
@@ -579,5 +584,10 @@ var _ = Describe("scheduledbackup delayed by a backup that is not done", func() 
 		Expect(recordedEvents(recorder)).To(ContainElement(
 			"Warning BackupDelayed Schedule 2026-10-10T11:27:00Z passed while backup " +
 				"every-minute-20261010112600 is still started"))
+
+		By("not recording it again at the next pass")
+		_, err = r.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(scheduledBackup)})
+		Expect(err).ToNot(HaveOccurred())
+		Expect(recordedEvents(recorder)).To(BeEmpty())
 	})
 })

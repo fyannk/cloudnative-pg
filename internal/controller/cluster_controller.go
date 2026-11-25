@@ -129,7 +129,7 @@ func NewClusterReconciler(
 		InstanceClient:     remote.NewClient().Instance(),
 		Client:             operatorclient.NewExtendedClient(c),
 		Scheme:             mgr.GetScheme(),
-		Recorder:           mgr.GetEventRecorderFor("cloudnative-pg"), //nolint:staticcheck
+		Recorder:           NewEventRecorder(mgr, "cloudnative-pg"),
 		Plugins:            plugins,
 		OperatorClientCert: operatorClientCert,
 		rolloutManager: rolloutManager.New(

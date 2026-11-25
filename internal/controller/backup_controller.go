@@ -101,7 +101,7 @@ func NewBackupReconciler(
 	operatorClientCert *tls.Certificate,
 	admission *guard.Admission[*apiv1.Backup],
 ) *BackupReconciler {
-	recorder := mgr.GetEventRecorderFor("cloudnative-pg-backup") //nolint:staticcheck
+	recorder := NewEventRecorder(mgr, "cloudnative-pg-backup")
 	return &BackupReconciler{
 		Client:               cli,
 		DiscoveryClient:      discoveryClient,
@@ -1198,6 +1198,7 @@ func (r *BackupReconciler) waitIfOtherBackupsRunning(
 			"A backup is already in progress or waiting to be started, retrying",
 			"targetBackup", backup.Name,
 		)
+		wasPending := backup.Status.Phase == apiv1.BackupPhasePending
 		if patchErr := r.markBackupAsPending(ctx, backup); patchErr != nil {
 			if apierrs.IsConflict(patchErr) {
 				contextLogger.Debug("Backup changed since it was read, retrying")
@@ -1208,8 +1209,8 @@ func (r *BackupReconciler) waitIfOtherBackupsRunning(
 		}
 		// Name the backup this one waits for: a pending backup has no
 		// status.error, and its owner may not know which one is in its way
-		if blocker := clusterBackups.GetBlockingBackup(backup.Name); blocker != nil {
-			r.Recorder.Eventf(backup, "Normal", "BackupPending",
+		if blocker := clusterBackups.GetBlockingBackup(backup.Name); blocker != nil && !wasPending {
+			r.Recorder.Eventf(backup, "Normal", "BackupWaiting",
 				"Waiting for backup %s to complete (%s)", blocker.Name, blocker.Status.Phase)
 		}
 		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil

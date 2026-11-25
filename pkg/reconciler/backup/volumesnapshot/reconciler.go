@@ -671,6 +671,7 @@ func (se *Reconciler) handleSnapshotErrors(
 	contextLogger := log.FromContext(ctx).
 		WithName("handle_snapshot_errors")
 
+	_, alreadyReported := backup.Status.PluginMetadata[pluginName]
 	if err := addDeadlineStatus(ctx, se.cli, backup); err != nil {
 		return nil, fmt.Errorf("while adding deadline status: %w", err)
 	}
@@ -688,8 +689,10 @@ func (se *Reconciler) handleSnapshotErrors(
 	)
 	// The error is on the VolumeSnapshot and the Backup stays "started"
 	// until the deadline: say it on the Backup at the first retry
-	se.recorder.Eventf(backup, "Warning", "VolumeSnapshotError",
-		"VolumeSnapshot %s: %v (retrying until the deadline)", snapshotErr.Name, snapshotErr)
+	if !alreadyReported {
+		se.recorder.Eventf(backup, "Warning", "VolumeSnapshotError",
+			"VolumeSnapshot %s: %v (retrying until the deadline)", snapshotErr.Name, snapshotErr)
+	}
 	return &ctrl.Result{RequeueAfter: 10 * time.Second}, nil
 }
 

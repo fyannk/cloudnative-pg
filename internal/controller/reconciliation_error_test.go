@@ -99,6 +99,17 @@ var _ = Describe("reporting the error that ends a reconciliation", func() {
 		Entry("cancelled context", context.Canceled, ""),
 		Entry("terminal error, already reported by the admission guard",
 			reconcile.TerminalError(errors.New("invalid")), ""),
+		Entry("timeout", apierrs.NewTimeoutError("slow", 1), ""),
+		Entry("server timeout",
+			apierrs.NewServerTimeout(schema.GroupResource{Resource: "pods"}, "get", 1), ""),
+		Entry("too many requests", apierrs.NewTooManyRequests("busy", 1), ""),
+		Entry("service unavailable", fmt.Errorf("wrapped: %w", apierrs.NewServiceUnavailable("down")), ""),
+		Entry("terminating namespace", &apierrs.StatusError{ErrStatus: metav1.Status{
+			Reason: metav1.StatusReasonForbidden,
+			Details: &metav1.StatusDetails{Causes: []metav1.StatusCause{
+				{Type: corev1.NamespaceTerminatingCause},
+			}},
+		}}, ""),
 		Entry("full quota", quotaRejection("pods", "c-1"), eventReasonQuotaExceeded),
 		Entry("quota without a limit for the request",
 			apierrs.NewForbidden(schema.GroupResource{Resource: "pods"}, "c-1",
@@ -118,6 +129,19 @@ var _ = Describe("reporting the error that ends a reconciliation", func() {
 		Entry("invalid object",
 			apierrs.NewInvalid(schema.GroupKind{Kind: "Pod"}, "c-1", nil), eventReasonReconciliationFailed),
 		Entry("any other error", errors.New("unable to create Pod: boom"), eventReasonReconciliationFailed),
+	)
+
+	DescribeTable("skips the NotFound of the reconciled object only",
+		func(resource, name string, recorded bool) {
+			recorder := record.NewFakeRecorder(10)
+			cluster := &apiv1.Cluster{ObjectMeta: metav1.ObjectMeta{Name: "c", Namespace: "default"}}
+			recordReconciliationError(recorder, cluster, fmt.Errorf("wrapped: %w", apierrs.NewNotFound(
+				schema.GroupResource{Group: apiv1.SchemeGroupVersion.Group, Resource: resource}, name)))
+			Expect(recordedEvents(recorder)).To(HaveLen(map[bool]int{true: 1, false: 0}[recorded]))
+		},
+		Entry("the Cluster", "clusters", "c", false),
+		Entry("another Cluster", "clusters", "other", true),
+		Entry("another kind with the same name", "poolers", "c", true),
 	)
 
 	It("reports on the Cluster the creation rejected by a quota", func(ctx SpecContext) {

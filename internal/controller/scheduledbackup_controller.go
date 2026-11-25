@@ -63,6 +63,10 @@ type ScheduledBackupReconciler struct {
 	Scheme    *runtime.Scheme
 	Recorder  record.EventRecorder
 	Admission *guard.Admission[*apiv1.ScheduledBackup]
+
+	// delayedSchedules and fieldCounts hold what was already reported
+	delayedSchedules stateTracker
+	fieldCounts      stateTracker
 }
 
 // +kubebuilder:rbac:groups=postgresql.cnpg.io,resources=scheduledbackups,verbs=get;list;watch;create;update;patch;delete
@@ -84,6 +88,8 @@ func (r *ScheduledBackupReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		// This also happens when you delete a Backup resource in k8s.
 		// If that's the case, we have nothing to do
 		if apierrs.IsNotFound(err) {
+			r.delayedSchedules.begins(req.String(), "")
+			r.fieldCounts.begins(req.String(), "")
 			return ctrl.Result{}, nil
 		}
 		return ctrl.Result{}, err
@@ -148,7 +154,8 @@ func (r *ScheduledBackupReconciler) reconcile(
 			// A schedule that passes meanwhile is delayed: say so on the
 			// ScheduledBackup, which otherwise only shows a next schedule
 			// time in the past
-			if next := scheduledBackup.Status.NextScheduleTime; next != nil && time.Now().After(next.Time) {
+			if next := scheduledBackup.Status.NextScheduleTime; next != nil && time.Now().After(next.Time) &&
+				r.delayedSchedules.begins(client.ObjectKeyFromObject(scheduledBackup).String(), next.String()) {
 				r.Recorder.Eventf(scheduledBackup, "Warning", "BackupDelayed",
 					"Schedule %s passed while backup %s is still %s",
 					next.UTC().Format(time.RFC3339), backup.GetName(), backup.Status.Phase)
@@ -178,8 +185,12 @@ func (r *ScheduledBackupReconciler) reconcileScheduledBackup(
 
 	// A five-field schedule, the standard cron format, is read with the
 	// seconds field first unless the operator is told otherwise. The webhook
-	// only warns, which GitOps tools never show: say it on the object too.
-	if fiveField && format != utils.CronFormatStandard {
+	// only warns, which GitOps tools never show: say it on the object too,
+	// once per schedule.
+	key := client.ObjectKeyFromObject(scheduledBackup).String()
+	if !fiveField || format == utils.CronFormatStandard {
+		r.fieldCounts.begins(key, "")
+	} else if r.fieldCounts.begins(key, scheduledBackup.GetSchedule()) {
 		r.Recorder.Eventf(scheduledBackup, "Warning", "ScheduleFieldCount",
 			"schedule %q has 5 fields instead of 6: it is read with the seconds field first "+
 				"(see the next run time in the BackupSchedule events)",

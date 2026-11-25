@@ -422,7 +422,7 @@ func setupReconcilers(
 	if err := (&controller.ScheduledBackupReconciler{
 		Client:    c,
 		Scheme:    mgr.GetScheme(),
-		Recorder:  mgr.GetEventRecorderFor("cloudnative-pg-scheduledbackup"), //nolint:staticcheck
+		Recorder:  controller.NewEventRecorder(mgr, "cloudnative-pg-scheduledbackup"),
 		Admission: webhookv1.NewScheduledBackupAdmissionGuard(),
 	}).SetupWithManager(ctx, mgr, maxConcurrentReconciles); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "ScheduledBackup")
@@ -433,7 +433,7 @@ func setupReconcilers(
 		ReloadWatch: reloadWatch,
 		Client:      c,
 		Scheme:      mgr.GetScheme(),
-		Recorder:    mgr.GetEventRecorderFor("cloudnative-pg-pooler"), //nolint:staticcheck
+		Recorder:    controller.NewEventRecorder(mgr, "cloudnative-pg-pooler"),
 		Admission:   webhookv1.NewPoolerAdmissionGuard(),
 	}).SetupWithManager(ctx, mgr, maxConcurrentReconciles); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Pooler")

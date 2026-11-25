@@ -732,7 +732,12 @@ var _ = Describe("backup pending state", func() {
 			// A pending backup has no status.error: the one it waits for is
 			// named in an event
 			Expect(recordedEvents(recorder)).To(ContainElement(
-				"Normal BackupPending Waiting for backup backup-1-running to complete (running)"))
+				"Normal BackupWaiting Waiting for backup backup-1-running to complete (running)"))
+
+			By("not recording it again at the next pass")
+			_, err = env.backupReconciler.waitIfOtherBackupsRunning(ctx, pendingBackup, cluster)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(recordedEvents(recorder)).To(BeEmpty())
 		})
 
 		It("does not set pending when backup can execute", func(ctx context.Context) {
