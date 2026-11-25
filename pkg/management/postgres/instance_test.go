@@ -796,11 +796,21 @@ var _ = Describe("the smart shutdown of a demoted primary", func() {
 	It("reports the failure of the fast shutdown it escalated to", func() {
 		postmasterDown := make(chan struct{})
 		err := runSmartShutdownUnlessDemoted(context.Background(),
-			func() error { <-postmasterDown; return nil },
+			func() error { <-postmasterDown; return errors.New("smart timed out") },
 			func() error { close(postmasterDown); return errors.New("fast failed") },
 			func() bool { return true },
 			period)
 		Expect(err).To(MatchError("fast failed"))
+	})
+
+	It("succeeds when the smart shutdown ended by itself before the fast request", func() {
+		demoted := make(chan struct{})
+		err := runSmartShutdownUnlessDemoted(context.Background(),
+			func() error { <-demoted; return nil },
+			func() error { return errors.New("instance is not running") },
+			func() bool { close(demoted); return true },
+			period)
+		Expect(err).ToNot(HaveOccurred())
 	})
 })
 

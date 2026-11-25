@@ -181,10 +181,6 @@ func (r *ClusterReconciler) ensureCASecret(ctx context.Context, cluster *apiv1.C
 	var secret corev1.Secret
 	err := r.Get(ctx, client.ObjectKey{Namespace: cluster.GetNamespace(), Name: secretName}, &secret)
 	if err == nil {
-		if err := ensureReconcileLabel(ctx, r.Client, &secret); err != nil {
-			return nil, err
-		}
-
 		// Verify the validity of this CA and renew it if needed
 		err = r.renewCASecret(ctx, &secret)
 		if err != nil {
@@ -342,9 +338,6 @@ func (r *ClusterReconciler) ensureLeafCertificate(
 	err := r.Get(ctx, secretName, &secret)
 	switch {
 	case err == nil:
-		if err := ensureReconcileLabel(ctx, r.Client, &secret); err != nil {
-			return err
-		}
 		if err := r.renewAndUpdateCertificate(ctx, caSecret, &secret, altDNSNames); err != nil {
 			return err
 		}

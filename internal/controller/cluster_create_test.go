@@ -945,6 +945,23 @@ var _ = Describe("CreateOrPatchPodMonitor", func() {
 		Expect(apierrs.IsForbidden(createOrPatchPodMonitor(ctx, failing, manager))).To(BeTrue())
 	})
 
+	It("returns the NotFound of a PodMonitor deleted meanwhile, to be created again", func() {
+		existing := manager.podMonitor.DeepCopy()
+		existing.Labels = map[string]string{"old": "label"}
+		existing.Spec.PodTargetLabels = []string{"old"}
+		deleted := fake.NewClientBuilder().WithScheme(schemeBuilder.BuildWithAllKnownScheme()).
+			WithObjects(existing).
+			WithInterceptorFuncs(interceptor.Funcs{
+				Patch: func(context.Context, k8client.WithWatch, k8client.Object, k8client.Patch,
+					...k8client.PatchOption,
+				) error {
+					return apierrs.NewNotFound(
+						schema.GroupResource{Group: "monitoring.coreos.com", Resource: "podmonitors"}, "test")
+				},
+			}).Build()
+		Expect(apierrs.IsNotFound(createOrPatchPodMonitor(ctx, deleted, manager))).To(BeTrue())
+	})
+
 	It("should remove the PodMonitor if it is disabled and is owned by a cluster", func() {
 		cluster := apiv1.Cluster{
 			TypeMeta: metav1.TypeMeta{

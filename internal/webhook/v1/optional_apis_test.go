@@ -25,6 +25,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
@@ -303,11 +304,16 @@ var _ = Describe("Objects asking for an unavailable optional API", func() {
 			Expect((&ClusterCustomDefaulter{}).Default(ctx, cluster)).To(Succeed())
 			_, validationErr := (&ClusterCustomValidator{}).ValidateCreate(ctx, cluster)
 			Expect(validationErr).ToNot(HaveOccurred())
-			result, err := NewClusterAdmissionGuard(nil).EnsureResourceIsAdmitted(ctx,
+			result, err := NewClusterAdmissionGuard(fake.NewClientBuilder().Build()).EnsureResourceIsAdmitted(ctx,
 				guard.AdmissionParams[*apiv1.Cluster]{Object: cluster, ApplyChanges: false})
 			Expect(err).ToNot(HaveOccurred())
 			Expect(result.IsZero()).To(BeTrue(), "the guard requeues an invalid object")
 			Expect(cluster.Status.Phase).NotTo(Equal(apiv1.PhaseDefinitionInvalid))
+
+			// The instance manager probes no optional API, and says nothing of them
+			warnings, err := (&ClusterCustomValidator{skipOptionalAPIs: true}).ValidateCreate(ctx, cluster)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(warnings).ToNot(ContainElement(ContainSubstring("API is not available")))
 
 			// The same Cluster, created now, is refused
 			_, err = (&ClusterCustomValidator{}).ValidateCreate(admissionContext(ctx), cluster)

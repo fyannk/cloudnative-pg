@@ -164,7 +164,8 @@ func SetVolumeSnapshot(value bool) {
 // ProbeListable reports whether the kind of the given list can be listed in
 // every given namespace, or cluster-wide when no namespace is given: the
 // scope its informer will use. It returns false without error when the
-// operator is forbidden to list the kind or the kind is not installed. Any
+// operator is forbidden to list the kind or the kind is not installed, with
+// the namespace of the refusal, empty when cluster-wide. Any
 // other error is returned, so that a transient failure does not disable a
 // feature for the life of the process.
 func ProbeListable(
@@ -172,7 +173,7 @@ func ProbeListable(
 	c client.Reader,
 	list client.ObjectList,
 	namespaces []string,
-) (bool, error) {
+) (available bool, refusedIn string, err error) {
 	scopes := namespaces
 	if len(scopes) == 0 {
 		scopes = []string{""}
@@ -189,13 +190,13 @@ func ProbeListable(
 		case err == nil:
 			continue
 		case apierrors.IsForbidden(err), apierrors.IsNotFound(err), meta.IsNoMatchError(err):
-			return false, nil
+			return false, namespace, nil
 		default:
-			return false, err
+			return false, namespace, err
 		}
 	}
 
-	return true, nil
+	return true, "", nil
 }
 
 // HaveVolumeSnapshot returns true if we're running under a system that implements

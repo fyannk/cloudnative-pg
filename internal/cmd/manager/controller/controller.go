@@ -570,13 +570,18 @@ func probeOptionalAPIs(ctx context.Context, c client.Reader, conf *configuration
 			setupLog.Info("Optional API disabled by configuration", "api", name)
 			return nil
 		}
-		available, err := utils.ProbeListable(ctx, c, list, scopes)
+		available, refusedIn, err := utils.ProbeListable(ctx, c, list, scopes)
 		if err != nil {
 			setupLog.Error(err, "unable to probe an optional API", "api", name)
 			return err
 		}
 		if !available {
-			setupLog.Info("Optional API not installed or forbidden, disabled", "api", name)
+			scope := "cluster-wide"
+			if refusedIn != "" {
+				scope = "namespace " + refusedIn
+			}
+			setupLog.Warning("Optional API not installed or forbidden, disabled until the operator is restarted",
+				"api", name, "refusedIn", scope)
 			*enabled = false
 		}
 		return nil

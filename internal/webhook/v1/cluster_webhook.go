@@ -79,11 +79,13 @@ func SetupClusterWebhookWithManager(mgr ctrl.Manager) error {
 // NewClusterAdmissionGuard creates a guard to protect a reconciliation loop.
 // The reader lists the PVCs of a Cluster, to tell whether it is a new one
 // before writing the default StorageClass into it (see
-// ClusterCustomDefaulter); with a nil reader the guard never writes it.
+// ClusterCustomDefaulter); with a nil reader, the one of the instance
+// manager, the guard never writes it, and does not check the optional APIs,
+// which only the operator probes.
 func NewClusterAdmissionGuard(reader client.Reader) *guard.Admission[*apiv1.Cluster] {
 	return &guard.Admission[*apiv1.Cluster]{
 		Defaulter: &ClusterCustomDefaulter{reader: reader},
-		Validator: newBypassableValidator[*apiv1.Cluster](&ClusterCustomValidator{}),
+		Validator: newBypassableValidator[*apiv1.Cluster](&ClusterCustomValidator{skipOptionalAPIs: reader == nil}),
 	}
 }
 
@@ -205,7 +207,10 @@ func hasPersistentVolumeClaims(
 
 // ClusterCustomValidator struct is responsible for validating the Cluster resource
 // when it is created, updated, or deleted.
-type ClusterCustomValidator struct{}
+type ClusterCustomValidator struct {
+	// skipOptionalAPIs disables the checks about the optional APIs
+	skipOptionalAPIs bool
+}
 
 // ValidateCreate implements webhook.CustomValidator so a webhook will be registered for the type Cluster.
 func (v *ClusterCustomValidator) ValidateCreate(
@@ -221,9 +226,11 @@ func (v *ClusterCustomValidator) ValidateCreate(
 	if !isAdmissionRequest(ctx) {
 		stored = cluster
 	}
-	apiErrs, apiWarnings := getClusterUnavailableAPIProblems(cluster, stored)
-	allErrs = append(allErrs, apiErrs...)
-	allWarnings = append(allWarnings, apiWarnings...)
+	if !v.skipOptionalAPIs {
+		apiErrs, apiWarnings := getClusterUnavailableAPIProblems(cluster, stored)
+		allErrs = append(allErrs, apiErrs...)
+		allWarnings = append(allWarnings, apiWarnings...)
+	}
 
 	if len(allErrs) == 0 {
 		return allWarnings, nil

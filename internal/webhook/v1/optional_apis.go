@@ -56,7 +56,7 @@ func unavailableAPIMessage(api, setting string) string {
 
 var (
 	clusterImageCatalogUnavailable = unavailableAPIMessage("ClusterImageCatalog", "API_CLUSTER_IMAGE_CATALOG_ENABLED") +
-		", use a namespaced ImageCatalog"
+		", use a namespaced ImageCatalog, or restart the operator if the API became available after it started"
 	volumeSnapshotUnavailable = unavailableAPIMessage("VolumeSnapshot", "API_VOLUME_SNAPSHOT_ENABLED") +
 		"; if the VolumeSnapshot CRD was installed after the operator started, restart the operator"
 	podMonitorUnavailable = unavailableAPIMessage("PodMonitor", "API_POD_MONITOR_ENABLED") +

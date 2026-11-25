@@ -21,6 +21,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"reflect"
@@ -760,15 +761,7 @@ func (r *ClusterReconciler) copyPullSecretFromOperator(ctx context.Context, clus
 	cluster.SetInheritedDataAndOwnershipFor(&secret.ObjectMeta, metadatarules.Secrets)
 
 	// Another sync loop may have already created the service. Let's check that
-	err = r.Create(ctx, &secret)
-	if apierrs.IsAlreadyExists(err) {
-		var existing corev1.Secret
-		if err := r.Get(ctx, client.ObjectKeyFromObject(&secret), &existing); err != nil {
-			return "", err
-		}
-		return clusterSecretName, r.ensureSecretMetadata(ctx, cluster, &existing)
-	}
-	if err != nil {
+	if err := r.Create(ctx, &secret); err != nil && !apierrs.IsAlreadyExists(err) {
 		return "", err
 	}
 
@@ -1072,18 +1065,22 @@ func createOrPatchPodMonitor(
 	}
 
 	err := reconcilePodMonitor(ctx, cli, manager)
-	if meta.IsNoMatchError(err) || apierrs.IsNotFound(err) {
+	if meta.IsNoMatchError(err) || errors.Is(err, errPodMonitorAPINotServed) {
 		// The API was served when the operator started and is not anymore,
 		// its CRD having been removed since: the monitoring of a cluster must
 		// not stop its reconciliation, failover included
 		contextLogger.Warning(
-			"Cannot reconcile the PodMonitor object, skipping it: the PodMonitor API is not served anymore, "+
-				"or the object was deleted meanwhile. If the PodMonitor CRD was removed, restart the operator",
+			"Cannot reconcile the PodMonitor object, skipping it: the PodMonitor API is not served anymore. "+
+				"If the PodMonitor CRD was removed, restart the operator",
 			"error", err)
 		return nil
 	}
 	return err
 }
+
+// errPodMonitorAPINotServed is returned when a PodMonitor cannot be created
+// because its API is not found
+var errPodMonitorAPINotServed = errors.New("the PodMonitor API is not served")
 
 // reconcilePodMonitor creates, patches or deletes the PodMonitor
 func reconcilePodMonitor(
@@ -1125,7 +1122,11 @@ func reconcilePodMonitor(
 	// Pod monitor enabled and no pod monitor - create it
 	case manager.IsPodMonitorEnabled() && podMonitor == nil:
 		contextLogger.Debug("Creating PodMonitor")
-		return cli.Create(ctx, expectedPodMonitor)
+		err := cli.Create(ctx, expectedPodMonitor)
+		if apierrs.IsNotFound(err) {
+			return fmt.Errorf("%w: %w", errPodMonitorAPINotServed, err)
+		}
+		return err
 	// Pod monitor enabled and pod monitor present - update it
 	default:
 		origPodMonitor := podMonitor.DeepCopy()
@@ -1179,6 +1180,9 @@ func (r *ClusterReconciler) createRoleBinding(ctx context.Context, cluster *apiv
 	var existing rbacv1.RoleBinding
 	err := r.Get(ctx, client.ObjectKeyFromObject(&roleBinding), &existing)
 	if err == nil {
+		if !metav1.IsControlledBy(&existing, cluster) {
+			return nil
+		}
 		return ensureReconcileLabel(ctx, r.Client, &existing)
 	}
 	if !apierrs.IsNotFound(err) {
@@ -1561,7 +1565,7 @@ func (r *ClusterReconciler) joinReplicaInstance(
 	}
 
 	inheritJobMetadata(cluster, job)
-	cluster.SetInheritedDataAndOwnership(&job.ObjectMeta)
+	cluster.SetInheritedData(&job.ObjectMeta)
 
 	if err := r.Create(ctx, job); err != nil {
 		if !apierrs.IsAlreadyExists(err) {

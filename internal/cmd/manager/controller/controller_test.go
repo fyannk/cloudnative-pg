@@ -21,14 +21,25 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 
+	volumesnapshotv1 "github.com/kubernetes-csi/external-snapshotter/client/v8/apis/volumesnapshot/v1"
+	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrs "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
+	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
 	"github.com/cloudnative-pg/cloudnative-pg/internal/configuration"
+	schemeBuilder "github.com/cloudnative-pg/cloudnative-pg/internal/scheme"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/certs"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/versions"
 
@@ -185,4 +196,74 @@ var _ = Describe("loadConfiguration", func() {
 		Expect(conf.InheritedLabels).To(ConsistOf("team"))
 		Expect(conf.OperatorNamespace).To(Equal("cnpg-system"))
 	})
+})
+
+// The operator probes the optional APIs once: what the probe finds holds for
+// the life of the process
+var _ = Describe("the startup probe of the optional APIs", func() {
+	type api struct {
+		list    client.ObjectList
+		enabled func(conf *configuration.Data) *bool
+	}
+	apis := map[string]api{
+		"PodMonitor": {
+			&monitoringv1.PodMonitorList{},
+			func(conf *configuration.Data) *bool { return &conf.APIPodMonitorEnabled },
+		},
+		"VolumeSnapshot": {
+			&volumesnapshotv1.VolumeSnapshotList{},
+			func(conf *configuration.Data) *bool { return &conf.APIVolumeSnapshotEnabled },
+		},
+		"ClusterImageCatalog": {
+			&apiv1.ClusterImageCatalogList{},
+			func(conf *configuration.Data) *bool { return &conf.APIClusterImageCatalogEnabled },
+		},
+		"Node": {
+			&corev1.NodeList{},
+			func(conf *configuration.Data) *bool { return &conf.APINodeEnabled },
+		},
+	}
+	resource := schema.GroupResource{Resource: "things"}
+
+	for name, target := range apis {
+		DescribeTable(name,
+			func(ctx SpecContext, listErr error, configured, enabled, failed bool) {
+				listed := false
+				cli := fake.NewClientBuilder().WithScheme(schemeBuilder.BuildWithAllKnownScheme()).
+					WithInterceptorFuncs(interceptor.Funcs{
+						List: func(_ context.Context, _ client.WithWatch, list client.ObjectList,
+							_ ...client.ListOption,
+						) error {
+							if reflect.TypeOf(list) != reflect.TypeOf(target.list) {
+								return nil
+							}
+							listed = true
+							return listErr
+						},
+					}).Build()
+				conf := &configuration.Data{
+					APIPodMonitorEnabled: true, APIVolumeSnapshotEnabled: true,
+					APIClusterImageCatalogEnabled: true, APINodeEnabled: true,
+				}
+				*target.enabled(conf) = configured
+
+				err := probeOptionalAPIs(ctx, cli, conf)
+				Expect(err != nil).To(Equal(failed))
+				Expect(listed).To(Equal(configured))
+				if !failed {
+					Expect(*target.enabled(conf)).To(Equal(enabled))
+				}
+				for other, otherAPI := range apis {
+					if other != name {
+						Expect(*otherAPI.enabled(conf)).To(BeTrue(), other)
+					}
+				}
+			},
+			Entry("available", nil, true, true, false),
+			Entry("forbidden", apierrs.NewForbidden(resource, "", nil), true, false, false),
+			Entry("not installed", &meta.NoKindMatchError{}, true, false, false),
+			Entry("failing for another reason", errors.New("timeout"), true, false, true),
+			Entry("disabled by its setting", nil, false, false, false),
+		)
+	}
 })

@@ -668,7 +668,7 @@ func (instance *Instance) TryShuttingDownSmartFast(ctx context.Context) error {
 	if smartTimeout > 0 {
 		contextLogger.Info("Requesting smart shutdown of the PostgreSQL instance")
 		// The escalation skips the CHECKPOINT: the smart shutdown in progress
-		// refuses new connections, and ran its own before starting
+		// starts with its own, which may still be running
 		fast := shutdownOptions{Mode: shutdownModeFast, Wait: true, Timeout: &maxStopDelay, SkipCheckpoint: true}
 		err = runSmartShutdownUnlessDemoted(
 			ctx,
@@ -730,7 +730,8 @@ func (instance *Instance) isNoLongerTargetPrimary() bool {
 // demoted in the meantime. When it has, a fast shutdown is requested on top of
 // the smart one: PostgreSQL upgrades the shutdown in progress, the sessions are
 // terminated and the shutdown checkpoint is shipped to the standbys at once.
-// The result is the one of the shutdown that completed the stop.
+// The result is the one of the shutdown that completed the stop: the smart one
+// when it ended cleanly, even if the fast request failed.
 func runSmartShutdownUnlessDemoted(
 	ctx context.Context,
 	smart func() error,
@@ -757,9 +758,13 @@ func runSmartShutdownUnlessDemoted(
 				"escalating the smart shutdown in progress to a fast shutdown")
 			err := fast()
 			// the smart request returns once the postmaster is down
-			if smartErr := <-smartResult; smartErr != nil {
-				contextLogger.Debug("Smart shutdown request ended after the escalation", "err", smartErr)
+			smartErr := <-smartResult
+			if smartErr == nil {
+				// the instance stopped: a fast request failing because it
+				// found nothing to stop is not an error
+				return nil
 			}
+			contextLogger.Debug("Smart shutdown request ended after the escalation", "err", smartErr)
 			return err
 		}
 	}

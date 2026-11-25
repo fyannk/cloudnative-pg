@@ -152,14 +152,14 @@ var _ = Describe("Probing an optional API", func() {
 			apierrors.NewNotFound(schema.GroupResource{Resource: "configmaps"}, ""),
 			&meta.NoKindMatchError{GroupKind: schema.GroupKind{Kind: "PodMonitor"}},
 		} {
-			available, probeErr := ProbeListable(ctx, listError(err), &corev1.ConfigMapList{}, nil)
+			available, _, probeErr := ProbeListable(ctx, listError(err), &corev1.ConfigMapList{}, nil)
 			Expect(probeErr).ToNot(HaveOccurred())
 			Expect(available).To(BeFalse())
 		}
 	})
 
 	It("returns any other error instead of disabling the API", func(ctx SpecContext) {
-		_, err := ProbeListable(ctx, listError(errors.New("timeout")), &corev1.ConfigMapList{}, nil)
+		_, _, err := ProbeListable(ctx, listError(errors.New("timeout")), &corev1.ConfigMapList{}, nil)
 		Expect(err).To(MatchError("timeout"))
 	})
 
@@ -169,7 +169,10 @@ var _ = Describe("Probing an optional API", func() {
 			forbidden: "locked",
 		}
 		Expect(ProbeListable(ctx, reader, &corev1.ConfigMapList{}, []string{"open"})).To(BeTrue())
-		Expect(ProbeListable(ctx, reader, &corev1.ConfigMapList{}, []string{"open", "locked"})).To(BeFalse())
+		available, refusedIn, err := ProbeListable(ctx, reader, &corev1.ConfigMapList{}, []string{"open", "locked"})
+		Expect(err).ToNot(HaveOccurred())
+		Expect(available).To(BeFalse())
+		Expect(refusedIn).To(Equal("locked"))
 	})
 })
 
