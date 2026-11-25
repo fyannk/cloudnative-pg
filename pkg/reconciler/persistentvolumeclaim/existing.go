@@ -59,6 +59,13 @@ func reconcileExistingPVCs(
 		return nil, nil
 	}
 
+	// nothing can apply: the storage sections are not even looked up, as a
+	// leftover PVC may have lost its own
+	if !cluster.ShouldResizeInUseVolumes() && !HasAutoGrow(cluster) &&
+		cluster.Spec.StorageConfiguration.PersistentVolumeClaimTemplate == nil {
+		return nil, nil
+	}
+
 	contextLogger := log.FromContext(ctx)
 
 	var refusals []*volumeExpansionRefusal
@@ -108,7 +115,9 @@ func reconcileExistingPVCs(
 // storage configuration of a PVC role. A PVC is resized when the section of
 // its own role allows it, and the one of PGDATA, `.spec.storage`, too: disabling
 // the resize there freezes every volume. A section with autoGrow asks for
-// the resize of its volumes, and only its own flag counts.
+// the resize of its volumes, and only its own flag counts. The volume
+// attributes class is reconciled only when the section of PGDATA has a PVC
+// template.
 func getReconciliationUnits(
 	cluster *apiv1.Cluster,
 	storageConfiguration *apiv1.StorageConfiguration,
@@ -119,7 +128,7 @@ func getReconciliationUnits(
 		(storageConfiguration.AutoGrow != nil || cluster.ShouldResizeInUseVolumes()) {
 		reconciliationUnits = append(reconciliationUnits, reconcilePVCQuantity)
 	}
-	if storageConfiguration.PersistentVolumeClaimTemplate != nil {
+	if cluster.Spec.StorageConfiguration.PersistentVolumeClaimTemplate != nil {
 		reconciliationUnits = append(reconciliationUnits, reconcileVolumeAttributeClass)
 	}
 

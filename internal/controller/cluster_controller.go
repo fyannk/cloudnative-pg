@@ -749,15 +749,6 @@ func (r *ClusterReconciler) ensureNoFailoverOnFullDisk(
 		"Insufficient disk space detected in a pod. PostgreSQL cannot proceed until the PVC group is enlarged",
 	)
 
-	// the rest of the reconciliation is skipped, but the PVCs are still
-	// resized: a larger size, from the cluster or from autoGrow, is the way
-	// out for the instances
-	if _, err := persistentvolumeclaim.ReconcileExisting(
-		ctx, r.Client, r.Recorder, cluster, resources.pvcs.Items, instances,
-	); err != nil {
-		return ctrl.Result{}, err
-	}
-
 	reason := "Insufficient disk space detected in one or more pods is preventing PostgreSQL from running." +
 		"Please verify your storage settings. Further information inside .status.instancesReportedState"
 	if err := r.RegisterPhase(
@@ -768,6 +759,18 @@ func (r *ClusterReconciler) ensureNoFailoverOnFullDisk(
 	); err != nil {
 		return ctrl.Result{}, err
 	}
+
+	// the rest of the reconciliation is skipped, but the PVCs are still
+	// resized: a larger size, from the cluster or from autoGrow, is the way
+	// out for the instances. A failure is reported and must hide neither the
+	// phase above nor its requeue.
+	if _, err := persistentvolumeclaim.ReconcileExisting(
+		ctx, r.Client, r.Recorder, cluster, resources.pvcs.Items, instances,
+	); err != nil {
+		contextLogger.Error(err, "Cannot reconcile the PVCs while an instance has no disk space left")
+		recordReconciliationError(r.Recorder, cluster, err)
+	}
+
 	return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
 }
 

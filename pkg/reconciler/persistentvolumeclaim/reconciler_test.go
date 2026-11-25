@@ -793,8 +793,30 @@ var _ = Describe("Reconcile existing PVCs with the storage configuration of thei
 		wal := storage(ptr.To(false))
 		wal.PersistentVolumeClaimTemplate = &corev1.PersistentVolumeClaimSpec{VolumeAttributesClassName: ptr.To("fast")}
 		pvcs = reconcile(spec(storage(ptr.To(false)), wal, storage(ptr.To(false))))
+		Expect(pvcs[utils.PVCRolePgWal].Spec.VolumeAttributesClassName).To(BeNil())
+
+		By("setting a pvcTemplate in spec.storage too: the class of walStorage is applied, as upstream")
+		data := storage(ptr.To(false))
+		data.PersistentVolumeClaimTemplate = &corev1.PersistentVolumeClaimSpec{}
+		pvcs = reconcile(spec(data, wal, storage(ptr.To(false))))
 		Expect(pvcs[utils.PVCRolePgWal].Spec.VolumeAttributesClassName).To(HaveValue(Equal("fast")))
 		Expect(pvcs[utils.PVCRolePgData].Spec.VolumeAttributesClassName).To(BeNil())
 		Expect(pvcs[utils.PVCRolePgTablespace].Spec.VolumeAttributesClassName).To(BeNil())
+	})
+})
+
+var _ = Describe("a leftover WAL PVC of a cluster without walStorage", func() {
+	It("is ignored when no reconciliation unit can apply", func(ctx SpecContext) {
+		cluster := &apiv1.Cluster{Spec: apiv1.ClusterSpec{
+			StorageConfiguration: apiv1.StorageConfiguration{Size: "1Gi", ResizeInUseVolumes: ptr.To(false)},
+		}}
+		pvcs := []corev1.PersistentVolumeClaim{{ObjectMeta: metav1.ObjectMeta{
+			Name:   "cluster-example-1-wal",
+			Labels: map[string]string{utils.PvcRoleLabelName: string(utils.PVCRolePgWal)},
+		}}}
+
+		refusals, err := reconcileExistingPVCs(ctx, nil, cluster, pvcs, nil)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(refusals).To(BeEmpty())
 	})
 })

@@ -28,16 +28,22 @@ import (
 	cnpgTypes "github.com/cloudnative-pg/machinery/pkg/types"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrs "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/rand"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
 	"github.com/cloudnative-pg/cloudnative-pg/internal/configuration"
+	schemeBuilder "github.com/cloudnative-pg/cloudnative-pg/internal/scheme"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/postgres"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/reconciler/persistentvolumeclaim"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/specs"
@@ -1772,6 +1778,58 @@ var _ = Describe("ensureNoFailoverOnFullDisk", func() {
 				To(Succeed())
 			Expect(stored.Spec.Resources.Requests.Storage().String()).To(Equal("2G"))
 		}
+	})
+
+	It("reports the phase even when the PVCs cannot be patched", func(ctx SpecContext) {
+		cluster := &apiv1.Cluster{
+			ObjectMeta: metav1.ObjectMeta{Name: "cluster-example", Namespace: "default"},
+			Spec: apiv1.ClusterSpec{
+				Instances: 1, StorageConfiguration: apiv1.StorageConfiguration{Size: "2G"},
+			},
+		}
+		pvc := corev1.PersistentVolumeClaim{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "cluster-example-1", Namespace: "default",
+				Labels: map[string]string{utils.PvcRoleLabelName: string(utils.PVCRolePgData)},
+			},
+			Spec: corev1.PersistentVolumeClaimSpec{Resources: corev1.VolumeResourceRequirements{
+				Requests: corev1.ResourceList{corev1.ResourceStorage: resource.MustParse("1G")},
+			}},
+		}
+		full := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: "cluster-example-1", Namespace: "default"},
+			Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{{
+				Name: specs.PostgresContainerName,
+				State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{
+					ExitCode: apiv1.MissingWALDiskSpaceExitCode,
+				}},
+			}}},
+		}
+		recorder := record.NewFakeRecorder(10)
+		r := &ClusterReconciler{
+			Recorder: recorder,
+			Client: fake.NewClientBuilder().WithScheme(schemeBuilder.BuildWithAllKnownScheme()).
+				WithObjects(cluster, &pvc).WithStatusSubresource(cluster).
+				WithInterceptorFuncs(interceptor.Funcs{
+					Patch: func(ctx context.Context, c client.WithWatch, obj client.Object,
+						patch client.Patch, opts ...client.PatchOption,
+					) error {
+						if _, ok := obj.(*corev1.PersistentVolumeClaim); ok {
+							return apierrs.NewInvalid(schema.GroupKind{Kind: "PersistentVolumeClaim"}, obj.GetName(), nil)
+						}
+						return c.Patch(ctx, obj, patch, opts...)
+					},
+				}).Build(),
+		}
+
+		res, err := r.ensureNoFailoverOnFullDisk(ctx, cluster,
+			&managedResources{pvcs: corev1.PersistentVolumeClaimList{Items: []corev1.PersistentVolumeClaim{pvc}}},
+			postgres.PostgresqlStatusList{Items: []postgres.PostgresqlStatus{{Pod: full}}})
+		Expect(err).ToNot(HaveOccurred())
+		Expect(res.RequeueAfter).To(Equal(10 * time.Second))
+		Expect(cluster.Status.Phase).To(Equal("Not enough disk space"))
+		Expect(recorder.Events).To(Receive(ContainSubstring("ReconciliationFailed")))
+		Expect(recorder.Events).ToNot(Receive())
 	})
 
 	// The Job creating a replica can run for hours: the volumes of the
