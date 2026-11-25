@@ -147,6 +147,40 @@ var _ = Describe("Objects asking for an unavailable optional API", func() {
 			Entry("from another ClusterImageCatalog", catalogRef(apiv1.ClusterImageCatalogKind, "other")),
 		)
 
+		// The volumeSnapshots stanza also takes PersistentVolumeClaims, as
+		// upstream does, and these need no VolumeSnapshot API
+		DescribeTable("recovering from the volumeSnapshots stanza without the VolumeSnapshot API",
+			func(storage, wal, tablespace string, refused bool) {
+				disableAll()
+				source := &apiv1.DataSource{Storage: corev1.TypedLocalObjectReference{Name: "data", Kind: storage}}
+				if wal != "" {
+					source.WalStorage = &corev1.TypedLocalObjectReference{Name: "wal", Kind: wal}
+				}
+				if tablespace != "" {
+					source.TablespaceStorage = map[string]corev1.TypedLocalObjectReference{
+						"tbs": {Name: "tbs", Kind: tablespace},
+					}
+				}
+				errs, warnings := getClusterUnavailableAPIProblems(&apiv1.Cluster{Spec: apiv1.ClusterSpec{
+					Bootstrap: &apiv1.BootstrapConfiguration{
+						Recovery: &apiv1.BootstrapRecovery{VolumeSnapshots: source},
+					},
+				}}, nil)
+				Expect(warnings).To(BeEmpty())
+				if !refused {
+					Expect(errs).To(BeEmpty())
+					return
+				}
+				Expect(errs).To(HaveLen(1))
+				Expect(errs[0].Field).To(Equal("spec.bootstrap.recovery.volumeSnapshots"))
+			},
+			Entry("PVC only", "PersistentVolumeClaim", "", "", false),
+			Entry("PVCs for every volume", "PersistentVolumeClaim", "PersistentVolumeClaim", "PersistentVolumeClaim", false),
+			Entry("a snapshot for PGDATA", "VolumeSnapshot", "", "", true),
+			Entry("a snapshot for the WAL", "PersistentVolumeClaim", "VolumeSnapshot", "", true),
+			Entry("a snapshot for a tablespace", "PersistentVolumeClaim", "", "VolumeSnapshot", true),
+		)
+
 		It("is refused through ValidateCreate, with the warnings", func(ctx SpecContext) {
 			disableAll()
 			v := &ClusterCustomValidator{}

@@ -126,9 +126,26 @@ func getClusterUnavailableAPIProblems(r, old *apiv1.Cluster) (field.ErrorList, a
 	return problems.errs, problems.warnings
 }
 
+// hasSnapshotRecovery tells whether the recovery reads a VolumeSnapshot: the
+// sources of the volumeSnapshots stanza can be PersistentVolumeClaims too,
+// which need no optional API
 func hasSnapshotRecovery(r *apiv1.Cluster) bool {
-	return r.Spec.Bootstrap != nil && r.Spec.Bootstrap.Recovery != nil &&
-		r.Spec.Bootstrap.Recovery.VolumeSnapshots != nil
+	if r.Spec.Bootstrap == nil || r.Spec.Bootstrap.Recovery == nil ||
+		r.Spec.Bootstrap.Recovery.VolumeSnapshots == nil {
+		return false
+	}
+
+	source := r.Spec.Bootstrap.Recovery.VolumeSnapshots
+	if source.Storage.Kind == apiv1.VolumeSnapshotKind ||
+		(source.WalStorage != nil && source.WalStorage.Kind == apiv1.VolumeSnapshotKind) {
+		return true
+	}
+	for _, tablespace := range source.TablespaceStorage {
+		if tablespace.Kind == apiv1.VolumeSnapshotKind {
+			return true
+		}
+	}
+	return false
 }
 
 // getPoolerUnavailableAPIProblems checks the fields of a Pooler asking for
