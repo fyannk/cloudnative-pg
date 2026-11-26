@@ -39,9 +39,10 @@ import (
 	. "github.com/onsi/gomega"
 )
 
-// A Pooler whose Deployment cannot run its Pods goes to the `inactive` phase,
-// with the message of the Deployment as the reason, see "In the behavior of
-// the operator" in docs/src/fork_differences.md.
+// A Pooler whose Deployment cannot run its Pods stays in the `active` phase,
+// as its previous Pods may still serve, with the message of the Deployment as
+// the reason, see "In the behavior of the operator" in
+// docs/src/fork_differences.md.
 var _ = Describe("Pooler blocked by a ResourceQuota", Label(tests.LabelFork, tests.LabelServiceConnectivity), func() {
 	const (
 		clusterFile     = forkFixturesDir + "/cluster-single.yaml.template"
@@ -57,7 +58,7 @@ var _ = Describe("Pooler blocked by a ResourceQuota", Label(tests.LabelFork, tes
 		}
 	})
 
-	It("reports the Pooler as inactive without flapping, and as active once the quota is lifted", func() {
+	It("gives the quota as the reason of the Pooler without flapping, and clears it once the quota is lifted", func() {
 		namespace, err := env.CreateUniqueTestNamespace(env.Ctx, env.Client, namespacePrefix)
 		Expect(err).ToNot(HaveOccurred())
 
@@ -141,11 +142,11 @@ var _ = Describe("Pooler blocked by a ResourceQuota", Label(tests.LabelFork, tes
 			}, 120).Should(Succeed())
 		})
 
-		By("having the Pooler inactive, with the message of the Deployment as the reason", func() {
+		By("keeping the Pooler active, with the message of the Deployment as the reason", func() {
 			Eventually(func(g Gomega) {
 				pooler, err := getPooler()
 				g.Expect(err).ToNot(HaveOccurred())
-				g.Expect(pooler.Status.Phase).To(Equal(apiv1.PoolerPhaseInactive))
+				g.Expect(pooler.Status.Phase).To(Equal(apiv1.PoolerPhaseActive))
 				g.Expect(pooler.Status.PhaseReason).To(ContainSubstring(deploymentMessage))
 				g.Expect(pooler.Status.PhaseReason).To(ContainSubstring(quotaName))
 			}, 60).Should(Succeed())
@@ -160,7 +161,7 @@ var _ = Describe("Pooler blocked by a ResourceQuota", Label(tests.LabelFork, tes
 				pooler, err := getPooler()
 				g.Expect(err).ToNot(HaveOccurred())
 				g.Expect(pooler.ResourceVersion).To(Equal(resourceVersion))
-				g.Expect(pooler.Status.Phase).To(Equal(apiv1.PoolerPhaseInactive))
+				g.Expect(pooler.Status.Phase).To(Equal(apiv1.PoolerPhaseActive))
 			}, 45*time.Second, time.Second).Should(Succeed())
 		})
 
@@ -169,7 +170,7 @@ var _ = Describe("Pooler blocked by a ResourceQuota", Label(tests.LabelFork, tes
 			Expect(env.Client.Delete(env.Ctx, quota)).To(Succeed())
 		})
 
-		By("having the Pooler active again with its two instances", func() {
+		By("having the reason cleared and the two instances of the Pooler", func() {
 			// the ReplicaSet controller retries the refused Pod with a backoff
 			// growing with the time spent under the quota
 			Eventually(func(g Gomega) {
