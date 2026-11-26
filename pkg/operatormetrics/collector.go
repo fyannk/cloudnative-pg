@@ -131,29 +131,32 @@ var managedKinds = []managedKind{
 }
 
 // Collector counts, when scraped, the CloudNativePG objects held by a reader,
-// the cache of the manager in the operator: every replica reports its own
-// cache, with no refresh to schedule and no stale value to keep
+// the cache of the manager in the operator, with no refresh to schedule and no
+// stale value to keep. Only the elected replica counts them: on the others,
+// listing would start the informers of every kind.
 type Collector struct {
-	reader client.Reader
-	kinds  []managedKind
+	reader  client.Reader
+	elected <-chan struct{}
+	kinds   []managedKind
 }
 
 // NewCollector creates a collector counting the objects of the given reader,
 // for the kinds whose API the given configuration enables. It must be called
-// once the optional APIs are probed.
-func NewCollector(reader client.Reader, conf *configuration.Data) *Collector {
+// once the optional APIs are probed. The objects are counted once the given
+// channel is closed, when the replica is elected.
+func NewCollector(reader client.Reader, elected <-chan struct{}, conf *configuration.Data) *Collector {
 	kinds := make([]managedKind, 0, len(managedKinds))
 	for _, kind := range managedKinds {
 		if kind.enabled == nil || kind.enabled(conf) {
 			kinds = append(kinds, kind)
 		}
 	}
-	return &Collector{reader: reader, kinds: kinds}
+	return &Collector{reader: reader, elected: elected, kinds: kinds}
 }
 
 // Register registers a collector on the metrics registry of controller-runtime
-func Register(reader client.Reader, conf *configuration.Data) error {
-	return metrics.Registry.Register(NewCollector(reader, conf))
+func Register(reader client.Reader, elected <-chan struct{}, conf *configuration.Data) error {
+	return metrics.Registry.Register(NewCollector(reader, elected, conf))
 }
 
 // Describe implements prometheus.Collector
@@ -174,6 +177,12 @@ type scope struct {
 func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 	ch <- prometheus.MustNewConstMetric(buildInfoDesc, prometheus.GaugeValue, 1,
 		versions.Info.Version, versions.Info.Commit, versions.Info.Date)
+
+	select {
+	case <-c.elected:
+	default:
+		return
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), collectTimeout)
 	defer cancel()

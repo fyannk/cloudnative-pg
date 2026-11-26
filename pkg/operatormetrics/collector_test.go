@@ -42,6 +42,13 @@ import (
 	. "github.com/onsi/gomega"
 )
 
+// elected is the channel of an elected replica
+func elected() <-chan struct{} {
+	ch := make(chan struct{})
+	close(ch)
+	return ch
+}
+
 // failingReader fails to list one kind, as a cache does when an informer
 // cannot be started, and serves the others
 type failingReader struct {
@@ -173,7 +180,7 @@ var _ = Describe("The operator metrics collector", func() {
 		}
 		reader := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objects...).Build()
 
-		Expect(gather(NewCollector(reader, conf))).To(Equal(map[string]float64{
+		Expect(gather(NewCollector(reader, elected(), conf))).To(Equal(map[string]float64{
 			`cnpg_operator_build_info{commit="` + versions.Info.Commit + `",date="` + versions.Info.Date +
 				`",version="` + versions.Info.Version + `"}`: 1,
 			`cnpg_operator_managed_objects{cluster="",kind="Cluster",namespace="tenant-a"}`:             2,
@@ -206,7 +213,7 @@ var _ = Describe("The operator metrics collector", func() {
 			failing: &apiv1.PoolerList{},
 		}
 
-		series := gather(NewCollector(reader, conf))
+		series := gather(NewCollector(reader, elected(), conf))
 		Expect(series).To(HaveLen(2))
 		Expect(series).To(HaveKeyWithValue(
 			`cnpg_operator_managed_objects{cluster="",kind="Cluster",namespace="tenant-a"}`, 1.0))
@@ -227,7 +234,7 @@ var _ = Describe("The operator metrics collector", func() {
 		}
 		conf.APIClusterImageCatalogEnabled = false
 
-		series := gather(NewCollector(reader, conf))
+		series := gather(NewCollector(reader, elected(), conf))
 		Expect(calls.Load()).To(BeZero())
 		Expect(series).To(HaveLen(2))
 		Expect(series).To(HaveKeyWithValue(
@@ -251,10 +258,17 @@ var _ = Describe("The operator metrics collector", func() {
 			calls:    &calls,
 		}
 
-		series := gather(NewCollector(reader, conf))
+		series := gather(NewCollector(reader, elected(), conf))
 		Expect(calls.Load()).To(BeEquivalentTo(1))
 		Expect(series).To(HaveLen(2))
 		Expect(series).To(HaveKeyWithValue(
 			`cnpg_operator_managed_objects{cluster="",kind="Cluster",namespace="tenant-a"}`, 1.0))
+	})
+
+	It("lists nothing on a replica that is not elected", func() {
+		reader := failingReader{failing: &apiv1.ClusterList{}}
+		// the nil Reader it embeds would panic on any List
+		series := gather(NewCollector(reader, make(chan struct{}), configuration.NewConfiguration()))
+		Expect(series).To(HaveLen(1))
 	})
 })

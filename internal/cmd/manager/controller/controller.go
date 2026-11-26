@@ -628,7 +628,7 @@ func logProxyPropagation() {
 // registerOperatorMetrics registers the metrics of the operator itself: what
 // it manages, its configuration and whether it reads the node state
 func registerOperatorMetrics(mgr manager.Manager, conf *configuration.Data, settingsFromSecret []string) error {
-	if err := operatormetrics.Register(mgr.GetCache(), conf); err != nil {
+	if err := operatormetrics.Register(mgr.GetCache(), mgr.Elected(), conf); err != nil {
 		setupLog.Error(err, "unable to register the operator metrics")
 		return err
 	}
