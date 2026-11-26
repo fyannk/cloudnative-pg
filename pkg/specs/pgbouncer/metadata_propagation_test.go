@@ -35,7 +35,7 @@ import (
 // The metadataPropagation rules of a Pooler put labels and annotations on
 // each kind of its objects, on top of its templates. The Deployment hash
 // follows the metadata of the Pods and of the Deployment only when a rule
-// reaches them: no rule keeps the hash of the previous versions, a rule on
+// reaches them: no rule keeps the hash of the template alone, a rule on
 // the Deployment updates it without rolling the Pods out, a rule on the Pods
 // rolls them out once
 var _ = Describe("The metadataPropagation rules of a Pooler", func() {
@@ -82,7 +82,7 @@ var _ = Describe("The metadataPropagation rules of a Pooler", func() {
 		cluster = &apiv1.Cluster{ObjectMeta: metav1.ObjectMeta{Name: "payments", Namespace: "payments"}}
 	})
 
-	It("change nothing without a rule: the hash and the objects of the previous versions", func() {
+	It("change nothing without a rule: the hash of the template alone and no added key", func() {
 		result := deployment()
 		Expect(hashOf(result)).To(Equal(mustComputeTemplateHash(pooler)))
 		Expect(result.Spec.Template.Labels).To(HaveKeyWithValue("tier", "template"))

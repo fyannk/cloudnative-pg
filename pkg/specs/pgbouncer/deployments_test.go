@@ -267,8 +267,8 @@ func mustComputeTemplateHash(pooler *apiv1.Pooler) string {
 // Pods those of `poolerPods`, the Service those of `services`, every object
 // those of `all`. The Deployment is updated only when its hash changes, so
 // the hash must change exactly when the Pods' metadata does, and stay the
-// one of the previous versions without settings: otherwise upgrading the
-// operator would roll out every Pooler, or a new setting would reach none.
+// one of the template alone without settings: otherwise a new setting would
+// reach no Pooler, or roll out the ones it does not concern.
 var _ = Describe("The default and mandatory metadata on the objects of a Pooler", func() {
 	var (
 		previous *config.Data
@@ -315,7 +315,7 @@ var _ = Describe("The default and mandatory metadata on the objects of a Pooler"
 	})
 
 	Context("without settings", func() {
-		It("builds the Deployment as before, with the hash of the previous versions", func() {
+		It("builds the Deployment with the hash of the template alone", func() {
 			result := deployment()
 			Expect(result.Annotations).To(Equal(map[string]string{
 				utils.PoolerSpecHashAnnotationName: mustComputeTemplateHash(pooler),
