@@ -82,6 +82,21 @@ var _ = Describe("Available releases", func() {
 })
 
 var _ = Describe("Most recent tag", func() {
+	It("starts from the release chosen by UPGRADE_FROM_TAG", func() {
+		releasesDir, err := filepath.Abs(releaseDirectoryPath)
+		Expect(err).ToNot(HaveOccurred())
+		versionList, err := GetAvailableReleases(releasesDir)
+		Expect(err).ToNot(HaveOccurred())
+
+		oldest := versionList[len(versionList)-1].String()
+		GinkgoT().Setenv("UPGRADE_FROM_TAG", "v"+oldest)
+		Expect(GetMostRecentReleaseTag(releasesDir)).To(Equal(oldest))
+
+		GinkgoT().Setenv("UPGRADE_FROM_TAG", "0.0.1")
+		_, err = GetMostRecentReleaseTag(releasesDir)
+		Expect(err).To(MatchError(ContainSubstring("no manifest of the release 0.0.1")))
+	})
+
 	It("properly works with release branch", func() {
 		releasesDir, err := filepath.Abs(releaseDirectoryPath)
 		Expect(err).ToNot(HaveOccurred())

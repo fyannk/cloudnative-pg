@@ -36,10 +36,14 @@ import (
 	"github.com/cloudnative-pg/cloudnative-pg/tests/config"
 )
 
+// upgradeFromTagEnv is the environment variable choosing the release the
+// upgrade tests start from, such as the upstream release of a fork build
+const upgradeFromTagEnv = "UPGRADE_FROM_TAG"
+
 // GetMostRecentReleaseTag retrieves the most recent release tag from
 // the list of YAML files in the top-level `releases/` directory.
 // Used for testing upgrades, so: if we're in a release branch, the MostRecent
-// should be the next-to-last release
+// should be the next-to-last release. UPGRADE_FROM_TAG chooses another one.
 func GetMostRecentReleaseTag(releasesPath string) (string, error) {
 	versions, err := GetAvailableReleases(releasesPath)
 	if err != nil {
@@ -48,6 +52,17 @@ func GetMostRecentReleaseTag(releasesPath string) (string, error) {
 
 	if len(versions) == 0 {
 		return "", errors.New("could not find releases")
+	}
+
+	if tag := os.Getenv(upgradeFromTagEnv); tag != "" {
+		wanted, err := semver.NewVersion(strings.TrimPrefix(tag, "v"))
+		if err != nil {
+			return "", fmt.Errorf("%s: %w", upgradeFromTagEnv, err)
+		}
+		if !slices.ContainsFunc(versions, wanted.Equal) {
+			return "", fmt.Errorf("%s: no manifest of the release %s", upgradeFromTagEnv, wanted)
+		}
+		return wanted.String(), nil
 	}
 
 	// if we're running on a release branch, we should get the previous version (if it
