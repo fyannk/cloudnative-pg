@@ -645,12 +645,10 @@ What a disabled API costs:
   not switched over to a replica first, see
   [Running without node state](#running-without-node-state). Node labels are not
   resolved in the instance topology: when
-  `postgresql.syncReplicaElectionConstraint` or
-  `postgresql.synchronous.nodeFailureDomainKeys` relies on them, the
+  `postgresql.syncReplicaElectionConstraint` relies on them, the
   `Cluster` carries the `TopologyUnavailable` condition and a Warning Event,
   the webhook warns about them, and the failure domain constraints of the
-  synchronous replicas are not applied. Pod failure domain keys keep
-  working, and `status.topology` still counts the nodes used from the
+  synchronous replicas are not applied. `status.topology` still counts the nodes used from the
   instance Pods. What happens to the drains, and how this degraded mode is
   reported, is set by `NODE_STATUS_UNAVAILABLE_POLICY`: see
   [Running without node state](#running-without-node-state). The `nodes`
@@ -658,13 +656,13 @@ What a disabled API costs:
 
 The effective state of each API is logged at startup under
 `Kubernetes system metadata`.
+
 ## Node state from the instance Pods
 
 The operator reacts to the state of the nodes: the primary of a node that is
 cordoned or carries one of the `DRAIN_TAINTS` is switched over to a replica
 before the node is drained, replicas on such nodes are not chosen as the new
 primary, and the node labels named by
-`.spec.postgresql.synchronous.nodeFailureDomainKeys` or the legacy
 `.spec.postgresql.syncReplicaElectionConstraint.nodeLabelsAntiAffinity` define
 the failure domains of the synchronous replicas. It reads that state from the
 cluster-scoped `Node` API when it has access to it (`API_NODE_ENABLED`), which
@@ -680,7 +678,7 @@ facts. It expects, on each instance Pod:
 |---|---|---|---|
 | `<prefix>unschedulable` | label or annotation | `"true"`, absent otherwise | the Node is cordoned (`spec.unschedulable`) |
 | `<prefix>taints` | annotation | JSON array of the Node taints the bridge copies (`key`, `effect`, `value`, `timeAdded`), absent when none | matched against `DRAIN_TAINTS` on the key, as the Node taints are |
-| `<labelPrefix><node label key>` | label | the Node label value | resolves the node failure domain keys and `nodeLabelsAntiAffinity` |
+| `<labelPrefix><node label key>` | label | the Node label value | resolves the labels of `nodeLabelsAntiAffinity` |
 | `<prefix>eviction-requested` | annotation | RFC 3339 time of the first eviction request received for the Pod | when not older than `NODE_STATUS_EVICTION_MAX_AGE`: on the primary, triggers the same switchover as a draining node; on a replica, keeps it from being chosen as the new primary |
 
 `<prefix>` is `NODE_STATUS_POD_KEY_PREFIX` and `<labelPrefix>` is
