@@ -752,7 +752,7 @@ The operator keeps running in this degraded mode, and
 | Policy | Primary `PodDisruptionBudget` | What a drain of the node of the primary does |
 |---|---|---|
 | `keepPDB` (default) | kept | `kubectl drain` waits on the primary `PodDisruptionBudget` until someone switches the primary over (`kubectl cnpg promote`) or deletes the primary Pod by hand; a drain with a timeout fails. A `Cluster` with `enablePDB: false` has no `PodDisruptionBudget`: its primary is evicted, and a failover follows |
-| `disablePrimaryPDB` | removed, and not created | the drain evicts the primary without a switchover: the instance stops, and a failover promotes a replica, with the downtime of a failover instead of the one of a switchover. The replica `PodDisruptionBudget` is kept, so replicas are still evicted one at a time |
+| `disablePrimaryPDB` | removed, and not created | the drain evicts the primary without a switchover: the instance stops, and a failover promotes a replica, with the downtime of a failover instead of the one of a switchover. From three instances the replica `PodDisruptionBudget` is kept, so replicas are still evicted one at a time. Below three instances the replicas have no `PodDisruptionBudget`, as upstream: the `Cluster` then has none, and drains running together can evict every instance at once |
 | `fail` | none: the operator does not run | the operator refuses to start, with an error naming the cause |
 
 With `keepPDB` and `disablePrimaryPDB`, the degraded mode is reported:

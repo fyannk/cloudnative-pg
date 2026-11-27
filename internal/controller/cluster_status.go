@@ -862,6 +862,12 @@ func (r *ClusterReconciler) updateNodeStatusAvailability(cluster *apiv1.Cluster)
 		message = "The operator reads no node state (NODE_STATUS_SOURCE=none): the primary of a node " +
 			"being drained is not switched over first, and its PodDisruptionBudget is removed, so " +
 			"the drain evicts it and a failover follows (NODE_STATUS_UNAVAILABLE_POLICY=disablePrimaryPDB)"
+		if specs.BuildReplicasPodDisruptionBudget(cluster) == nil {
+			// below three instances the replicas have no PodDisruptionBudget
+			// either
+			message += ". With fewer than three instances, no PodDisruptionBudget is left: " +
+				"drains running together can evict every instance at once"
+		}
 	}
 	meta.SetStatusCondition(&cluster.Status.Conditions, metav1.Condition{
 		Type:    string(apiv1.ConditionNodeStatusUnavailable),

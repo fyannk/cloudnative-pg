@@ -718,7 +718,10 @@ var _ = Describe("updateNodeStatusAvailability", func() {
 
 	BeforeEach(func() {
 		recorder = record.NewFakeRecorder(10)
-		cluster = &apiv1.Cluster{ObjectMeta: metav1.ObjectMeta{Name: "cluster", Namespace: "default"}}
+		cluster = &apiv1.Cluster{
+			ObjectMeta: metav1.ObjectMeta{Name: "cluster", Namespace: "default"},
+			Spec:       apiv1.ClusterSpec{Instances: 3},
+		}
 	})
 
 	reconciler := func(source, policy string) *ClusterReconciler {
@@ -747,6 +750,24 @@ var _ = Describe("updateNodeStatusAvailability", func() {
 		Entry("disablePrimaryPDB", configuration.NodeStatusUnavailablePolicyDisablePrimaryPDB,
 			apiv1.ConditionReasonPrimaryPDBDisabled, "NODE_STATUS_UNAVAILABLE_POLICY=disablePrimaryPDB"),
 	)
+
+	// Below three instances the replicas have no PodDisruptionBudget: under
+	// disablePrimaryPDB the Cluster has none left, which the condition says.
+	// From three instances the replica one still holds the drains.
+	It("tells that no PodDisruptionBudget is left below three instances under disablePrimaryPDB", func() {
+		r := reconciler(configuration.NodeStatusSourceNone, configuration.NodeStatusUnavailablePolicyDisablePrimaryPDB)
+		r.updateNodeStatusAvailability(cluster)
+		condition := meta.FindStatusCondition(cluster.Status.Conditions,
+			string(apiv1.ConditionNodeStatusUnavailable))
+		Expect(condition.Message).ToNot(ContainSubstring("no PodDisruptionBudget is left"))
+
+		cluster.Spec.Instances = 2
+		r.updateNodeStatusAvailability(cluster)
+		condition = meta.FindStatusCondition(cluster.Status.Conditions,
+			string(apiv1.ConditionNodeStatusUnavailable))
+		Expect(condition.Reason).To(Equal(string(apiv1.ConditionReasonPrimaryPDBDisabled)))
+		Expect(condition.Message).To(ContainSubstring("no PodDisruptionBudget is left"))
+	})
 
 	DescribeTable("removes the condition when node state is read",
 		func(source string) {
