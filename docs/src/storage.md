@@ -176,6 +176,11 @@ spec:
     PVCs stay in the `Terminating` state until its Pods are gone, and a
     `Cluster` created again with the same name in the meantime is a new one,
     which gets the default class.
+
+    A storage section added to an existing `Cluster`, such as `walStorage`
+    or a new tablespace, does not get `DEFAULT_STORAGE_CLASS` either: its
+    PVCs get the default storage class of the Kubernetes cluster, and stay
+    `Pending` when it has none. Name the class in the section you add.
 :::
 
 ## Configuration via a PVC template
