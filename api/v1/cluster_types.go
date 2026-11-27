@@ -214,9 +214,6 @@ type ImageCatalogRef struct {
 }
 
 // +kubebuilder:validation:XValidation:rule="!(has(self.imageCatalogRef) && has(self.imageName))",message="imageName and imageCatalogRef are mutually exclusive"
-// +kubebuilder:validation:XValidation:rule="!has(oldSelf.walStorage) || has(self.walStorage)",message="walStorage cannot be disabled once configured",fieldPath=".walStorage"
-// +kubebuilder:validation:XValidation:rule="!has(oldSelf.tablespaces) || has(self.tablespaces)",message="tablespaces section cannot be deleted once created",fieldPath=".tablespaces"
-// +kubebuilder:validation:XValidation:rule="!has(self.imageName) || !has(oldSelf.imageName) || self.imageName == oldSelf.imageName || self.primaryUpdateMethod != 'switchover' || (has(self.postgresql) && has(self.postgresql.parameters) ? self.postgresql.parameters : {}) == (has(oldSelf.postgresql) && has(oldSelf.postgresql.parameters) ? oldSelf.postgresql.parameters : {})",message="imageName and postgresql.parameters cannot change together when primaryUpdateMethod is switchover",fieldPath=".imageName"
 
 // ClusterSpec defines the desired state of a PostgreSQL cluster managed by
 // CloudNativePG.
@@ -261,17 +258,13 @@ type ClusterSpec struct {
 	// +optional
 	SchedulerName string `json:"schedulerName,omitempty"`
 
-	// The UID of the `postgres` user inside the image, defaults to `26`.
-	// It cannot be changed once the cluster is created.
+	// The UID of the `postgres` user inside the image, defaults to `26`
 	// +kubebuilder:default:=26
-	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="postgresUID is immutable"
 	// +optional
 	PostgresUID int64 `json:"postgresUID,omitempty"`
 
-	// The GID of the `postgres` user inside the image, defaults to `26`.
-	// It cannot be changed once the cluster is created.
+	// The GID of the `postgres` user inside the image, defaults to `26`
 	// +kubebuilder:default:=26
-	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="postgresGID is immutable"
 	// +optional
 	PostgresGID int64 `json:"postgresGID,omitempty"`
 
@@ -523,10 +516,8 @@ type ClusterSpec struct {
 	// +optional
 	SecurityContext *corev1.SecurityContext `json:"securityContext,omitempty"`
 
-	// The tablespaces configuration. A tablespace cannot be removed once created.
+	// The tablespaces configuration
 	// +optional
-	// +kubebuilder:validation:MaxItems=64
-	// +kubebuilder:validation:XValidation:rule="oldSelf.all(o, self.exists(n, n.name == o.name))",message="no tablespace can be deleted once created"
 	Tablespaces []TablespaceConfiguration `json:"tablespaces,omitempty"`
 
 	// Manage the `PodDisruptionBudget` resources within the cluster. When
@@ -1451,8 +1442,6 @@ type SynchronizeReplicasConfiguration struct {
 
 // ReplicationSlotsConfiguration encapsulates the configuration
 // of replication slots
-// +kubebuilder:validation:XValidation:rule="!has(oldSelf.highAvailability) || (has(oldSelf.highAvailability.enabled) && !oldSelf.highAvailability.enabled) || (has(self.highAvailability) && (has(self.highAvailability.slotPrefix) ? self.highAvailability.slotPrefix : '_cnpg_') == (has(oldSelf.highAvailability.slotPrefix) ? oldSelf.highAvailability.slotPrefix : '_cnpg_'))",message="highAvailability.slotPrefix cannot change while highAvailability is enabled",fieldPath=".highAvailability"
-// +kubebuilder:validation:XValidation:rule="!has(oldSelf.synchronizeReplicas) || (has(oldSelf.synchronizeReplicas.enabled) && !oldSelf.synchronizeReplicas.enabled) || has(self.synchronizeReplicas)",message="synchronizeReplicas cannot be removed while enabled, disable it first",fieldPath=".synchronizeReplicas"
 type ReplicationSlotsConfiguration struct {
 	// Replication slots for high availability configuration
 	// +kubebuilder:default:={"enabled": true}
@@ -1717,7 +1706,6 @@ type PodSelectorRefStatus struct {
 // PostgresConfiguration defines the PostgreSQL configuration
 type PostgresConfiguration struct {
 	// PostgreSQL configuration options (postgresql.conf)
-	// +kubebuilder:validation:XValidation:rule="!('wal_level' in self) || self['wal_level'] != 'minimal' || !('wal_level' in oldSelf) || oldSelf['wal_level'] == '' || oldSelf['wal_level'] == 'minimal'",message="wal_level cannot be changed to minimal on an existing cluster"
 	// +optional
 	Parameters map[string]string `json:"parameters,omitempty"`
 
@@ -2441,7 +2429,6 @@ type AutoGrowConfiguration struct {
 // the storage specification for the tablespace
 type TablespaceConfiguration struct {
 	// The name of the tablespace
-	// +kubebuilder:validation:MaxLength=63
 	Name string `json:"name"`
 
 	// The storage configuration for the tablespace
@@ -2935,11 +2922,6 @@ type RoleConfiguration struct {
 
 // Cluster defines the API schema for a highly available PostgreSQL database cluster
 // managed by CloudNativePG.
-// +kubebuilder:validation:XValidation:rule="!has(self.spec.imageCatalogRef) || (has(oldSelf.spec.imageCatalogRef) && self.spec.imageCatalogRef.major == oldSelf.spec.imageCatalogRef.major) || !has(oldSelf.status) || !has(oldSelf.status.pgDataImageInfo) || self.spec.imageCatalogRef.major >= oldSelf.status.pgDataImageInfo.majorVersion",message="the PostgreSQL major version cannot be downgraded",fieldPath=".spec.imageCatalogRef.major"
-// +kubebuilder:validation:XValidation:rule="!has(self.spec.imageCatalogRef) || (has(oldSelf.spec.imageCatalogRef) && self.spec.imageCatalogRef.major == oldSelf.spec.imageCatalogRef.major) || !has(oldSelf.status) || !has(oldSelf.status.pgDataImageInfo) || self.spec.imageCatalogRef.major <= oldSelf.status.pgDataImageInfo.majorVersion || self.spec.imageCatalogRef.major >= 16",message="major upgrades are only supported to version 16 or higher",fieldPath=".spec.imageCatalogRef.major"
-// +kubebuilder:validation:XValidation:rule="!has(self.spec.imageName) || (has(oldSelf.spec.imageName) && self.spec.imageName == oldSelf.spec.imageName) || !has(oldSelf.status) || !has(oldSelf.status.pgDataImageInfo) || self.spec.imageName.split('@')[0].substring(self.spec.imageName.split('@')[0].lastIndexOf(':') + 1).contains('/') || !self.spec.imageName.split('@')[0].substring(self.spec.imageName.split('@')[0].lastIndexOf(':') + 1).matches('^[0-9]+') || int(self.spec.imageName.split('@')[0].substring(self.spec.imageName.split('@')[0].lastIndexOf(':') + 1).find('^[0-9]+')) >= oldSelf.status.pgDataImageInfo.majorVersion",message="the PostgreSQL major version cannot be downgraded",fieldPath=".spec.imageName"
-// +kubebuilder:validation:XValidation:rule="!has(self.spec.imageName) || (has(oldSelf.spec.imageName) && self.spec.imageName == oldSelf.spec.imageName) || !has(oldSelf.status) || !has(oldSelf.status.pgDataImageInfo) || self.spec.imageName.split('@')[0].substring(self.spec.imageName.split('@')[0].lastIndexOf(':') + 1).contains('/') || !self.spec.imageName.split('@')[0].substring(self.spec.imageName.split('@')[0].lastIndexOf(':') + 1).matches('^[0-9]+') || int(self.spec.imageName.split('@')[0].substring(self.spec.imageName.split('@')[0].lastIndexOf(':') + 1).find('^[0-9]+')) <= oldSelf.status.pgDataImageInfo.majorVersion || int(self.spec.imageName.split('@')[0].substring(self.spec.imageName.split('@')[0].lastIndexOf(':') + 1).find('^[0-9]+')) >= 16",message="major upgrades are only supported to version 16 or higher",fieldPath=".spec.imageName"
-// +kubebuilder:validation:XValidation:rule="!has(self.status) || !has(self.status.switchReplicaClusterStatus) || !has(self.status.switchReplicaClusterStatus.inProgress) || !self.status.switchReplicaClusterStatus.inProgress || (has(self.spec.replica) && (has(self.spec.replica.enabled) ? self.spec.replica.enabled : (!has(self.spec.replica.primary) || (has(self.spec.replica.self) ? self.spec.replica.self : self.metadata.name) != self.spec.replica.primary))) == (has(oldSelf.spec.replica) && (has(oldSelf.spec.replica.enabled) ? oldSelf.spec.replica.enabled : (!has(oldSelf.spec.replica.primary) || (has(oldSelf.spec.replica.self) ? oldSelf.spec.replica.self : oldSelf.metadata.name) != oldSelf.spec.replica.primary)))",message="the replica role cannot change while the switch to replica cluster is in progress",fieldPath=".spec.replica"
 type Cluster struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata"`

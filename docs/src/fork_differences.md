@@ -84,16 +84,6 @@ what was read, when the node state does not come from the `Node` API, and the
 
 ## What is stricter than upstream
 
-- The `Cluster` CRD carries the update rules of the validating webhook, and
-  the API server enforces them even with the `cnpg.io/validation: disabled`
-  annotation, except for the decrease of a storage size, which stays with
-  the webhook as upstream;
-  see [Defaulting and validation without admission webhooks](operator_conf.md#defaulting-and-validation-without-admission-webhooks).
-- The `Cluster` CRD accepts at most 64 tablespaces per cluster, and 63
-  characters for a tablespace name, the limit of a PostgreSQL identifier: the
-  API server requires these bounds to evaluate the rule refusing the removal
-  of a tablespace. A `Cluster` with more than 64 tablespaces keeps running, but
-  its tablespaces cannot be changed, and its manifest cannot be created again.
 - A validating webhook, `vclusterscale.cnpg.io`, checks the writes of the
   `scale` subresource: a `Cluster` holding an invalid field cannot be scaled
   with `kubectl scale` until it is fixed. As with the other webhooks of the
@@ -176,23 +166,15 @@ These steps apply to an installation made with the release manifest.
    kubectl get clusters.postgresql.cnpg.io -A -o custom-columns=\
    NS:.metadata.namespace,NAME:.metadata.name,SIZE:.spec.storage.size,WAL:.spec.walStorage.size
    ```
-5. Find the clusters with more than 64 tablespaces, which can no longer change
-   them:
-
-   ```sh
-   kubectl get clusters.postgresql.cnpg.io -A -o json |
-     jq -r '.items[] | select((.spec.tablespaces // [] | length) > 64)
-       | "\(.metadata.namespace)/\(.metadata.name)"'
-   ```
-6. When the webhook configurations are customised, adapt the customisation to
+5. When the webhook configurations are customised, adapt the customisation to
    the new `vclusterscale.cnpg.io` entry: a CA bundle or a `namespaceSelector`
    set by name must be set on it too, and one set by position must be checked,
    as the entry is inserted between the existing ones.
-7. Apply the manifest of the fork release, not only its image: it brings the
+6. Apply the manifest of the fork release, not only its image: it brings the
    CRDs with the new fields and rules, the webhook of the `scale` subresource
    and two ClusterRoles. `kubectl scale` on a `Cluster` is refused until the
    new operator answers.
-8. Label the primary `Lease` of each existing `Cluster`, once the operator is
+7. Label the primary `Lease` of each existing `Cluster`, once the operator is
    replaced. The operator creates the `Lease` of a new `Cluster` with the
    label, but never writes to an existing one, and no switchover adds it.
    This is only needed for a filtered cache, and must be done before enabling
