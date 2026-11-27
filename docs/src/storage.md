@@ -408,7 +408,9 @@ records a `Normal` event `VolumeAutoGrow`. It grows them again only once every
 PVC of the volume got the size of the previous step: a PVC whose expansion was
 refused, by a quota or by its `StorageClass`, still requests its old size and
 holds the next step back, so the other PVCs are not grown up to `maxSize` while
-it stays behind.
+it stays behind. A PVC not bound to a volume yet, such as the PVC of a replica
+being created whose Pod cannot be scheduled, holds nothing back: it is grown
+once bound, as the size of a PVC cannot change before.
 
 The size in the `Cluster` is never changed: the PVCs are the record of the
 growth. A manifest kept in Git therefore stays in sync, and a `Cluster`

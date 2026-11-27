@@ -24,9 +24,12 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrs "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -774,6 +777,91 @@ var _ = Describe("autoGrow for a full volume", func() {
 // The life of a volume with autoGrow over the reconciliations: grown by one
 // step, waiting for the expansion, stopped at maxSize, resumed when maxSize is
 // raised
+// A replica being created whose PVC cannot be bound, as with a
+// WaitForFirstConsumer StorageClass and a join Pod that cannot be scheduled,
+// must not stop the growth of the volume on the running instances: the
+// unbound PVC has nothing to expand. The API server refuses to change the
+// request of an unbound PVC, so it is resized only once bound.
+var _ = Describe("autoGrow with a PVC not bound yet", func() {
+	It("grows the bound PVCs, and the unbound one once it is bound", func() {
+		ctx := context.Background()
+		cluster := &apiv1.Cluster{
+			ObjectMeta: metav1.ObjectMeta{Name: autoGrowCluster, Namespace: "default", Generation: 1},
+			Spec: apiv1.ClusterSpec{
+				Instances: 3,
+				StorageConfiguration: apiv1.StorageConfiguration{
+					Size:     "10Gi",
+					AutoGrow: &apiv1.AutoGrowConfiguration{MaxSize: "100Gi", Step: "5Gi"},
+				},
+			},
+		}
+		first := autoGrowPVC("1", NewPgDataCalculator(), "10Gi", "10Gi")
+		second := autoGrowPVC("2", NewPgDataCalculator(), "10Gi", "10Gi")
+		// the PVC of the replica being created: no volume, no capacity
+		joining := autoGrowPVC("3", NewPgDataCalculator(), "10Gi", "10Gi")
+		joining.Status = corev1.PersistentVolumeClaimStatus{Phase: corev1.ClaimPending}
+		base := fake.NewClientBuilder().WithScheme(scheme.BuildWithAllKnownScheme()).
+			WithObjects(cluster, &first, &second, &joining).WithStatusSubresource(cluster).Build()
+		// the API server refuses a change of the request of an unbound PVC
+		cli := interceptor.NewClient(base, interceptor.Funcs{
+			Patch: func(ctx context.Context, c client.WithWatch, obj client.Object,
+				patch client.Patch, opts ...client.PatchOption,
+			) error {
+				var stored corev1.PersistentVolumeClaim
+				if err := c.Get(ctx, client.ObjectKeyFromObject(obj), &stored); err == nil &&
+					stored.Status.Phase == corev1.ClaimPending {
+					return apierrs.NewInvalid(schema.GroupKind{Kind: "PersistentVolumeClaim"}, obj.GetName(),
+						field.ErrorList{field.Forbidden(field.NewPath("spec"), "spec is immutable after creation "+
+							"except resources.requests and volumeAttributesClassName for bound claims")})
+				}
+				return c.Patch(ctx, obj, patch, opts...)
+			},
+		})
+		recorder := record.NewFakeRecorder(10)
+
+		pvcs := func() []corev1.PersistentVolumeClaim {
+			var list corev1.PersistentVolumeClaimList
+			Expect(cli.List(ctx, &list)).To(Succeed())
+			return list.Items
+		}
+		requests := func() map[string]string {
+			result := make(map[string]string)
+			for _, pvc := range pvcs() {
+				result[pvc.Name] = pvc.Spec.Resources.Requests.Storage().String()
+			}
+			return result
+		}
+
+		// The primary crosses the threshold while the third PVC is unbound:
+		// the two bound PVCs are grown, the unbound one is left as it is
+		_, err := ReconcileExisting(ctx, cli, recorder, cluster, pvcs(), instancesReporting(
+			reporting("1", used("pgdata", 10, 85)),
+			reporting("2", used("pgdata", 10, 60)),
+		))
+		Expect(err).ToNot(HaveOccurred())
+		Expect(requests()).To(Equal(map[string]string{
+			first.Name: "15Gi", second.Name: "15Gi", joining.Name: "10Gi",
+		}))
+		Expect(recorder.Events).To(Receive(HavePrefix("Normal VolumeAutoGrow Growing the PVCs of the PGDATA " +
+			"volume from 10Gi to 15Gi")))
+
+		// The third PVC is bound, at the size it requested: it is grown to
+		// the size of the volume
+		var stored corev1.PersistentVolumeClaim
+		Expect(cli.Get(ctx, client.ObjectKeyFromObject(&joining), &stored)).To(Succeed())
+		stored.Status = corev1.PersistentVolumeClaimStatus{
+			Phase:    corev1.ClaimBound,
+			Capacity: corev1.ResourceList{corev1.ResourceStorage: quantity("10Gi")},
+		}
+		Expect(cli.Status().Update(ctx, &stored)).To(Succeed())
+		_, err = ReconcileExisting(ctx, cli, recorder, cluster, pvcs(), instancesReporting(
+			reporting("1", used("pgdata", 15, 60)),
+		))
+		Expect(err).ToNot(HaveOccurred())
+		Expect(requests()).To(HaveKeyWithValue(joining.Name, "15Gi"))
+	})
+})
+
 var _ = Describe("autoGrow reconciliation", func() {
 	It("grows the PVCs, records one event per step, and reports the stop at maxSize", func() {
 		ctx := context.Background()

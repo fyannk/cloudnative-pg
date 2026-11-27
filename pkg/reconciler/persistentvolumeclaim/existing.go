@@ -173,6 +173,16 @@ func reconcilePVCQuantity(
 	}
 	currentSize := pvc.Spec.Resources.Requests["storage"]
 
+	// the API server refuses to change the request of a PVC not bound to a
+	// volume yet: it is resized once bound
+	if pvc.Status.Phase == corev1.ClaimPending {
+		if !currentSize.Equal(*parsedSize) {
+			contextLogger.Debug("PVC not bound yet, its storage requirement is changed once bound",
+				"pvcName", pvc.Name, "from", currentSize, "to", parsedSize)
+		}
+		return nil
+	}
+
 	switch currentSize.AsDec().Cmp(parsedSize.AsDec()) {
 	case 0:
 		return nil

@@ -238,7 +238,15 @@ func getAutoGrowVolumes(cluster *apiv1.Cluster) []autoGrowVolume {
 // next step back as much as a PVC still being expanded: otherwise the volume
 // is grown again from the size of the PVCs that accepted the step, up to
 // maxSize, while the refused PVC stays behind.
+//
+// A PVC not bound to a volume yet has nothing to expand: it gets the size of
+// the volume when it is bound. It must not hold the volume back, as a PVC
+// whose binding waits for a Pod that cannot be scheduled would stop the
+// growth of the volume on every other instance.
 func hasPendingExpansion(pvc *corev1.PersistentVolumeClaim, size resource.Quantity) bool {
+	if pvc.Status.Phase == corev1.ClaimPending {
+		return false
+	}
 	if isResizing(*pvc) || hasPVCCondition(*pvc, corev1.PersistentVolumeClaimFileSystemResizePending) {
 		return true
 	}
