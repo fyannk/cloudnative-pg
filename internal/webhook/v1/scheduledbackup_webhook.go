@@ -22,6 +22,7 @@ package v1
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/cloudnative-pg/machinery/pkg/log"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -149,33 +150,34 @@ func (v *ScheduledBackupCustomValidator) validate(
 	var warnings admission.Warnings
 
 	format := configuration.Current.GetScheduledBackupCronFormat()
-	if _, fiveField, err := utils.ParseCronSchedule(r.GetSchedule(), format); err != nil {
+	_, fiveField, err := utils.ParseCronSchedule(r.GetSchedule(), format)
+	switch {
+	case err != nil:
 		result = append(result,
 			field.Invalid(
 				field.NewPath("spec", "schedule"),
 				r.Spec.Schedule, err.Error()))
-	} else if fiveField {
-		// The standard cron format, read with the seconds field first unless
-		// the operator is told otherwise. Existing objects are kept editable
-		// under "seconds-strict": only their creation is rejected.
-		switch {
-		case format == utils.CronFormatStandard:
-			// read as written, nothing to say
-		case format == utils.CronFormatSecondsStrict && creating:
-			result = append(result,
-				field.Invalid(
-					field.NewPath("spec", "schedule"),
-					r.Spec.Schedule,
-					fmt.Sprintf("a five-field schedule is read with the seconds field first; "+
-						"use the six-field form %q",
-						utils.SixFieldSchedule(r.Spec.Schedule))))
-		default:
-			warnings = append(
-				warnings,
-				"Schedule parameter may not have the right number of arguments "+
-					"(usually six arguments are needed)",
-			)
-		}
+	case fiveField && format == utils.CronFormatStandard:
+		// the standard cron format, read as written: nothing to say
+	case fiveField && format == utils.CronFormatSecondsStrict && creating:
+		// a five-field schedule is read with the seconds field first:
+		// existing objects are kept editable under "seconds-strict", only
+		// their creation is rejected
+		result = append(result,
+			field.Invalid(
+				field.NewPath("spec", "schedule"),
+				r.Spec.Schedule,
+				fmt.Sprintf("a five-field schedule is read with the seconds field first; "+
+					"use the six-field form %q",
+					utils.SixFieldSchedule(r.Spec.Schedule))))
+	case format != utils.CronFormatStandard && len(strings.Fields(r.Spec.Schedule)) != 6:
+		// the warning of the upstream operator, for any schedule that has not
+		// six fields: a five-field one, and also a descriptor such as @daily
+		warnings = append(
+			warnings,
+			"Schedule parameter may not have the right number of arguments "+
+				"(usually six arguments are needed)",
+		)
 	}
 
 	result = append(result, volumeSnapshotMethodErrors(r.Spec.Method)...)

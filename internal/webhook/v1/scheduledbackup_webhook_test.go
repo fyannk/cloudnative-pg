@@ -212,14 +212,34 @@ var _ = Describe("Five-field schedules under SCHEDULED_BACKUP_CRON_FORMAT", func
 		Expect(result).To(BeEmpty())
 	})
 
-	It("does not warn on a descriptor", func() {
-		schedule := &apiv1.ScheduledBackup{
-			Spec: apiv1.ScheduledBackupSpec{
-				Schedule: "@every 1h",
-			},
+	// Outside of the standard format, any schedule that has not six fields
+	// gets the warning of the upstream operator, a descriptor included:
+	// only the five-field schedules changed with the format.
+	It("warns on a descriptor as upstream, except under standard", func() {
+		descriptor := func() *apiv1.ScheduledBackup {
+			return &apiv1.ScheduledBackup{
+				Spec: apiv1.ScheduledBackupSpec{
+					Schedule: "@every 1h",
+				},
+			}
 		}
 
-		warnings, result := v.validate(schedule, true)
+		// the default format, the one of the upstream operator
+		configuration.Current.ScheduledBackupCronFormat = ""
+		warnings, result := v.validate(descriptor(), true)
+		Expect(warnings).To(ConsistOf(ContainSubstring("may not have the right number of arguments")))
+		Expect(result).To(BeEmpty())
+
+		// seconds-strict rejects five fields only: a descriptor is accepted,
+		// with the warning
+		configuration.Current.ScheduledBackupCronFormat = string(utils.CronFormatSecondsStrict)
+		warnings, result = v.validate(descriptor(), true)
+		Expect(warnings).To(HaveLen(1))
+		Expect(result).To(BeEmpty())
+
+		// standard reads the schedules as written: nothing to say
+		configuration.Current.ScheduledBackupCronFormat = string(utils.CronFormatStandard)
+		warnings, result = v.validate(descriptor(), true)
 		Expect(warnings).To(BeEmpty())
 		Expect(result).To(BeEmpty())
 	})
