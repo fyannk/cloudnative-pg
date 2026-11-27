@@ -60,24 +60,30 @@ type MetadataCounter interface {
 // for the kinds the operator creates, without copying them
 type CacheCollector struct {
 	reader   client.Reader
+	elected  <-chan struct{}
 	scheme   *runtime.Scheme
 	objects  []client.Object
 	metadata MetadataCounter
 }
 
 // NewCacheCollector creates a collector counting, in the given reader, the
-// objects of the given kinds, and the metadata counted by metadata when not nil
+// objects of the given kinds, and the metadata counted by metadata when not
+// nil. The objects are counted once the given channel is closed, when the
+// replica is elected: listing a kind of the cache starts its informer, which a
+// replica that is not elected does not run.
 func NewCacheCollector(
-	reader client.Reader, scheme *runtime.Scheme, objects []client.Object, metadata MetadataCounter,
+	reader client.Reader, elected <-chan struct{}, scheme *runtime.Scheme, objects []client.Object,
+	metadata MetadataCounter,
 ) *CacheCollector {
-	return &CacheCollector{reader: reader, scheme: scheme, objects: objects, metadata: metadata}
+	return &CacheCollector{reader: reader, elected: elected, scheme: scheme, objects: objects, metadata: metadata}
 }
 
 // RegisterCache registers a cache collector on the metrics registry of controller-runtime
 func RegisterCache(
-	reader client.Reader, scheme *runtime.Scheme, objects []client.Object, metadata MetadataCounter,
+	reader client.Reader, elected <-chan struct{}, scheme *runtime.Scheme, objects []client.Object,
+	metadata MetadataCounter,
 ) error {
-	return metrics.Registry.Register(NewCacheCollector(reader, scheme, objects, metadata))
+	return metrics.Registry.Register(NewCacheCollector(reader, elected, scheme, objects, metadata))
 }
 
 // Describe implements prometheus.Collector
@@ -87,8 +93,15 @@ func (c *CacheCollector) Describe(ch chan<- *prometheus.Desc) {
 }
 
 // Collect implements prometheus.Collector. A kind that cannot be listed is
-// left out of the scrape, and logged.
+// left out of the scrape, and logged. Nothing is reported before the replica
+// is elected.
 func (c *CacheCollector) Collect(ch chan<- prometheus.Metric) {
+	select {
+	case <-c.elected:
+	default:
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), collectTimeout)
 	defer cancel()
 	contextLogger := log.FromContext(ctx)

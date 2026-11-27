@@ -1067,6 +1067,8 @@ Two families describe the operator cache (see ["Operator cache"](operator_conf.m
   only is watched.
 
 Both are computed when scraped, from the cache, without copying the objects.
+Only the elected replica of the operator reports them: listing a kind from
+the cache of another replica would start a watch on it.
 
 A third family reports the effective configuration of the operator:
 

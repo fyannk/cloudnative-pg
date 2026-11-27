@@ -553,7 +553,7 @@ func registerCacheMetrics(
 		metadataCounter = reloadWatch
 	}
 	return operatormetrics.RegisterCache(
-		mgr.GetCache(), mgr.GetScheme(), filteredcache.FilteredObjects(cacheFilter), metadataCounter)
+		mgr.GetCache(), mgr.Elected(), mgr.GetScheme(), filteredcache.FilteredObjects(cacheFilter), metadataCounter)
 }
 
 // probeOptionalAPIs resolves which optional APIs the operator uses, before

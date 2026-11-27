@@ -54,7 +54,7 @@ var _ = Describe("The operator cache metrics", func() {
 			&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "a", Name: "pg-1", Labels: managed}},
 		).Build()
 
-		series := gather(NewCacheCollector(reader, scheme.Scheme,
+		series := gather(NewCacheCollector(reader, elected(), scheme.Scheme,
 			[]client.Object{&corev1.Secret{}, &corev1.Pod{}, &corev1.ConfigMap{}},
 			fixedMetadataCounter{"Secret": 3, "ConfigMap": 1}))
 
@@ -68,5 +68,16 @@ var _ = Describe("The operator cache metrics", func() {
 			`cnpg_operator_metadata_cached_objects{kind="Secret"}`:           3,
 			`cnpg_operator_metadata_cached_objects{kind="ConfigMap"}`:        1,
 		}))
+	})
+
+	// A replica that is not elected runs no informer: a List on its cache
+	// would start one per kind, cluster-wide when the cache is not filtered.
+	// Its scrape reports nothing, and lists nothing.
+	It("lists nothing on a replica that is not elected", func() {
+		reader := failingReader{failing: &corev1.SecretList{}}
+		// the nil Reader it embeds would panic on any List
+		series := gather(NewCacheCollector(reader, make(chan struct{}), scheme.Scheme,
+			[]client.Object{&corev1.Secret{}, &corev1.Pod{}}, fixedMetadataCounter{"Secret": 3}))
+		Expect(series).To(BeEmpty())
 	})
 })
