@@ -162,11 +162,30 @@ var _ = Describe("The policy when no node state is read", func() {
 		Expect(checkLoadedConfiguration(conf)).To(MatchError(ContainSubstring("NODE_STATUS_UNAVAILABLE_POLICY")))
 	})
 
-	It("refuses to start with fail when the Node API is not accessible", func() {
+	It("refuses to start with fail when the Node API is not accessible", func(ctx SpecContext) {
+		// the startup probe finds the Nodes forbidden
+		cli := fake.NewClientBuilder().WithScheme(schemeBuilder.BuildWithAllKnownScheme()).
+			WithInterceptorFuncs(interceptor.Funcs{
+				List: func(_ context.Context, _ client.WithWatch, list client.ObjectList, _ ...client.ListOption) error {
+					if _, ok := list.(*corev1.NodeList); ok {
+						return apierrs.NewForbidden(schema.GroupResource{Resource: "nodes"}, "", errors.New("denied"))
+					}
+					return nil
+				},
+			}).Build()
+		conf := configuration.NewConfiguration()
+		conf.NodeStatusUnavailablePolicy = configuration.NodeStatusUnavailablePolicyFail
+		Expect(probeOptionalAPIs(ctx, cli, conf)).To(Succeed())
+		Expect(conf.APINodeEnabled).To(BeFalse())
+		Expect(resolveNodeStatusSource(conf)).To(MatchError(ContainSubstring("NODE_STATUS_UNAVAILABLE_POLICY=fail")))
+	})
+
+	It("starts with fail when API_NODE_ENABLED=false disables the Node API", func() {
 		conf := configuration.NewConfiguration()
 		conf.APINodeEnabled = false
 		conf.NodeStatusUnavailablePolicy = configuration.NodeStatusUnavailablePolicyFail
-		Expect(resolveNodeStatusSource(conf)).To(MatchError(ContainSubstring("NODE_STATUS_UNAVAILABLE_POLICY=fail")))
+		Expect(resolveNodeStatusSource(conf)).To(Succeed())
+		Expect(conf.ReadsNoNodeStatus()).To(BeTrue())
 	})
 
 	It("runs in degraded mode with the default policy", func() {

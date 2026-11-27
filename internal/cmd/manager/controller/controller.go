@@ -601,7 +601,15 @@ func probeOptionalAPIs(ctx context.Context, c client.Reader, conf *configuration
 		&apiv1.ClusterImageCatalogList{}, nil); err != nil {
 		return err
 	}
-	return probe("Node", &conf.APINodeEnabled, &corev1.NodeList{}, nil)
+	nodeAPIEnabled := conf.APINodeEnabled
+	if err := probe("Node", &conf.APINodeEnabled, &corev1.NodeList{}, nil); err != nil {
+		return err
+	}
+	if nodeAPIEnabled && !conf.APINodeEnabled {
+		// found not accessible, not disabled by the configuration
+		conf.SetNodeAPINotAccessible()
+	}
+	return nil
 }
 
 // logProxyPropagation tells which proxy settings of the operator reach the

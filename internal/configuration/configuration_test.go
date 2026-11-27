@@ -333,12 +333,20 @@ var _ = Describe("The policy when no node state is read", func() {
 		Entry("an unknown value", "ignore", false),
 	)
 
+	// apiNode is what the startup probe finds of the Node API, and disabled
+	// tells that API_NODE_ENABLED=false turned it off before the probe: a
+	// choice of the configuration, which fail never refuses
 	DescribeTable("fail refuses to start only when the Node API is not accessible",
-		func(source string, apiNode bool, policy string, refused bool) {
+		func(source string, apiNode bool, policy string, refused bool, disabled ...bool) {
 			config := NewConfiguration()
 			config.NodeStatusSource = source
 			config.NodeStatusPodKeyPrefix = "bridge.example.com/"
-			config.APINodeEnabled = apiNode
+			switch {
+			case len(disabled) > 0 && disabled[0]:
+				config.APINodeEnabled = false
+			case !apiNode:
+				config.SetNodeAPINotAccessible()
+			}
 			config.NodeStatusUnavailablePolicy = policy
 			Expect(config.ResolveNodeStatusSource()).To(Succeed())
 			if refused {
@@ -349,6 +357,7 @@ var _ = Describe("The policy when no node state is read", func() {
 			}
 		},
 		Entry("unset source, Node API not accessible", "", false, NodeStatusUnavailablePolicyFail, true),
+		Entry("unset source, API_NODE_ENABLED=false", "", false, NodeStatusUnavailablePolicyFail, false, true),
 		Entry("explicit none", NodeStatusSourceNone, true, NodeStatusUnavailablePolicyFail, false),
 		Entry("explicit none without the Node API", NodeStatusSourceNone, false, NodeStatusUnavailablePolicyFail, false),
 		Entry("unset source, Node API read", "", true, NodeStatusUnavailablePolicyFail, false),

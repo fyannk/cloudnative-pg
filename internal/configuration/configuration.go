@@ -344,9 +344,14 @@ type Data struct {
 	// Pods, "none" reads nothing
 	NodeStatusSource string `json:"nodeStatusSource" env:"NODE_STATUS_SOURCE"`
 
+	// nodeAPINotAccessible tells that the startup probe found the Node API
+	// not accessible, while API_NODE_ENABLED did not disable it, see
+	// SetNodeAPINotAccessible
+	nodeAPINotAccessible bool
+
 	// nodeAPIUnavailable tells that NodeStatusSource was left unset and
-	// resolved to "none" because the Node API was disabled or not accessible
-	// at startup, see ResolveNodeStatusSource
+	// resolved to "none" because the Node API was not accessible at startup,
+	// see ResolveNodeStatusSource
 	nodeAPIUnavailable bool
 
 	// NodeStatusPodKeyPrefix is the prefix of the keys read on the instance
@@ -567,6 +572,15 @@ func (config *Data) GetNodeStatusEvictionMaxAge() time.Duration {
 	return time.Duration(config.NodeStatusEvictionMaxAge) * time.Second
 }
 
+// SetNodeAPINotAccessible disables the Node API the startup probe found not
+// installed or forbidden. Unlike API_NODE_ENABLED=false, which is a choice
+// of the operator configuration, it is what the fail policy of
+// NODE_STATUS_UNAVAILABLE_POLICY refuses
+func (config *Data) SetNodeAPINotAccessible() {
+	config.APINodeEnabled = false
+	config.nodeAPINotAccessible = true
+}
+
 // ResolveNodeStatusSource settles NodeStatusSource once APINodeEnabled is
 // known, after the probe of the Node API. Unset, the source follows the API:
 // "api" when the operator reads it, "none" when it is disabled or not
@@ -577,7 +591,7 @@ func (config *Data) ResolveNodeStatusSource() error {
 	switch config.NodeStatusSource {
 	case "":
 		config.NodeStatusSource = NodeStatusSourceNone
-		config.nodeAPIUnavailable = !config.APINodeEnabled
+		config.nodeAPIUnavailable = !config.APINodeEnabled && config.nodeAPINotAccessible
 		if config.APINodeEnabled {
 			config.NodeStatusSource = NodeStatusSourceAPI
 		}
@@ -642,9 +656,9 @@ func (config *Data) ReadsNoNodeStatus() bool {
 // CheckNodeStatusUnavailablePolicy applies the fail policy once the source
 // of node state is resolved: the operator refuses to start when it reads no
 // node state because NODE_STATUS_SOURCE was left unset and the Node API was
-// not accessible at startup. An explicit NODE_STATUS_SOURCE=none is the
-// choice of the administrator and never refuses to start. Called after
-// ResolveNodeStatusSource
+// not accessible at startup. An explicit NODE_STATUS_SOURCE=none, or
+// API_NODE_ENABLED=false, is a choice of the operator configuration and
+// never refuses to start. Called after ResolveNodeStatusSource
 func (config *Data) CheckNodeStatusUnavailablePolicy() error {
 	if !config.nodeAPIUnavailable ||
 		config.GetNodeStatusUnavailablePolicy() != NodeStatusUnavailablePolicyFail {
@@ -652,10 +666,10 @@ func (config *Data) CheckNodeStatusUnavailablePolicy() error {
 	}
 
 	return fmt.Errorf("NODE_STATUS_UNAVAILABLE_POLICY=%s: the operator would read no node state "+
-		"(NODE_STATUS_SOURCE resolved to %s, API_NODE_ENABLED=%t after the startup probe); grant the "+
+		"(NODE_STATUS_SOURCE resolved to %s, the Node API is not accessible); grant the "+
 		"operator the right to list and watch the Nodes and restart it, set NODE_STATUS_SOURCE=%s "+
 		"with a node bridge, or set NODE_STATUS_UNAVAILABLE_POLICY to %s or %s to run in degraded mode",
-		NodeStatusUnavailablePolicyFail, NodeStatusSourceNone, config.APINodeEnabled, NodeStatusSourcePods,
+		NodeStatusUnavailablePolicyFail, NodeStatusSourceNone, NodeStatusSourcePods,
 		NodeStatusUnavailablePolicyKeepPDB, NodeStatusUnavailablePolicyDisablePrimaryPDB)
 }
 
